@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supplies as store, logAction } from '@/lib/store';
-import { Supply, SupplyMovement } from '@/lib/types';
+import { supplies as store, logAction, getErrorMessage } from '@/lib/store';
+import { Supply } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -20,12 +20,27 @@ export default function InventoryPage() {
   const [form, setForm] = useState({ name: '', category: CATEGORIES[0], unit: '', currentQty: 0, minQty: 0, description: '' });
   const [deleteTarget, setDeleteTarget] = useState<Supply | null>(null);
   const [moveTarget, setMoveTarget] = useState<Supply | null>(null);
-  const [moveForm, setMoveForm] = useState({ type: 'Bevételezés' as string, quantity: 0, note: '' });
+  const [moveForm, setMoveForm] = useState({ type: 'Bevételezés' as typeof MOVE_TYPES[number], quantity: 0, note: '' });
   const [historyTarget, setHistoryTarget] = useState<Supply | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const refresh = useCallback(() => setData(store.getAll()), []);
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 30000); return () => clearInterval(iv); }, [refresh]);
+  const refresh = useCallback(async () => {
+    try {
+      const nextData = await store.getAll();
+      setData(nextData);
+      if (historyTarget) {
+        setHistoryTarget(nextData.find(item => item.id === historyTarget.id) || null);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, [historyTarget]);
+
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const filtered = data.filter(s => {
     if (filterCat && s.category !== filterCat) return false;
@@ -39,46 +54,44 @@ export default function InventoryPage() {
     return { label: 'Elegendő', cls: 'badge-active' };
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = 'Kötelező';
     if (!form.unit.trim()) e.unit = 'Kötelező';
     setErrors(e);
     if (Object.keys(e).length > 0) return;
-    if (editing) {
-      store.update({ ...editing, ...form } as any);
-      logAction(user!.displayName, user!.username, 'módosítva', 'Készletek', form.name);
-    } else {
-      store.add({ ...form, movements: [] } as any);
-      logAction(user!.displayName, user!.username, 'létrehozva', 'Készletek', form.name);
+    try {
+      if (editing) {
+        await store.update({ ...editing, ...form });
+        await logAction(user!.displayName, user!.username, 'módosítva', 'Készletek', form.name);
+      } else {
+        await store.add({ ...form, movements: [] });
+        await logAction(user!.displayName, user!.username, 'létrehozva', 'Készletek', form.name);
+      }
+      toast.success('Sikeresen mentve');
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    toast.success('Sikeresen mentve');
-    setEditing(null); setCreating(false); refresh();
   };
 
-  const handleMove = () => {
-    if (!moveTarget || moveForm.quantity <= 0) { toast.error('Érvényes mennyiséget adj meg'); return; }
-    let newQty = moveTarget.currentQty;
-    if (['Bevételezés', 'Visszavétel'].includes(moveForm.type)) newQty += moveForm.quantity;
-    else if (['Kiadás', 'Selejtezés'].includes(moveForm.type)) newQty = Math.max(0, newQty - moveForm.quantity);
-    else newQty = moveForm.quantity; // Korrekció = set
-
-    const movement: SupplyMovement = {
-      id: Date.now().toString(36),
-      type: moveForm.type as any,
-      quantity: moveForm.quantity,
-      note: moveForm.note,
-      date: new Date().toISOString(),
-      userId: user!.username,
-      userName: user!.displayName,
-    };
-    const updated = { ...moveTarget, currentQty: newQty, movements: [movement, ...moveTarget.movements] };
-    store.update(updated);
-    logAction(user!.displayName, user!.username, 'módosítva', 'Készletek', `${moveTarget.name} — ${moveForm.type}: ${moveForm.quantity}`);
-    toast.success('Mozgás rögzítve');
-    setMoveTarget(null);
-    setMoveForm({ type: 'Bevételezés', quantity: 0, note: '' });
-    refresh();
+  const handleMove = async () => {
+    if (!moveTarget || moveForm.quantity <= 0) {
+      toast.error('Érvényes mennyiséget adj meg');
+      return;
+    }
+    try {
+      await store.recordMovement(moveTarget.id, moveForm.type, moveForm.quantity, moveForm.note);
+      await logAction(user!.displayName, user!.username, 'módosítva', 'Készletek', `${moveTarget.name} — ${moveForm.type}: ${moveForm.quantity}`);
+      toast.success('Mozgás rögzítve');
+      setMoveTarget(null);
+      setMoveForm({ type: 'Bevételezés', quantity: 0, note: '' });
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
   return (
@@ -131,13 +144,12 @@ export default function InventoryPage() {
         </table>
       </div>
 
-      {/* Movement Modal */}
       <Modal open={!!moveTarget} onClose={() => setMoveTarget(null)} title="Mozgás rögzítése">
         {moveTarget && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">{moveTarget.name} — jelenlegi: <span className="font-mono text-primary">{moveTarget.currentQty} {moveTarget.unit}</span></p>
             <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus</label>
-              <select value={moveForm.type} onChange={e => setMoveForm({ ...moveForm, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
+              <select value={moveForm.type} onChange={e => setMoveForm({ ...moveForm, type: e.target.value as typeof MOVE_TYPES[number] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
                 {MOVE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
             <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mennyiség</label>
               <input type="number" value={moveForm.quantity} onChange={e => setMoveForm({ ...moveForm, quantity: Number(e.target.value) })} className="w-full bg-input border border-border px-3 py-2 text-sm font-mono" style={{ borderRadius: '2px' }} /></div>
@@ -145,13 +157,12 @@ export default function InventoryPage() {
               <input value={moveForm.note} onChange={e => setMoveForm({ ...moveForm, note: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
             <div className="flex gap-3 justify-end pt-2">
               <button onClick={() => setMoveTarget(null)} className="btn-mil-secondary text-xs">Mégsem</button>
-              <button onClick={handleMove} className="btn-mil-primary text-xs">Rögzítés</button>
+              <button onClick={() => { void handleMove(); }} className="btn-mil-primary text-xs">Rögzítés</button>
             </div>
           </div>
         )}
       </Modal>
 
-      {/* History Modal */}
       <Modal open={!!historyTarget} onClose={() => setHistoryTarget(null)} title="Mozgási napló" wide>
         {historyTarget && (
           <div>
@@ -175,7 +186,6 @@ export default function InventoryPage() {
         )}
       </Modal>
 
-      {/* Create/Edit Modal */}
       <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Tétel szerkesztése' : 'Új tétel'}>
         <div className="space-y-3">
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megnevezés *</label>
@@ -197,13 +207,25 @@ export default function InventoryPage() {
             <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: '2px' }} /></div>
           <div className="flex gap-3 justify-end pt-4">
             <button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button>
-            <button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button>
+            <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button>
           </div>
         </div>
       </Modal>
 
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => {
-        if (deleteTarget) { store.remove(deleteTarget.id); logAction(user!.displayName, user!.username, 'törölve', 'Készletek', deleteTarget.name); toast.success('Törölve'); refresh(); }
+        if (deleteTarget) {
+          void (async () => {
+            try {
+              await store.remove(deleteTarget.id);
+              await logAction(user!.displayName, user!.username, 'törölve', 'Készletek', deleteTarget.name);
+              toast.success('Törölve');
+              setDeleteTarget(null);
+              await refresh();
+            } catch (error) {
+              toast.error(getErrorMessage(error));
+            }
+          })();
+        }
       }} />
     </div>
   );

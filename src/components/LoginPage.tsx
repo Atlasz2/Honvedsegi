@@ -7,12 +7,20 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const result = login(username, password);
-    if (!result.success) setError(result.error || 'Hiba történt');
+    setSubmitting(true);
+    try {
+      const result = await login(username, password);
+      if (!result.success) {
+        setError(result.error || 'Hiba történt');
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -34,6 +42,7 @@ export default function LoginPage() {
               className="w-full bg-input border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:border-primary"
               style={{ borderRadius: '2px' }}
               autoFocus
+              disabled={submitting}
             />
           </div>
           <div>
@@ -44,10 +53,13 @@ export default function LoginPage() {
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-input border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:border-primary"
               style={{ borderRadius: '2px' }}
+              disabled={submitting}
             />
           </div>
           {error && <p className="text-destructive text-sm font-mono">{error}</p>}
-          <button type="submit" className="btn-mil-primary w-full py-3">Bejelentkezés</button>
+          <button type="submit" className="btn-mil-primary w-full py-3" disabled={submitting}>
+            {submitting ? 'Beléptetés...' : 'Bejelentkezés'}
+          </button>
         </form>
       </div>
     </div>

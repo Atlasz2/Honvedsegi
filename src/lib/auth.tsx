@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AuthToken, Role } from './types';
-import { getToken, clearToken, login as storeLogin } from './store';
+import { AuthToken } from './types';
+import { getToken, login as storeLogin, logoutSession } from './store';
 
 interface AuthContextType {
   user: AuthToken | null;
-  login: (username: string, password: string) => { success: boolean; error?: string };
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   canEdit: boolean;
   isAdmin: boolean;
@@ -13,7 +13,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  login: () => ({ success: false }),
+  login: async () => ({ success: false }),
   logout: () => {},
   canEdit: false,
   isAdmin: false,
@@ -26,25 +26,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthToken | null>(getToken);
 
   const logout = useCallback(() => {
-    clearToken();
+    void logoutSession();
     setUser(null);
   }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const t = getToken();
-      if (!t && user) logout();
+      const token = getToken();
+      if (!token && user) {
+        logout();
+      }
     }, 60000);
     return () => clearInterval(interval);
   }, [user, logout]);
 
-  const loginFn = (username: string, password: string) => {
-    const result = storeLogin(username, password);
+  const loginFn = useCallback(async (username: string, password: string) => {
+    const result = await storeLogin(username, password);
     if (result.success && result.token) {
       setUser(result.token);
     }
-    return result;
-  };
+    return { success: result.success, error: result.error };
+  }, []);
 
   const canEdit = user?.role === 'admin' || user?.role === 'fejleszto';
   const isAdmin = user?.role === 'admin' || user?.role === 'fejleszto';

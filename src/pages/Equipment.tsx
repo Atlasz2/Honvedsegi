@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { equipment as store, personnel as pStore, logAction } from '@/lib/store';
-import { Equipment as Eq } from '@/lib/types';
+import { equipment as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
+import { Equipment as Eq, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -14,11 +14,12 @@ const condClass: Record<string, string> = { 'Jó': 'badge-active', 'Javítandó'
 export default function EquipmentPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Eq[]>([]);
+  const [personnelData, setPersonnelData] = useState<Person[]>([]);
   const [filter, setFilter] = useState('Összes');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Eq | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', category: CATEGORIES[0], serialNumber: '', qrCode: '', condition: 'Jó' as string, description: '' });
+  const [form, setForm] = useState({ name: '', category: CATEGORIES[0], serialNumber: '', qrCode: '', condition: 'Jó' as Eq['condition'], description: '' });
   const [deleteTarget, setDeleteTarget] = useState<Eq | null>(null);
   const [checkoutTarget, setCheckoutTarget] = useState<Eq | null>(null);
   const [checkoutPerson, setCheckoutPerson] = useState('');
@@ -26,8 +27,24 @@ export default function EquipmentPage() {
   const [historyTarget, setHistoryTarget] = useState<Eq | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const refresh = useCallback(() => setData(store.getAll()), []);
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 30000); return () => clearInterval(iv); }, [refresh]);
+  const refresh = useCallback(async () => {
+    try {
+      const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
+      setData(nextData);
+      setPersonnelData(nextPersonnel);
+      if (historyTarget) {
+        setHistoryTarget(nextData.find(item => item.id === historyTarget.id) || null);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, [historyTarget]);
+
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const filtered = data.filter(e => {
     if (filter === 'Szabad' && e.checkedOutTo) return false;
@@ -42,43 +59,57 @@ export default function EquipmentPage() {
 
   const stats = { free: data.filter(e => !e.checkedOutTo).length, out: data.filter(e => e.checkedOutTo).length, repair: data.filter(e => e.condition === 'Javítandó').length, scrap: data.filter(e => e.condition === 'Selejtezendő').length };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = 'Kötelező';
     setErrors(e);
     if (Object.keys(e).length > 0) return;
-    if (editing) {
-      store.update({ ...editing, ...form } as any);
-      logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${form.name} (${form.serialNumber})`);
-    } else {
-      store.add({ ...form, checkoutHistory: [] } as any);
-      logAction(user!.displayName, user!.username, 'létrehozva', 'Felszerelés', `${form.name} (${form.serialNumber})`);
+    try {
+      if (editing) {
+        await store.update({ ...editing, ...form });
+        await logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${form.name} (${form.serialNumber})`);
+      } else {
+        await store.add({ ...form, checkoutHistory: [] });
+        await logAction(user!.displayName, user!.username, 'létrehozva', 'Felszerelés', `${form.name} (${form.serialNumber})`);
+      }
+      toast.success('Sikeresen mentve');
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    toast.success('Sikeresen mentve');
-    setEditing(null); setCreating(false); refresh();
   };
 
-  const checkout = () => {
+  const checkout = async () => {
     if (!checkoutTarget || !checkoutPerson) return;
-    const p = pStore.getAll().find(x => x.id === checkoutPerson);
+    const p = personnelData.find(x => x.id === checkoutPerson);
     if (!p) return;
-    const updated = { ...checkoutTarget, checkedOutTo: p.id, checkedOutToName: p.name, checkedOutDate: new Date().toISOString().split('T')[0], checkoutHistory: [...checkoutTarget.checkoutHistory, { personId: p.id, personName: p.name, checkedOutDate: new Date().toISOString().split('T')[0], note: checkoutNote }] };
-    store.update(updated);
-    logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${updated.name} → kiadva: ${p.name}`);
-    toast.success('Kiadva');
-    setCheckoutTarget(null); setCheckoutPerson(''); setCheckoutNote(''); refresh();
+    try {
+      await store.checkout(checkoutTarget.id, p.id, checkoutNote);
+      await logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${checkoutTarget.name} → kiadva: ${p.name}`);
+      toast.success('Kiadva');
+      setCheckoutTarget(null);
+      setCheckoutPerson('');
+      setCheckoutNote('');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
-  const returnItem = (item: Eq) => {
-    const hist = item.checkoutHistory.map((h, i) => i === item.checkoutHistory.length - 1 ? { ...h, returnedDate: new Date().toISOString().split('T')[0] } : h);
-    const updated = { ...item, checkedOutTo: undefined, checkedOutToName: undefined, checkedOutDate: undefined, checkoutHistory: hist };
-    store.update(updated);
-    logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${item.name} → visszavéve`);
-    toast.success('Visszavéve');
-    refresh();
+  const returnItem = async (item: Eq) => {
+    try {
+      await store.returnItem(item.id);
+      await logAction(user!.displayName, user!.username, 'módosítva', 'Felszerelés', `${item.name} → visszavéve`);
+      toast.success('Visszavéve');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
-  const activePpl = pStore.getAll().filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
 
   return (
     <div>
@@ -97,8 +128,7 @@ export default function EquipmentPage() {
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="relative flex-1 max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Keresés..."
-            className="w-full bg-input border border-border pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Keresés..." className="w-full bg-input border border-border pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }} />
         </div>
         {['Összes','Szabad','Kiadva','Jó','Javítandó','Selejtezendő'].map(s => (
           <button key={s} onClick={() => setFilter(s)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>{s}</button>
@@ -121,7 +151,7 @@ export default function EquipmentPage() {
                 <td>
                   <div className="flex gap-1">
                     {canEdit && !e.checkedOutTo && <button onClick={() => setCheckoutTarget(e)} className="p-1.5 text-primary hover:bg-primary/10" title="Kiadás"><ArrowUpFromLine className="w-3.5 h-3.5" /></button>}
-                    {canEdit && e.checkedOutTo && <button onClick={() => returnItem(e)} className="p-1.5 text-primary hover:bg-primary/10" title="Visszavétel"><ArrowDownToLine className="w-3.5 h-3.5" /></button>}
+                    {canEdit && e.checkedOutTo && <button onClick={() => { void returnItem(e); }} className="p-1.5 text-primary hover:bg-primary/10" title="Visszavétel"><ArrowDownToLine className="w-3.5 h-3.5" /></button>}
                     <button onClick={() => setHistoryTarget(e)} className="p-1.5 text-muted-foreground hover:bg-secondary" title="Kiadási napló"><History className="w-3.5 h-3.5" /></button>
                     {canEdit && <button onClick={() => { setForm({ name: e.name, category: e.category, serialNumber: e.serialNumber, qrCode: e.qrCode, condition: e.condition, description: e.description }); setEditing(e); }} className="p-1.5 text-primary hover:bg-primary/10" title="Szerkesztés"><Pencil className="w-3.5 h-3.5" /></button>}
                     {canEdit && <button onClick={() => setDeleteTarget(e)} className="p-1.5 text-destructive hover:bg-destructive/10" title="Törlés"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -133,7 +163,6 @@ export default function EquipmentPage() {
         </table>
       </div>
 
-      {/* Checkout Modal */}
       <Modal open={!!checkoutTarget} onClose={() => setCheckoutTarget(null)} title="Kiadás">
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">{checkoutTarget?.name} — <span className="mono-chip">{checkoutTarget?.serialNumber}</span></p>
@@ -146,12 +175,11 @@ export default function EquipmentPage() {
             <input value={checkoutNote} onChange={e => setCheckoutNote(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
           <div className="flex gap-3 justify-end pt-2">
             <button onClick={() => setCheckoutTarget(null)} className="btn-mil-secondary text-xs">Mégsem</button>
-            <button onClick={checkout} className="btn-mil-primary text-xs">Kiadás</button>
+            <button onClick={() => { void checkout(); }} className="btn-mil-primary text-xs">Kiadás</button>
           </div>
         </div>
       </Modal>
 
-      {/* History Modal */}
       <Modal open={!!historyTarget} onClose={() => setHistoryTarget(null)} title="Kiadási napló" wide>
         {historyTarget && (
           <div>
@@ -174,7 +202,6 @@ export default function EquipmentPage() {
         )}
       </Modal>
 
-      {/* Create/Edit Modal */}
       <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Eszköz szerkesztése' : 'Új eszköz'}>
         <div className="space-y-3">
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megnevezés *</label>
@@ -188,19 +215,31 @@ export default function EquipmentPage() {
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">QR kód</label>
             <input value={form.qrCode} onChange={e => setForm({ ...form, qrCode: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm font-mono" style={{ borderRadius: '2px' }} /></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Állapot</label>
-            <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
+            <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value as Eq['condition'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
               {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>
             <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: '2px' }} /></div>
           <div className="flex gap-3 justify-end pt-4">
             <button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button>
-            <button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button>
+            <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button>
           </div>
         </div>
       </Modal>
 
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => {
-        if (deleteTarget) { store.remove(deleteTarget.id); logAction(user!.displayName, user!.username, 'törölve', 'Felszerelés', deleteTarget.name); toast.success('Törölve'); refresh(); }
+        if (deleteTarget) {
+          void (async () => {
+            try {
+              await store.remove(deleteTarget.id);
+              await logAction(user!.displayName, user!.username, 'törölve', 'Felszerelés', deleteTarget.name);
+              toast.success('Törölve');
+              setDeleteTarget(null);
+              await refresh();
+            } catch (error) {
+              toast.error(getErrorMessage(error));
+            }
+          })();
+        }
       }} />
     </div>
   );

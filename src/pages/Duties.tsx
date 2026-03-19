@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { duties as store, personnel as pStore, logAction } from '@/lib/store';
-import { Duty } from '@/lib/types';
+import { duties as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
+import { Duty, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, CalendarIcon, List } from 'lucide-react';
+import DatePickerInput from '@/components/DatePickerInput';
+import DateTimePickerInput from '@/components/DateTimePickerInput';
 
 const TYPES = ['Őrszolgálat','Ügyeleti szolgálat','Készenléti szolgálat','Rendezvénybiztosítás','Egyéb'];
 const STATUSES = ['Tervezett','Teljesített','Lemondva'] as const;
@@ -14,41 +16,67 @@ const statusClass: Record<string, string> = { 'Tervezett': 'badge-planned', 'Tel
 export default function DutiesPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Duty[]>([]);
+  const [personnelData, setPersonnelData] = useState<Person[]>([]);
   const [view, setView] = useState<'table' | 'calendar'>('table');
   const [filter, setFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [editing, setEditing] = useState<Duty | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ type: TYPES[0], startDate: '', endDate: '', location: '', personId: '', personName: '', notes: '', status: 'Tervezett' as string });
+  const [form, setForm] = useState({ type: TYPES[0], startDate: '', endDate: '', location: '', personId: '', personName: '', notes: '', status: 'Tervezett' as Duty['status'] });
   const [deleteTarget, setDeleteTarget] = useState<Duty | null>(null);
   const [calMonth, setCalMonth] = useState(new Date());
 
-  const refresh = useCallback(() => setData(store.getAll()), []);
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 30000); return () => clearInterval(iv); }, [refresh]);
+  const refresh = useCallback(async () => {
+    try {
+      const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
+      setData(nextData);
+      setPersonnelData(nextPersonnel);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, []);
 
-  const filtered = data.filter(d => !filter || d.status === filter);
-  const activePpl = pStore.getAll().filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
-  const handleSave = () => {
+  const filtered = data.filter(d => {
+    if (filter && d.status !== filter) return false;
+    const start = d.startDate.slice(0, 10);
+    const end = d.endDate.slice(0, 10);
+    if (dateFrom && end < dateFrom) return false;
+    if (dateTo && start > dateTo) return false;
+    return true;
+  });
+  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+
+  const handleSave = async () => {
     if (!form.startDate || !form.endDate || !form.personId) { toast.error('Kötelező mezők kitöltése szükséges'); return; }
     if (form.endDate < form.startDate) { toast.error('Vége >= Kezdete'); return; }
-    // Conflict check
     const conflicts = data.filter(d => d.id !== editing?.id && d.personId === form.personId && d.status !== 'Lemondva' && d.startDate < form.endDate && d.endDate > form.startDate);
     if (conflicts.length > 0) toast.warning(`Figyelem: ${form.personName} már beosztva ebben az időszakban!`);
-
-    if (editing) {
-      store.update({ ...editing, ...form } as any);
-      logAction(user!.displayName, user!.username, 'módosítva', 'Szolgálatok', `${form.type} — ${form.personName}`);
-    } else {
-      store.add(form as any);
-      logAction(user!.displayName, user!.username, 'létrehozva', 'Szolgálatok', `${form.type} — ${form.personName}`);
+    try {
+      if (editing) {
+        await store.update({ ...editing, ...form });
+        await logAction(user!.displayName, user!.username, 'módosítva', 'Szolgálatok', `${form.type} — ${form.personName}`);
+      } else {
+        await store.add(form);
+        await logAction(user!.displayName, user!.username, 'létrehozva', 'Szolgálatok', `${form.type} — ${form.personName}`);
+      }
+      toast.success('Sikeresen mentve');
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    toast.success('Sikeresen mentve');
-    setEditing(null); setCreating(false); refresh();
   };
 
   const openCreate = () => { setForm({ type: TYPES[0], startDate: '', endDate: '', location: '', personId: '', personName: '', notes: '', status: 'Tervezett' }); setCreating(true); };
 
-  // Calendar helpers
   const year = calMonth.getFullYear(), month = calMonth.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -56,7 +84,7 @@ export default function DutiesPage() {
 
   const getDutiesForDay = (day: number) => {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return data.filter(d => d.startDate.slice(0, 10) <= dateStr && d.endDate.slice(0, 10) >= dateStr);
+    return filtered.filter(d => d.startDate.slice(0, 10) <= dateStr && d.endDate.slice(0, 10) >= dateStr);
   };
 
   return (
@@ -70,10 +98,19 @@ export default function DutiesPage() {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 flex-wrap items-end">
         {['', ...STATUSES].map(s => (
           <button key={s} onClick={() => setFilter(s)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>{s || 'Összes'}</button>
         ))}
+        <div>
+          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum eleje</label>
+          <DatePickerInput value={dateFrom} onChange={setDateFrom} className="px-2 py-1.5 text-xs" />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum vége</label>
+          <DatePickerInput value={dateTo} onChange={setDateTo} className="px-2 py-1.5 text-xs" />
+        </div>
+        <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="btn-mil-secondary text-xs">Szűrő törlése</button>
       </div>
 
       {view === 'table' ? (
@@ -127,19 +164,18 @@ export default function DutiesPage() {
         <div className="space-y-3">
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus</label><select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label><input type="datetime-local" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
-            <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label><input type="datetime-local" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
+            <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label><DateTimePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} /></div>
+            <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label><DateTimePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} /></div>
           </div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label><input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
-          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Személy *</label><select value={form.personId} onChange={e => { const p = activePpl.find(x => x.id === e.target.value); setForm({ ...form, personId: e.target.value, personName: p?.name || '' }); }} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
-            <option value="">Válassz...</option>{activePpl.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Személy *</label><select value={form.personId} onChange={e => { const p = activePpl.find(x => x.id === e.target.value); setForm({ ...form, personId: e.target.value, personName: p?.name || '' }); }} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}><option value="">Válassz...</option>{activePpl.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Duty['status'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjegyzés</label><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-16" style={{ borderRadius: '2px' }} /></div>
-          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button></div>
+          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button></div>
         </div>
       </Modal>
 
-      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { store.remove(deleteTarget.id); logAction(user!.displayName, user!.username, 'törölve', 'Szolgálatok', deleteTarget.type); toast.success('Törölve'); refresh(); } }} />
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { void (async () => { try { await store.remove(deleteTarget.id); await logAction(user!.displayName, user!.username, 'törölve', 'Szolgálatok', deleteTarget.type); toast.success('Törölve'); setDeleteTarget(null); await refresh(); } catch (error) { toast.error(getErrorMessage(error)); } })(); } }} />
     </div>
   );
 }

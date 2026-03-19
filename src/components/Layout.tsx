@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -28,7 +28,37 @@ const roleBadge: Record<string, string> = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAdmin } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [devTapCount, setDevTapCount] = useState(0);
+  const [showEasterEgg, setShowEasterEgg] = useState(false);
+  const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eggHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
+
+  useEffect(() => {
+    return () => {
+      if (tapResetRef.current) clearTimeout(tapResetRef.current);
+      if (eggHideRef.current) clearTimeout(eggHideRef.current);
+    };
+  }, []);
+
+  const handleDevNamesClick = () => {
+    setDevTapCount(prev => {
+      const next = prev + 1;
+
+      if (tapResetRef.current) clearTimeout(tapResetRef.current);
+      tapResetRef.current = setTimeout(() => setDevTapCount(0), 3000);
+
+      if (next >= 5) {
+        if (tapResetRef.current) clearTimeout(tapResetRef.current);
+        setShowEasterEgg(true);
+        if (eggHideRef.current) clearTimeout(eggHideRef.current);
+        eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
+        return 0;
+      }
+
+      return next;
+    });
+  };
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -99,8 +129,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Page content */}
         <main className="flex-1 p-6 crosshair-bg overflow-auto">
           {children}
+          <button
+            type="button"
+            onClick={handleDevNamesClick}
+            className="mt-8 w-full text-center text-[10px] tracking-military text-muted-foreground opacity-30 hover:opacity-60 transition-opacity select-none cursor-default"
+          >
+            Fejlesztők: Kovács Martin · Rédli Máté · Tóth Rafael
+          </button>
+
+          {showEasterEgg && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md" style={{ borderRadius: '2px' }}>
+              🍓 Málnás édesség unlocked!
+            </div>
+          )}
         </main>
       </div>
     </div>
   );
 }
+

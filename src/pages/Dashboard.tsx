@@ -1,20 +1,45 @@
-import React, { useState, useEffect } from 'react';
-import { personnel, exercises, equipment, supplies, activityLog } from '@/lib/store';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { personnel, exercises, equipment, supplies, activityLog, getErrorMessage } from '@/lib/store';
 import { Users, Crosshair, Package, AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [, setTick] = useState(0);
+  const [ppl, setPpl] = useState<any[]>([]);
+  const [exs, setExs] = useState<any[]>([]);
+  const [eqs, setEqs] = useState<any[]>([]);
+  const [sups, setSups] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
 
-  useEffect(() => {
-    const iv = setInterval(() => setTick(t => t + 1), 30000);
-    return () => clearInterval(iv);
+  const refresh = useCallback(async () => {
+    try {
+      const [nextPpl, nextExs, nextEqs, nextSups, nextLogs] = await Promise.all([
+        personnel.getAll(),
+        exercises.getAll(),
+        equipment.getAll(),
+        supplies.getAll(),
+        activityLog.getAll(),
+      ]);
+      setPpl(nextPpl);
+      setExs(nextExs);
+      setEqs(nextEqs);
+      setSups(nextSups);
+      setLogs(nextLogs);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   }, []);
 
-  const ppl = personnel.getAll();
-  const exs = exercises.getAll();
-  const eqs = equipment.getAll();
-  const sups = supplies.getAll();
-  const logs = activityLog.getAll();
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => {
+      setTick(t => t + 1);
+      void refresh();
+    }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const activePpl = ppl.filter(p => p.status !== 'Leszerelt').length;
   const now = new Date();
@@ -35,38 +60,35 @@ export default function Dashboard() {
     <div>
       <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military mb-6 text-foreground">Áttekintés</h1>
 
-      {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        <div className="stats-card">
+        <button onClick={() => navigate('/personnel')} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><Users className="w-4 h-4 text-primary" /></div>
           <div className="stats-number">{activePpl}</div>
           <div className="stats-label">Aktív személyzet</div>
-        </div>
-        <div className="stats-card">
+        </button>
+        <button onClick={() => navigate('/exercises')} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><Crosshair className="w-4 h-4 text-primary" /></div>
           <div className="stats-number">{upcoming.length}</div>
           <div className="stats-label">Közelgő gyakorlat (30 nap)</div>
-        </div>
-        <div className="stats-card">
+        </button>
+        <button onClick={() => navigate('/equipment')} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><Package className="w-4 h-4 text-primary" /></div>
           <div className="stats-number">{checkedOut}</div>
           <div className="stats-label">Kiadott felszerelés</div>
-        </div>
-        <div className="stats-card">
+        </button>
+        <button onClick={() => navigate('/inventory')} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4 text-warning" /></div>
           <div className="stats-number text-warning" style={{ color: 'hsl(var(--mil-warning))' }}>{lowStock}</div>
           <div className="stats-label">Alacsony készlet</div>
-        </div>
+        </button>
       </div>
 
-      {/* Section divider */}
       <div className="flex items-center gap-3 mb-4">
         <div className="h-px flex-1 bg-primary/30" />
         <span className="text-xs uppercase tracking-military text-primary font-mono">Közelgő gyakorlatok</span>
         <div className="h-px flex-1 bg-primary/30" />
       </div>
 
-      {/* Upcoming exercises table */}
       <div className="bg-card border border-border mb-8 overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
           <thead><tr>
@@ -94,14 +116,12 @@ export default function Dashboard() {
         </table>
       </div>
 
-      {/* Section divider */}
       <div className="flex items-center gap-3 mb-4">
         <div className="h-px flex-1 bg-primary/30" />
         <span className="text-xs uppercase tracking-military text-primary font-mono">Legutóbbi tevékenységek</span>
         <div className="h-px flex-1 bg-primary/30" />
       </div>
 
-      {/* Activity log */}
       <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
           <thead><tr>

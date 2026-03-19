@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { users as uStore } from '@/lib/store';
+import React, { useState, useEffect, useCallback } from 'react';
+import { users as uStore, getErrorMessage } from '@/lib/store';
 import { User, Role } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
@@ -9,39 +9,50 @@ import { useNavigate } from 'react-router-dom';
 
 export default function SettingsPage() {
   const { user: authUser, isDev } = useAuth();
-  const [data, setData] = useState<User[]>(uStore.getAll());
+  const [data, setData] = useState<User[]>([]);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true });
   const navigate = useNavigate();
 
-  const refresh = () => setData(uStore.getAll());
-
-  const handleSave = () => {
-    if (!form.username.trim()) { toast.error('Felhasználónév kötelező'); return; }
-    const all = uStore.getAll();
-    if (editing) {
-      const updated = all.map(u => u.username === editing.username ? { ...u, displayName: form.displayName, role: form.role, active: form.active, ...(form.password ? { password: form.password } : {}) } : u);
-      uStore.save(updated);
-      toast.success('Sikeresen mentve');
-    } else {
-      if (all.find(u => u.username === form.username)) { toast.error('Ez a felhasználónév már foglalt'); return; }
-      if (!form.password) { toast.error('Jelszó kötelező'); return; }
-      all.push({ username: form.username, password: form.password, displayName: form.displayName, role: form.role, active: form.active });
-      uStore.save(all);
-      toast.success('Felhasználó létrehozva');
+  const refresh = useCallback(async () => {
+    try {
+      setData(await uStore.getAll());
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    setEditing(null); setCreating(false); refresh();
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const handleSave = async () => {
+    if (!form.username.trim()) { toast.error('Felhasználónév kötelező'); return; }
+    try {
+      if (editing) {
+        await uStore.update(editing.username, { displayName: form.displayName, role: form.role, active: form.active, password: form.password || undefined });
+        toast.success('Sikeresen mentve');
+      } else {
+        if (!form.password) { toast.error('Jelszó kötelező'); return; }
+        await uStore.create({ username: form.username, password: form.password, displayName: form.displayName, role: form.role, active: form.active });
+        toast.success('Felhasználó létrehozva');
+      }
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
   const canEditUser = (u: User) => {
-    if (u.username === authUser?.username) return false; // Can't edit self
-    if (u.role === 'fejleszto' && !isDev) return false; // Only dev can edit dev
+    if (u.username === authUser?.username) return false;
+    if (u.role === 'fejleszto' && !isDev) return false;
     return true;
   };
 
   const availableRoles: Role[] = isDev ? ['reader', 'admin', 'fejleszto'] : ['reader', 'admin'];
-
   const roleBadge: Record<string, string> = { admin: 'ADMIN', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
 
   return (
@@ -75,7 +86,7 @@ export default function SettingsPage() {
                   {canEditUser(u) ? (
                     <div className="flex gap-1">
                       <button onClick={() => { setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active }); setEditing(u); }} className="p-1.5 text-primary hover:bg-primary/10" title="Szerkesztés"><Pencil className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => { const all = uStore.getAll().map(x => x.username === u.username ? { ...x, active: !x.active } : x); uStore.save(all); refresh(); toast.success(u.active ? 'Deaktiválva' : 'Aktiválva'); }} className="p-1.5 hover:bg-secondary" title={u.active ? 'Deaktiválás' : 'Aktiválás'}>
+                      <button onClick={() => { void (async () => { try { await uStore.update(u.username, { displayName: u.displayName, role: u.role, active: !u.active }); await refresh(); toast.success(u.active ? 'Deaktiválva' : 'Aktiválva'); } catch (error) { toast.error(getErrorMessage(error)); } })(); }} className="p-1.5 hover:bg-secondary" title={u.active ? 'Deaktiválás' : 'Aktiválás'}>
                         {u.active ? <ShieldOff className="w-3.5 h-3.5 text-warning" /> : <ShieldCheck className="w-3.5 h-3.5 text-primary" />}
                       </button>
                     </div>
@@ -99,7 +110,7 @@ export default function SettingsPage() {
             <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value as Role })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
               {availableRoles.map(r => <option key={r} value={r}>{roleBadge[r]}</option>)}</select></div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} className="accent-primary" />Aktív</label>
-          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button></div>
+          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button></div>
         </div>
       </Modal>
     </div>

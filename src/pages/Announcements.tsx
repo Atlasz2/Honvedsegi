@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { announcements as store, logAction } from '@/lib/store';
+import { announcements as store, logAction, getErrorMessage } from '@/lib/store';
 import { Announcement } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
-import { Plus, Pin, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pin } from 'lucide-react';
 
 const CATEGORIES = ['Általános','Fontos','Sürgős','Gyakorlat','Adminisztráció'] as const;
 const catClass: Record<string, string> = { 'Általános': 'badge-general', 'Fontos': 'badge-important', 'Sürgős': 'badge-urgent', 'Gyakorlat': 'badge-exercise', 'Adminisztráció': 'badge-admin-cat' };
@@ -17,11 +17,26 @@ export default function AnnouncementsPage() {
   const [detail, setDetail] = useState<Announcement | null>(null);
   const [editing, setEditing] = useState<Announcement | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ title: '', category: 'Általános' as string, content: '', pinned: false });
+  const [form, setForm] = useState({ title: '', category: 'Általános' as Announcement['category'], content: '', pinned: false });
   const [deleteTarget, setDeleteTarget] = useState<Announcement | null>(null);
 
-  const refresh = useCallback(() => setData(store.getAll()), []);
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 30000); return () => clearInterval(iv); }, [refresh]);
+  const refresh = useCallback(async () => {
+    try {
+      const nextData = await store.getAll();
+      setData(nextData);
+      if (detail) {
+        setDetail(nextData.find(item => item.id === detail.id) || null);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, [detail]);
+
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const sorted = [...data].filter(a => !filterCat || a.category === filterCat).sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
@@ -29,17 +44,23 @@ export default function AnnouncementsPage() {
     return b.date.localeCompare(a.date);
   });
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.title.trim() || !form.content.trim()) { toast.error('Cím és tartalom kötelező'); return; }
-    if (editing) {
-      store.update({ ...editing, ...form } as any);
-      logAction(user!.displayName, user!.username, 'módosítva', 'Hírek', form.title);
-    } else {
-      store.add({ ...form, author: user!.displayName, date: new Date().toISOString().split('T')[0] } as any);
-      logAction(user!.displayName, user!.username, 'létrehozva', 'Hírek', form.title);
+    try {
+      if (editing) {
+        await store.update({ ...editing, ...form });
+        await logAction(user!.displayName, user!.username, 'módosítva', 'Hírek', form.title);
+      } else {
+        await store.add({ ...form, author: user!.displayName, date: new Date().toISOString().split('T')[0] });
+        await logAction(user!.displayName, user!.username, 'létrehozva', 'Hírek', form.title);
+      }
+      toast.success('Sikeresen mentve');
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    toast.success('Sikeresen mentve');
-    setEditing(null); setCreating(false); refresh();
   };
 
   return (
@@ -58,8 +79,7 @@ export default function AnnouncementsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {sorted.length === 0 && <div className="col-span-2 text-center text-muted-foreground font-mono py-12">Nincs adat</div>}
         {sorted.map(a => (
-          <div key={a.id} className={`bg-card border border-border p-4 cursor-pointer hover:bg-secondary transition-colors ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
-            style={{ borderRadius: '2px' }} onClick={() => setDetail(a)}>
+          <div key={a.id} className={`bg-card border border-border p-4 cursor-pointer hover:bg-secondary transition-colors ${a.pinned ? 'border-l-2 border-l-primary' : ''}`} style={{ borderRadius: '2px' }} onClick={() => setDetail(a)}>
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center gap-2">
                 {a.pinned && <Pin className="w-3.5 h-3.5 text-primary" />}
@@ -78,7 +98,6 @@ export default function AnnouncementsPage() {
         ))}
       </div>
 
-      {/* Detail */}
       <Modal open={!!detail && !editing} onClose={() => setDetail(null)} title={detail?.title || ''} wide>
         {detail && (
           <div className="space-y-4">
@@ -102,14 +121,14 @@ export default function AnnouncementsPage() {
       <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Közlemény szerkesztése' : 'Új közlemény'}>
         <div className="space-y-3">
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Cím *</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
-          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value as Announcement['category'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tartalom *</label><textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-32" style={{ borderRadius: '2px' }} /></div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.pinned} onChange={e => setForm({ ...form, pinned: e.target.checked })} className="accent-primary" />Rögzített (kitűzött)</label>
-          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button></div>
+          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button></div>
         </div>
       </Modal>
 
-      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { store.remove(deleteTarget.id); logAction(user!.displayName, user!.username, 'törölve', 'Hírek', deleteTarget.title); toast.success('Törölve'); setDetail(null); refresh(); } }} />
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { void (async () => { try { await store.remove(deleteTarget.id); await logAction(user!.displayName, user!.username, 'törölve', 'Hírek', deleteTarget.title); toast.success('Törölve'); setDetail(null); setDeleteTarget(null); await refresh(); } catch (error) { toast.error(getErrorMessage(error)); } })(); } }} />
     </div>
   );
 }

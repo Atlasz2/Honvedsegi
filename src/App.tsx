@@ -1,9 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { initializeData } from "@/lib/store";
 import LoginPage from "@/components/LoginPage";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
@@ -18,8 +17,6 @@ import Announcements from "@/pages/Announcements";
 import SettingsPage from "@/pages/SettingsPage";
 import ActivityLogPage from "@/pages/ActivityLogPage";
 import NotFound from "./pages/NotFound";
-
-initializeData();
 
 const queryClient = new QueryClient();
 
@@ -40,7 +37,7 @@ function AppRoutes() {
         <Route path="/announcements" element={<Announcements />} />
         {isAdmin && <Route path="/settings" element={<SettingsPage />} />}
         {isAdmin && <Route path="/activity-log" element={<ActivityLogPage />} />}
-        <Route path="*" element={<NotFound />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
   );

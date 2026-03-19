@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { vehicles as store, personnel as pStore, logAction } from '@/lib/store';
-import { Vehicle } from '@/lib/types';
+import { vehicles as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
+import { Vehicle, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -14,46 +14,78 @@ const statusClass: Record<string, string> = { 'Elérhető': 'badge-active', 'Has
 export default function VehiclesPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Vehicle[]>([]);
+  const [personnelData, setPersonnelData] = useState<Person[]>([]);
   const [filter, setFilter] = useState('');
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ plateNumber: '', type: TYPES[0], makeModel: '', year: 2020, km: 0, nextService: '', nextInspection: '', status: 'Elérhető' as string, notes: '' });
+  const [form, setForm] = useState({ plateNumber: '', type: TYPES[0], makeModel: '', year: 2020, km: 0, nextService: '', nextInspection: '', status: 'Elérhető' as Vehicle['status'], notes: '' });
   const [deleteTarget, setDeleteTarget] = useState<Vehicle | null>(null);
   const [assignTarget, setAssignTarget] = useState<Vehicle | null>(null);
   const [assignPerson, setAssignPerson] = useState('');
 
-  const refresh = useCallback(() => setData(store.getAll()), []);
-  useEffect(() => { refresh(); const iv = setInterval(refresh, 30000); return () => clearInterval(iv); }, [refresh]);
+  const refresh = useCallback(async () => {
+    try {
+      const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
+      setData(nextData);
+      setPersonnelData(nextPersonnel);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const filtered = data.filter(v => !filter || v.status === filter);
-  const activePpl = pStore.getAll().filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.plateNumber.trim()) { toast.error('Rendszám kötelező'); return; }
-    if (editing) {
-      store.update({ ...editing, ...form } as any);
-      logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', form.plateNumber);
-    } else {
-      store.add({ ...form, serviceLog: [] } as any);
-      logAction(user!.displayName, user!.username, 'létrehozva', 'Járművek', form.plateNumber);
+    try {
+      if (editing) {
+        await store.update({ ...editing, ...form });
+        await logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', form.plateNumber);
+      } else {
+        await store.add({ ...form, serviceLog: [] });
+        await logAction(user!.displayName, user!.username, 'létrehozva', 'Járművek', form.plateNumber);
+      }
+      toast.success('Sikeresen mentve');
+      setEditing(null);
+      setCreating(false);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
-    toast.success('Sikeresen mentve');
-    setEditing(null); setCreating(false); refresh();
   };
 
-  const assign = () => {
+  const assign = async () => {
     if (!assignTarget || !assignPerson) return;
-    const p = pStore.getAll().find(x => x.id === assignPerson);
+    const p = personnelData.find(x => x.id === assignPerson);
     if (!p) return;
-    store.update({ ...assignTarget, assignedTo: p.id, assignedToName: p.name, status: 'Használatban' });
-    logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', `${assignTarget.plateNumber} → ${p.name}`);
-    toast.success('Kiadva'); setAssignTarget(null); setAssignPerson(''); refresh();
+    try {
+      await store.assign(assignTarget.id, p.id);
+      await logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', `${assignTarget.plateNumber} → ${p.name}`);
+      toast.success('Kiadva');
+      setAssignTarget(null);
+      setAssignPerson('');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
-  const returnVehicle = (v: Vehicle) => {
-    store.update({ ...v, assignedTo: undefined, assignedToName: undefined, status: 'Elérhető' });
-    logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', `${v.plateNumber} → visszavéve`);
-    toast.success('Visszavéve'); refresh();
+  const returnVehicle = async (v: Vehicle) => {
+    try {
+      await store.returnItem(v.id);
+      await logAction(user!.displayName, user!.username, 'módosítva', 'Járművek', `${v.plateNumber} → visszavéve`);
+      toast.success('Visszavéve');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
   return (
@@ -84,7 +116,7 @@ export default function VehiclesPage() {
                 <td>
                   <div className="flex gap-1">
                     {canEdit && !v.assignedTo && v.status === 'Elérhető' && <button onClick={() => setAssignTarget(v)} className="p-1.5 text-primary hover:bg-primary/10" title="Kiadás"><ArrowUpFromLine className="w-3.5 h-3.5" /></button>}
-                    {canEdit && v.assignedTo && <button onClick={() => returnVehicle(v)} className="p-1.5 text-primary hover:bg-primary/10" title="Visszavétel"><ArrowDownToLine className="w-3.5 h-3.5" /></button>}
+                    {canEdit && v.assignedTo && <button onClick={() => { void returnVehicle(v); }} className="p-1.5 text-primary hover:bg-primary/10" title="Visszavétel"><ArrowDownToLine className="w-3.5 h-3.5" /></button>}
                     {canEdit && <button onClick={() => { setForm({ plateNumber: v.plateNumber, type: v.type, makeModel: v.makeModel, year: v.year, km: v.km, nextService: v.nextService, nextInspection: v.nextInspection, status: v.status, notes: v.notes }); setEditing(v); }} className="p-1.5 text-primary hover:bg-primary/10" title="Szerkesztés"><Pencil className="w-3.5 h-3.5" /></button>}
                     {canEdit && <button onClick={() => setDeleteTarget(v)} className="p-1.5 text-destructive hover:bg-destructive/10" title="Törlés"><Trash2 className="w-3.5 h-3.5" /></button>}
                   </div>
@@ -102,7 +134,7 @@ export default function VehiclesPage() {
             <option value="">Válassz személyt...</option>
             {activePpl.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <div className="flex gap-3 justify-end"><button onClick={() => setAssignTarget(null)} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={assign} className="btn-mil-primary text-xs">Kiadás</button></div>
+          <div className="flex gap-3 justify-end"><button onClick={() => setAssignTarget(null)} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void assign(); }} className="btn-mil-primary text-xs">Kiadás</button></div>
         </div>
       </Modal>
 
@@ -119,13 +151,13 @@ export default function VehiclesPage() {
             <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Következő szerviz</label><input type="date" value={form.nextService} onChange={e => setForm({ ...form, nextService: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
             <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Műszaki vizsga</label><input type="date" value={form.nextInspection} onChange={e => setForm({ ...form, nextInspection: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
           </div>
-          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Vehicle['status'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjegyzés</label><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: '2px' }} /></div>
-          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={handleSave} className="btn-mil-primary text-xs">Mentés</button></div>
+          <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button></div>
         </div>
       </Modal>
 
-      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { store.remove(deleteTarget.id); logAction(user!.displayName, user!.username, 'törölve', 'Járművek', deleteTarget.plateNumber); toast.success('Törölve'); refresh(); } }} />
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { void (async () => { try { await store.remove(deleteTarget.id); await logAction(user!.displayName, user!.username, 'törölve', 'Járművek', deleteTarget.plateNumber); toast.success('Törölve'); setDeleteTarget(null); await refresh(); } catch (error) { toast.error(getErrorMessage(error)); } })(); } }} />
     </div>
   );
 }

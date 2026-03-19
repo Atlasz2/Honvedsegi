@@ -2,7 +2,7 @@ export type Role = 'reader' | 'admin' | 'fejleszto';
 
 export interface User {
   username: string;
-  password: string;
+  password?: string;
   displayName: string;
   role: Role;
   active: boolean;
@@ -19,6 +19,7 @@ export interface AuthToken {
 export interface Person {
   id: string;
   name: string;
+  sztsz: string;
   rank: string;
   unit: string;
   status: 'Aktív' | 'Tartalékos' | 'Szabadságon' | 'Leszerelt';

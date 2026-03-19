@@ -1,8 +1,25 @@
-import React, { useState } from 'react';
-import { activityLog } from '@/lib/store';
+import React, { useState, useEffect, useCallback } from 'react';
+import { activityLog, getErrorMessage } from '@/lib/store';
+import { ActivityLogEntry } from '@/lib/types';
+import { toast } from 'sonner';
 
 export default function ActivityLogPage() {
-  const [data] = useState(activityLog.getAll());
+  const [data, setData] = useState<ActivityLogEntry[]>([]);
+
+  const refresh = useCallback(async () => {
+    try {
+      setData(await activityLog.getAll());
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const iv = setInterval(() => { void refresh(); }, 30000);
+    return () => clearInterval(iv);
+  }, [refresh]);
+
   const actionClass: Record<string, string> = { 'létrehozva': 'badge-ongoing', 'módosítva': 'badge-reserve', 'törölve': 'badge-cancelled' };
 
   return (
