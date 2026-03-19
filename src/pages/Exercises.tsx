@@ -86,9 +86,9 @@ export default function Exercises() {
     refresh();
   };
 
-  const openCreate = () => { setForm({ ...emptyExercise }); setErrors({}); setCreating(true); };
+  const openCreate = () => { setForm({ ...emptyExercise, assigned: [] }); setErrors({}); setCreating(true); };
   const openEdit = (e: Exercise) => {
-    setForm({ name: e.name, type: e.type, startDate: e.startDate, endDate: e.endDate, location: e.location, maxPersonnel: e.maxPersonnel, description: e.description, status: e.status, assigned: e.assigned });
+    setForm({ name: e.name, type: e.type, startDate: e.startDate, endDate: e.endDate, location: e.location, maxPersonnel: e.maxPersonnel, description: e.description, status: e.status as any, assigned: e.assigned });
     setErrors({});
     setEditing(e);
   };
