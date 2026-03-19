@@ -2,95 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
-
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 220 20% 5%;
+    --foreground: 210 27% 93%;
+    --card: 216 17% 8%;
+    --card-foreground: 210 27% 93%;
+    --popover: 216 17% 8%;
+    --popover-foreground: 210 27% 93%;
+    --primary: 148 36% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 218 20% 12%;
+    --secondary-foreground: 210 27% 93%;
+    --muted: 218 20% 12%;
+    --muted-foreground: 216 12% 47%;
+    --accent: 45 53% 54%;
+    --accent-foreground: 220 20% 5%;
+    --destructive: 6 63% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 20% 21%;
+    --input: 218 20% 12%;
+    --ring: 148 36% 45%;
+    --radius: 2px;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.5rem;
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-background: 216 25% 6%;
+    --sidebar-foreground: 210 27% 93%;
+    --sidebar-primary: 148 36% 45%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 218 20% 12%;
+    --sidebar-accent-foreground: 210 27% 93%;
+    --sidebar-border: 222 20% 21%;
+    --sidebar-ring: 148 36% 45%;
+
+    --mil-brass: 45 53% 54%;
+    --mil-warning: 28 64% 53%;
+    --mil-surface-elevated: 218 20% 15%;
   }
 }
 
@@ -98,8 +44,208 @@ All colors MUST be HSL.
   * {
     @apply border-border;
   }
-
   body {
     @apply bg-background text-foreground;
+    font-family: 'Rajdhani', sans-serif;
   }
+}
+
+/* Military utility classes */
+@layer components {
+  .font-mono-mil {
+    font-family: 'Share Tech Mono', monospace;
+  }
+  .font-rajdhani {
+    font-family: 'Rajdhani', sans-serif;
+  }
+  .text-brass {
+    color: hsl(var(--mil-brass));
+  }
+  .bg-brass {
+    background-color: hsl(var(--mil-brass));
+  }
+  .text-mil-green {
+    color: hsl(var(--primary));
+  }
+  .border-mil-green {
+    border-color: hsl(var(--primary));
+  }
+  .tracking-military {
+    letter-spacing: 0.1em;
+  }
+  .tracking-military-wide {
+    letter-spacing: 0.3em;
+  }
+
+  /* Badge variants */
+  .badge-active {
+    @apply bg-primary/20 text-primary border border-primary/40;
+  }
+  .badge-reserve {
+    background: hsl(45 53% 54% / 0.15);
+    color: hsl(var(--mil-brass));
+    border: 1px solid hsl(45 53% 54% / 0.3);
+  }
+  .badge-leave {
+    @apply bg-blue-500/15 text-blue-400 border border-blue-500/30;
+  }
+  .badge-discharged {
+    @apply bg-muted text-muted-foreground border border-border;
+  }
+  .badge-planned {
+    @apply bg-blue-500/15 text-blue-400 border border-blue-500/30;
+  }
+  .badge-ongoing {
+    @apply bg-primary/20 text-primary border border-primary/40;
+  }
+  .badge-completed {
+    @apply bg-muted text-muted-foreground border border-border;
+  }
+  .badge-cancelled {
+    @apply bg-destructive/20 text-destructive border border-destructive/40;
+  }
+  .badge-urgent {
+    @apply bg-destructive/20 text-destructive border border-destructive/40;
+  }
+  .badge-important {
+    @apply bg-blue-500/15 text-blue-400 border border-blue-500/30;
+  }
+  .badge-general {
+    @apply bg-muted text-muted-foreground border border-border;
+  }
+  .badge-exercise {
+    @apply bg-primary/20 text-primary border border-primary/40;
+  }
+  .badge-admin-cat {
+    background: hsl(45 53% 54% / 0.15);
+    color: hsl(var(--mil-brass));
+    border: 1px solid hsl(45 53% 54% / 0.3);
+  }
+
+  /* Pulse animation for active items */
+  .pulse-dot {
+    @apply inline-block w-2 h-2 rounded-full bg-primary mr-2;
+    animation: pulse-green 2s ease-in-out infinite;
+  }
+  .pulse-dot-red {
+    @apply inline-block w-2 h-2 rounded-full bg-destructive mr-2;
+    animation: pulse-red 2s ease-in-out infinite;
+  }
+
+  /* Scanline overlay for sidebar */
+  .scanline-overlay {
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255, 255, 255, 0.01) 2px,
+      rgba(255, 255, 255, 0.01) 4px
+    );
+  }
+
+  /* Crosshair background */
+  .crosshair-bg {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Table styles */
+  .mil-table thead th {
+    @apply bg-background uppercase tracking-military text-muted-foreground text-xs font-semibold px-4 py-3 border-b;
+    font-family: 'Rajdhani', sans-serif;
+  }
+  .mil-table tbody tr {
+    @apply border-b border-border/50 transition-colors;
+  }
+  .mil-table tbody tr:nth-child(odd) {
+    background: hsl(216 17% 8%);
+  }
+  .mil-table tbody tr:nth-child(even) {
+    background: hsl(216 17% 7.5%);
+  }
+  .mil-table tbody tr:hover {
+    background: hsl(220 25% 12%);
+    @apply border-l-2 border-l-primary;
+  }
+  .mil-table td {
+    @apply px-4 py-3 text-sm;
+  }
+
+  /* Button variants */
+  .btn-mil-primary {
+    @apply bg-primary text-primary-foreground uppercase tracking-military font-semibold px-4 py-2 text-sm
+      hover:bg-primary/90 transition-colors;
+    border-radius: 2px;
+  }
+  .btn-mil-secondary {
+    @apply border border-primary text-primary uppercase tracking-military font-semibold px-4 py-2 text-sm
+      hover:bg-primary/10 transition-colors bg-transparent;
+    border-radius: 2px;
+  }
+  .btn-mil-danger {
+    @apply bg-destructive text-destructive-foreground uppercase tracking-military font-semibold px-4 py-2 text-sm
+      hover:bg-destructive/90 transition-colors;
+    border-radius: 2px;
+  }
+
+  /* Stats card */
+  .stats-card {
+    @apply bg-card border border-border p-4;
+    border-radius: 2px;
+    border-top: 2px solid hsl(var(--primary));
+  }
+  .stats-card .stats-number {
+    @apply text-3xl font-bold;
+    font-family: 'Share Tech Mono', monospace;
+    color: hsl(var(--primary));
+  }
+  .stats-card .stats-label {
+    @apply text-xs uppercase tracking-military text-muted-foreground mt-1;
+  }
+
+  /* Modal */
+  .mil-modal-overlay {
+    background: rgba(0, 0, 0, 0.8);
+  }
+  .mil-modal {
+    @apply bg-card border border-border;
+    border-radius: 2px;
+    border-top: 2px solid hsl(var(--primary));
+  }
+
+  /* Mono chip for IDs/serial numbers */
+  .mono-chip {
+    @apply inline-block px-2 py-0.5 text-xs;
+    font-family: 'Share Tech Mono', monospace;
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+    border-radius: 2px;
+  }
+}
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(220 20% 5%);
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(222 20% 21%);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(222 20% 28%);
 }
