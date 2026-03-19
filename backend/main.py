@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy import create_engine, text
 
 # SQLite adatbázis (file vagy :memory:)
-engine = create_engine("sqlite:///data.db", future=True)
+engine = create_engine("sqlite:///database/data.db", future=True)
 
 app = FastAPI(
     title="Honvédségi személyek API",
