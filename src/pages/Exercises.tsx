@@ -247,7 +247,7 @@ export default function Exercises() {
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
-            <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Exercise['status'] })}
+            <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as any })}
               className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
