@@ -71,6 +71,7 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
 export default function Personnel() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Person[]>([]);
+  const [summaryData, setSummaryData] = useState<Person[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('Összes');
   const [unitFilter, setUnitFilter] = useState<string>('Összes');
   const [searchInput, setSearchInput] = useState('');
@@ -83,26 +84,34 @@ export default function Personnel() {
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [sortBy, setSortBy] = useState<'name' | 'rank' | 'sztsz' | 'unit' | 'status' | 'joinDate'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
   const refresh = useCallback(async () => {
     try {
-      const result = await store.getPaged({
-        page,
-        pageSize,
-        search,
-        unit: unitFilter,
-        status: statusFilter,
-      });
+      const [result, allPeople] = await Promise.all([
+        store.getPaged({
+          page,
+          pageSize,
+          search,
+          unit: unitFilter,
+          status: statusFilter,
+          sortBy,
+          sortDir,
+        }),
+        store.getAll(),
+      ]);
       setData(result.items);
+      setSummaryData(allPeople);
       setTotal(result.total);
       setTotalPages(result.totalPages);
       setPage(result.page);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  }, [page, pageSize, search, unitFilter, statusFilter]);
+  }, [page, pageSize, search, unitFilter, statusFilter, sortBy, sortDir]);
 
   useEffect(() => {
     void refresh();
@@ -160,9 +169,22 @@ export default function Personnel() {
   };
 
   const statusCounts = { Aktív: 0, Tartalékos: 0, Szabadságon: 0, Leszerelt: 0 };
-  data.forEach(p => { if (p.status in statusCounts) statusCounts[p.status as keyof typeof statusCounts]++; });
+  summaryData.forEach(p => { if (p.status in statusCounts) statusCounts[p.status as keyof typeof statusCounts]++; });
 
   const openCreate = () => { setForm({ ...emptyPerson }); setErrors({}); setCreating(true); };
+  const handleSort = (field: 'name' | 'rank' | 'sztsz' | 'unit' | 'status' | 'joinDate') => {
+    if (sortBy === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortDir(field === 'rank' ? 'desc' : 'asc');
+    }
+    setPage(1);
+  };
+  const sortIndicator = (field: 'name' | 'rank' | 'sztsz' | 'unit' | 'status' | 'joinDate') => {
+    if (sortBy !== field) return '';
+    return sortDir === 'asc' ? ' ▲' : ' ▼';
+  };
   const openEdit = (p: Person) => {
     setForm({
       name: p.name,
@@ -228,12 +250,19 @@ export default function Personnel() {
             {s}
           </button>
         ))}
+
       </div>
 
       <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
           <thead><tr>
-            <th>Név</th><th>SZTSz</th><th>Rendfokozat</th><th>Alakulat</th><th>Státusz</th><th>Email</th><th>Telefon</th><th>Belépés</th>
+            <th><button onClick={() => handleSort('name')} className="text-left w-full">Név{sortIndicator('name')}</button></th>
+            <th><button onClick={() => handleSort('sztsz')} className="text-left w-full">SZTSz{sortIndicator('sztsz')}</button></th>
+            <th><button onClick={() => handleSort('rank')} className="text-left w-full">Rendfokozat{sortIndicator('rank')}</button></th>
+            <th><button onClick={() => handleSort('unit')} className="text-left w-full">Alakulat{sortIndicator('unit')}</button></th>
+            <th><button onClick={() => handleSort('status')} className="text-left w-full">Státusz{sortIndicator('status')}</button></th>
+            <th>Email</th><th>Telefon</th>
+            <th><button onClick={() => handleSort('joinDate')} className="text-left w-full">Belépés{sortIndicator('joinDate')}</button></th>
             {canEdit && <th>Műveletek</th>}
           </tr></thead>
           <tbody>

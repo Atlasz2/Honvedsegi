@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { trainings as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Training, TrainingAssignment, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import DatePickerInput from '@/components/DatePickerInput';
 
 const TYPES = ['Alapkiképzés','Szakmai kiképzés','Parancsnoki tanfolyam','Elsősegély','Lövészeti','Egyéb'];
@@ -18,6 +18,7 @@ export default function TrainingPage() {
   const [data, setData] = useState<Training[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
   const [filter, setFilter] = useState({ type: '', status: '' });
+  const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [editing, setEditing] = useState<Training | null>(null);
@@ -27,20 +28,26 @@ export default function TrainingPage() {
   const [deleteTarget, setDeleteTarget] = useState<Training | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [addPersonId, setAddPersonId] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [personSearch, setPersonSearch] = useState('');
+
+  const detailRef = useRef<Training | null>(null);
+  detailRef.current = detail;
 
   const refresh = useCallback(async () => {
     try {
       const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
       setData(nextData);
       setPersonnelData(nextPersonnel);
-      if (detail) {
-        const updatedDetail = nextData.find(item => item.id === detail.id) || null;
+      if (detailRef.current) {
+        const updatedDetail = nextData.find(item => item.id === detailRef.current!.id) || null;
         setDetail(updatedDetail);
       }
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  }, [detail]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -49,12 +56,19 @@ export default function TrainingPage() {
   }, [refresh]);
 
   const filtered = data.filter(t => {
+    const normalizedSearch = search.trim().toLowerCase();
+    if (normalizedSearch && ![t.name, t.type, t.location, t.organizer, t.description].some(value => value?.toLowerCase().includes(normalizedSearch))) return false;
     if (filter.type && t.type !== filter.type) return false;
     if (filter.status && t.status !== filter.status) return false;
-    if (dateFrom && t.endDate < dateFrom) return false;
-    if (dateTo && t.startDate > dateTo) return false;
+    if (dateFrom && t.endDate.slice(0, 10) < dateFrom) return false;
+    if (dateTo && t.startDate.slice(0, 10) > dateTo) return false;
     return true;
   });
+
+  const sortedFiltered = [...filtered].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pagedItems = sortedFiltered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -115,6 +129,9 @@ export default function TrainingPage() {
 
   const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
 
+  const trainingStatusCounts = { Tervezett: 0, Folyamatban: 0, Befejezett: 0 };
+  data.forEach(item => { if (item.status in trainingStatusCounts) trainingStatusCounts[item.status as keyof typeof trainingStatusCounts]++; });
+
   const openCreate = () => { setForm({ name: '', type: TYPES[0], startDate: '', endDate: '', location: '', organizer: '', maxPersonnel: 20, description: '', status: 'Tervezett', assigned: [] }); setErrors({}); setCreating(true); };
   const openEdit = (t: Training) => { setForm({ ...t }); setErrors({}); setDetail(null); setEditing(t); };
 
@@ -125,13 +142,29 @@ export default function TrainingPage() {
         {canEdit && <button onClick={openCreate} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új kiképzés</button>}
       </div>
 
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="stats-card"><div className="stats-number">{trainingStatusCounts.Tervezett}</div><div className="stats-label">Tervezett</div></div>
+        <div className="stats-card"><div className="stats-number">{trainingStatusCounts.Folyamatban}</div><div className="stats-label">Folyamatban</div></div>
+        <div className="stats-card"><div className="stats-number">{trainingStatusCounts.Befejezett}</div><div className="stats-label">Befejezett</div></div>
+      </div>
+
       <div className="flex gap-2 mb-6 flex-wrap items-end">
-        <select value={filter.type} onChange={e => setFilter({ ...filter, type: e.target.value })} className="bg-input border border-border px-3 py-1.5 text-xs uppercase" style={{ borderRadius: '2px' }}>
+        <div className="relative flex-1 max-w-xs">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Keresés név/típus/helyszín..."
+            className="w-full bg-input border border-border pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary"
+            style={{ borderRadius: '2px' }}
+          />
+        </div>
+        <select value={filter.type} onChange={e => { setFilter({ ...filter, type: e.target.value }); setPage(1); }} className="bg-input border border-border px-3 py-1.5 text-xs uppercase" style={{ borderRadius: '2px' }}>
           <option value="">Minden típus</option>
           {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {['', ...STATUSES].map(s => (
-          <button key={s} onClick={() => setFilter({ ...filter, status: s })} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter.status === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+          <button key={s} onClick={() => { setFilter({ ...filter, status: s }); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter.status === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
             {s || 'Összes'}
           </button>
         ))}
@@ -143,15 +176,15 @@ export default function TrainingPage() {
           <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum vége</label>
           <DatePickerInput value={dateTo} onChange={setDateTo} className="px-2 py-1.5 text-xs" />
         </div>
-        <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="btn-mil-secondary text-xs">Szűrő törlése</button>
+        <button onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }} className="btn-mil-secondary text-xs">Szűrő törlése</button>
       </div>
 
       <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
           <thead><tr><th>Megnevezés</th><th>Típus</th><th>Kezdete</th><th>Vége</th><th>Helyszín</th><th>Résztvevők</th><th>Státusz</th><th>Műveletek</th></tr></thead>
           <tbody>
-            {filtered.length === 0 && <tr><td colSpan={8} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
-            {filtered.map(t => (
+            {pagedItems.length === 0 && <tr><td colSpan={8} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
+            {pagedItems.map(t => (
               <tr key={t.id} className="cursor-pointer" onClick={() => setDetail(t)}>
                 <td className="font-semibold">{t.name}</td>
                 <td><span className="mono-chip">{t.type}</span></td>
@@ -172,6 +205,18 @@ export default function TrainingPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between mt-4 text-xs font-mono text-muted-foreground">
+        <div>Találat: {sortedFiltered.length}</div>
+        <div className="flex items-center gap-2">
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} className="bg-input border border-border px-2 py-1" style={{ borderRadius: '2px' }}>
+            {[10, 20].map(size => <option key={size} value={size}>{size}/oldal</option>)}
+          </select>
+          <button onClick={() => setPage(prev => Math.max(1, prev - 1))} className="btn-mil-secondary text-xs" disabled={safePage <= 1}>Előző</button>
+          <span>{safePage} / {totalPages}</span>
+          <button onClick={() => setPage(prev => Math.min(totalPages, prev + 1))} className="btn-mil-secondary text-xs" disabled={safePage >= totalPages}>Következő</button>
+        </div>
       </div>
 
       <Modal open={!!detail && !editing} onClose={() => setDetail(null)} title={detail?.name || ''} wide>
@@ -224,18 +269,24 @@ export default function TrainingPage() {
             </table>
 
             {canEdit && (
-              <div className="flex gap-2 items-end">
+              <div className="flex gap-2 items-end pt-2">
                 <div className="flex-1">
+                  <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Személy (keresés: név/rang/sztsz)</label>
+                  <input placeholder="Szűrés..." value={personSearch} onChange={e => setPersonSearch(e.target.value)} className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: '2px' }} />
                   <select value={addPersonId} onChange={e => setAddPersonId(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
-                    <option value="">Személy kiválasztása...</option>
-                    {activePpl.filter(p => !detail.assigned.some(a => a.personId === p.id)).map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                    <option value="">Válassz...</option>
+                    {activePpl.filter(p => !detail.assigned.some(a => a.personId === p.id) && (personSearch === '' || p.name.toLowerCase().includes(personSearch.toLowerCase()) || p.rank.toLowerCase().includes(personSearch.toLowerCase()) || p.sztsz.includes(personSearch))).slice(0, 50).map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.rank}) – {p.sztsz}</option>
                     ))}
                   </select>
                 </div>
                 <button onClick={() => { void addPerson(); }} className="btn-mil-primary text-xs">Hozzáadás</button>
               </div>
             )}
+
+            <div className="flex justify-end pt-2">
+              <button onClick={() => { setDetail(null); setPersonSearch(''); }} className="btn-mil-secondary text-xs">Bezárás</button>
+            </div>
           </div>
         )}
       </Modal>

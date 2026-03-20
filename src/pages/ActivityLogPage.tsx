@@ -21,13 +21,18 @@ export default function ActivityLogPage() {
   }, [refresh]);
 
   const actionClass: Record<string, string> = { 'létrehozva': 'badge-ongoing', 'módosítva': 'badge-reserve', 'törölve': 'badge-cancelled' };
+  const actionLabel: Record<ActivityLogEntry['action'], string> = {
+    létrehozva: 'létrehozta',
+    módosítva: 'módosította',
+    törölve: 'törölte',
+  };
 
   return (
     <div>
       <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military mb-6">Tevékenységnapló</h1>
       <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
-          <thead><tr><th>Időpont</th><th>Felhasználó</th><th>Művelet</th><th>Modul</th><th>Rekord</th></tr></thead>
+          <thead><tr><th>Időpont</th><th>Felhasználó</th><th>Művelet</th><th>Modul</th><th>Részletek</th></tr></thead>
           <tbody>
             {data.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
             {data.map(l => (
@@ -36,7 +41,7 @@ export default function ActivityLogPage() {
                 <td className="text-brass">{l.userName}</td>
                 <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${actionClass[l.action]}`} style={{ borderRadius: '2px' }}>{l.action}</span></td>
                 <td className="text-muted-foreground">{l.module}</td>
-                <td>{l.recordName}</td>
+                <td>{`${l.userName} ${actionLabel[l.action]}: ${l.recordName}`}</td>
               </tr>
             ))}
           </tbody>

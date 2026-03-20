@@ -1,32 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { personnel, exercises, equipment, supplies, activityLog, getErrorMessage } from '@/lib/store';
-import { Users, Crosshair, Package, AlertTriangle } from 'lucide-react';
+import DatePickerInput from '@/components/DatePickerInput';
+import { exercises, equipment, supplies, activityLog, duties, reports, getErrorMessage } from '@/lib/store';
+import { Users, Crosshair, Package, AlertTriangle, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [, setTick] = useState(0);
-  const [ppl, setPpl] = useState<any[]>([]);
   const [exs, setExs] = useState<any[]>([]);
   const [eqs, setEqs] = useState<any[]>([]);
   const [sups, setSups] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [dutiesData, setDutiesData] = useState<any[]>([]);
+  const [showOnDutyDetails, setShowOnDutyDetails] = useState(false);
+  const [pdfFrom, setPdfFrom] = useState('');
+  const [pdfTo, setPdfTo] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const [nextPpl, nextExs, nextEqs, nextSups, nextLogs] = await Promise.all([
-        personnel.getAll(),
+      const [nextExs, nextEqs, nextSups, nextLogs, nextDuties] = await Promise.all([
         exercises.getAll(),
         equipment.getAll(),
         supplies.getAll(),
         activityLog.getAll(),
+        duties.getAll(),
       ]);
-      setPpl(nextPpl);
       setExs(nextExs);
       setEqs(nextEqs);
       setSups(nextSups);
       setLogs(nextLogs);
+      setDutiesData(nextDuties);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -41,7 +45,12 @@ export default function Dashboard() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  const activePpl = ppl.filter(p => p.status !== 'Leszerelt').length;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const onDutyToday = dutiesData
+    .filter(d => d.status !== 'Lemondva' && d.startDate.slice(0, 10) <= todayIso && d.endDate.slice(0, 10) >= todayIso)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const onDutyTodayCount = new Set(onDutyToday.map(d => d.personId)).size;
+
   const now = new Date();
   const in30 = new Date(now.getTime() + 30 * 86400000);
   const upcoming = exs.filter(e => {
@@ -56,15 +65,24 @@ export default function Dashboard() {
     .sort((a, b) => a.startDate.localeCompare(b.startDate))
     .slice(0, 3);
 
+  const handleDownloadPdf = async () => {
+    try {
+      await reports.downloadOperationsPdf({ dateFrom: pdfFrom || undefined, dateTo: pdfTo || undefined });
+      toast.success('PDF riport letöltve');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military mb-6 text-foreground">Áttekintés</h1>
 
       <div className="grid grid-cols-4 gap-4 mb-8">
-        <button onClick={() => navigate('/personnel')} className="stats-card text-left hover:bg-secondary transition-colors">
+        <button onClick={() => setShowOnDutyDetails(prev => !prev)} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><Users className="w-4 h-4 text-primary" /></div>
-          <div className="stats-number">{activePpl}</div>
-          <div className="stats-label">Aktív személyzet</div>
+          <div className="stats-number">{onDutyTodayCount}</div>
+          <div className="stats-label">Ma szolgálatban</div>
         </button>
         <button onClick={() => navigate('/exercises')} className="stats-card text-left hover:bg-secondary transition-colors">
           <div className="flex items-center gap-2 mb-2"><Crosshair className="w-4 h-4 text-primary" /></div>
@@ -81,6 +99,42 @@ export default function Dashboard() {
           <div className="stats-number text-warning" style={{ color: 'hsl(var(--mil-warning))' }}>{lowStock}</div>
           <div className="stats-label">Alacsony készlet</div>
         </button>
+      </div>
+
+      {showOnDutyDetails && (
+        <div className="bg-card border border-border mb-6 p-4" style={{ borderRadius: '2px' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm uppercase tracking-military font-mono text-primary">Mai szolgálatok részletezése</h2>
+            <button onClick={() => setShowOnDutyDetails(false)} className="btn-mil-secondary text-xs">Bezárás</button>
+          </div>
+          <div className="space-y-2">
+            {onDutyToday.length === 0 && <p className="text-xs text-muted-foreground font-mono">Ma nincs aktív szolgálat.</p>}
+            {onDutyToday.map(item => (
+              <div key={item.id} className="border border-border px-3 py-2" style={{ borderRadius: '2px' }}>
+                <p className="text-sm"><span className="text-primary font-mono">{item.type}</span> — {item.personName}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-card border border-border mb-6 p-4" style={{ borderRadius: '2px' }}>
+        <div className="flex items-center gap-2 mb-3">
+          <FileText className="w-4 h-4 text-primary" />
+          <h2 className="text-sm uppercase tracking-military font-mono text-primary">PDF lekérdezés</h2>
+        </div>
+        <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum eleje</label>
+            <DatePickerInput value={pdfFrom} onChange={setPdfFrom} className="text-xs" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum vége</label>
+            <DatePickerInput value={pdfTo} onChange={setPdfTo} className="text-xs" />
+          </div>
+          <button onClick={() => { setPdfFrom(''); setPdfTo(''); }} className="btn-mil-secondary text-xs">Törlés</button>
+          <button onClick={() => { void handleDownloadPdf(); }} className="btn-mil-primary text-xs">PDF letöltés</button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 mb-4">

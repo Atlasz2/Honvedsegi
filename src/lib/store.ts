@@ -146,7 +146,7 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
 
 export const personnel = {
   ...createCrud<Person>('/personnel'),
-  getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string }) => {
+  getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
     const query = new URLSearchParams({
       page: String(params.page),
       page_size: String(params.pageSize),
@@ -154,6 +154,8 @@ export const personnel = {
     if (params.search?.trim()) query.set('q', params.search.trim());
     if (params.unit?.trim() && params.unit !== 'Összes') query.set('unit', params.unit.trim());
     if (params.status?.trim() && params.status !== 'Összes') query.set('status_filter', params.status.trim());
+    if (params.sortBy?.trim()) query.set('sort_by', params.sortBy.trim());
+    if (params.sortDir) query.set('sort_dir', params.sortDir);
     return request<PersonnelPagedResult>(`/personnel/paged?${query.toString()}`);
   },
 };
@@ -225,3 +227,45 @@ export function initializeData() {
   // The backend seeds the database on startup.
 }
 
+
+
+export const reports = {
+  downloadOperationsPdf: async (params?: { dateFrom?: string; dateTo?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.dateFrom) query.set('date_from', params.dateFrom);
+    if (params?.dateTo) query.set('date_to', params.dateTo);
+
+    const token = getAccessToken();
+    const headers = new Headers();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    const response = await fetch(`${API_BASE}/reports/operations.pdf${query.toString() ? `?${query.toString()}` : ''}`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        throw new Error(parsed?.detail || 'PDF lekérdezés sikertelen');
+      } catch {
+        throw new Error(text || 'PDF lekérdezés sikertelen');
+      }
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const from = params?.dateFrom || 'kezdet';
+    const to = params?.dateTo || 'veg';
+    link.href = url;
+    link.download = `hadmuveleti-riport-${from}-${to}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
+};

@@ -5,7 +5,8 @@ from typing import Any, Callable, TypeVar
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, or_, select, text
+from fastapi.responses import Response
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from .db import Base, SessionLocal, engine, get_db
@@ -89,6 +90,14 @@ def _as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _date_overlap(start_value: str, end_value: str, range_start: date, range_end: date) -> bool:
+    start = _parse_iso_date(start_value)
+    end = _parse_iso_date(end_value)
+    if not start or not end:
+        return False
+    return start <= range_end and end >= range_start
 
 
 def _parse_iso_date(value: str) -> date | None:
@@ -536,6 +545,89 @@ def operations_summary(
     }
 
 
+@app.get("/api/reports/operations.pdf")
+def operations_pdf_report(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_get_current_user),
+):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"PDF modul hiba: {exc}") from exc
+
+    start_date = _parse_iso_date(date_from) if date_from else _utc_now().date()
+    end_date = _parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
+
+    if not start_date or not end_date:
+        raise HTTPException(status_code=400, detail="Érvénytelen dátumtartomány")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="A záró dátum nem lehet korábbi")
+
+    exercise_items = [
+        item for item in db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
+        if _date_overlap(item.start_date, item.end_date, start_date, end_date)
+    ]
+    training_items = [
+        item for item in db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
+        if _date_overlap(item.start_date, item.end_date, start_date, end_date)
+    ]
+    duty_items = [
+        item for item in db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
+        if _date_overlap(item.start_date, item.end_date, start_date, end_date)
+    ]
+
+    from io import BytesIO
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    y = height - 40
+
+    def line(text_value: str):
+        nonlocal y
+        if y < 40:
+            pdf.showPage()
+            y = height - 40
+        pdf.drawString(40, y, text_value)
+        y -= 14
+
+    pdf.setFont("Helvetica-Bold", 12)
+    line("Hadmuveleti riport")
+    pdf.setFont("Helvetica", 10)
+    line(f"Intervallum: {start_date.isoformat()} - {end_date.isoformat()}")
+    line("")
+
+    pdf.setFont("Helvetica-Bold", 11)
+    line(f"Gyakorlatok ({len(exercise_items)} db)")
+    pdf.setFont("Helvetica", 9)
+    for item in exercise_items[:300]:
+        line(f"- {item.start_date} -> {item.end_date} | {item.name} | {item.location} | {item.status}")
+
+    line("")
+    pdf.setFont("Helvetica-Bold", 11)
+    line(f"Kikepzesek ({len(training_items)} db)")
+    pdf.setFont("Helvetica", 9)
+    for item in training_items[:300]:
+        line(f"- {item.start_date} -> {item.end_date} | {item.name} | {item.location} | {item.status}")
+
+    line("")
+    pdf.setFont("Helvetica-Bold", 11)
+    line(f"Szolgalatok ({len(duty_items)} db)")
+    pdf.setFont("Helvetica", 9)
+    for item in duty_items[:400]:
+        line(f"- {item.start_date} -> {item.end_date} | {item.type} | {item.person_name} | {item.location} | {item.status}")
+
+    pdf.save()
+    data = buffer.getvalue()
+    buffer.close()
+
+    return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=hadmuveleti-riport.pdf"})
+
+
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     user = db.scalar(select(UserModel).where(UserModel.username == payload.username))
@@ -564,7 +656,7 @@ def logout(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
     _: UserModel = Depends(_get_current_user),
-) -> None:
+):
     token_value = authorization.split(" ", 1)[1].strip()
     session_token = db.scalar(select(SessionTokenModel).where(SessionTokenModel.token == token_value))
     if session_token:
@@ -573,8 +665,10 @@ def logout(
 
 
 @app.get("/api/users", response_model=list[UserRead])
-def list_users(db: Session = Depends(get_db), _: UserModel = Depends(_require_admin)) -> list[UserRead]:
+def list_users(db: Session = Depends(get_db), current_user: UserModel = Depends(_require_admin)) -> list[UserRead]:
     items = db.scalars(select(UserModel).order_by(UserModel.username)).all()
+    if current_user.role != "fejleszto":
+        items = [u for u in items if u.role != "fejleszto"]
     return [_to_user_read(item) for item in items]
 
 
@@ -604,8 +698,10 @@ def update_user(username: str, payload: UserUpdate, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Felhasználó nem található")
     if user.username == current_user.username:
         raise HTTPException(status_code=400, detail="Saját felhasználó nem módosítható itt")
+    if user.protected:
+        raise HTTPException(status_code=403, detail="Vedett felhasznalo nem modositható")
     if user.role == "fejleszto" and current_user.role != "fejleszto":
-        raise HTTPException(status_code=403, detail="Fejlesztő felhasználót csak fejlesztő kezelhet")
+        raise HTTPException(status_code=404, detail="Felhasználó nem található")
     if payload.role == "fejleszto" and current_user.role != "fejleszto":
         raise HTTPException(status_code=403, detail="Fejlesztő szerepet csak fejlesztő állíthat be")
     user.display_name = payload.display_name
@@ -616,6 +712,27 @@ def update_user(username: str, payload: UserUpdate, db: Session = Depends(get_db
     db.commit()
     db.refresh(user)
     return _to_user_read(user)
+
+
+
+
+@app.delete("/api/users/{username}", status_code=204)
+def delete_user(username: str, db: Session = Depends(get_db), current_user: UserModel = Depends(_require_admin)):
+    user = db.scalar(select(UserModel).where(UserModel.username == username))
+    if not user:
+        raise HTTPException(status_code=404, detail="Felhasználó nem található")
+    if user.username == current_user.username:
+        raise HTTPException(status_code=400, detail="Saját felhasználó nem törölhető")
+    if user.role == "fejleszto" and current_user.role != "fejleszto":
+        raise HTTPException(status_code=404, detail="Felhasználó nem található")
+    if user.protected:
+        raise HTTPException(status_code=403, detail="Vedett felhasznalo nem torolheto")
+    
+    # Logout all sessions for this user
+    db.query(SessionTokenModel).filter(SessionTokenModel.user_id == user.id).delete()
+    
+    db.delete(user)
+    db.commit()
 
 
 @app.get("/api/personnel", response_model=list[PersonRead])
@@ -631,6 +748,8 @@ def list_personnel_paged(
     q: str = "",
     unit: str = "",
     status_filter: str = "",
+    sort_by: str = "name",
+    sort_dir: str = "asc",
     db: Session = Depends(get_db),
     _: UserModel = Depends(_get_current_user),
 ):
@@ -659,12 +778,41 @@ def list_personnel_paged(
         base_query = base_query.where(condition)
         count_query = count_query.where(condition)
 
+    rank_order = case(
+        (PersonModel.rank == "Közlegény", 1),
+        (PersonModel.rank == "Tizedes", 2),
+        (PersonModel.rank == "Szakaszvezető", 3),
+        (PersonModel.rank == "Őrmester", 4),
+        (PersonModel.rank == "Törzsőrmester", 5),
+        (PersonModel.rank == "Főtörzsőrmester", 6),
+        (PersonModel.rank == "Zászlós", 7),
+        (PersonModel.rank == "Törzszászlós", 8),
+        (PersonModel.rank == "Főtörzszászlós", 9),
+        (PersonModel.rank == "Hadnagy", 10),
+        (PersonModel.rank == "Főhadnagy", 11),
+        (PersonModel.rank == "Százados", 12),
+        (PersonModel.rank == "Őrnagy", 13),
+        (PersonModel.rank == "Alezredes", 14),
+        (PersonModel.rank == "Ezredes", 15),
+        else_=999,
+    )
+    sort_fields = {
+        "name": PersonModel.name,
+        "rank": rank_order,
+        "sztsz": PersonModel.sztsz,
+        "unit": PersonModel.unit,
+        "status": PersonModel.status,
+        "joinDate": PersonModel.join_date,
+    }
+    sort_column = sort_fields.get(sort_by, PersonModel.name)
+    order_clause = sort_column.desc() if sort_dir.lower() == "desc" else sort_column.asc()
+
     total = db.scalar(count_query) or 0
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
     offset = (page - 1) * page_size
 
-    items = db.scalars(base_query.order_by(PersonModel.name).offset(offset).limit(page_size)).all()
+    items = db.scalars(base_query.order_by(order_clause, PersonModel.name.asc()).offset(offset).limit(page_size)).all()
 
     return {
         "items": [_serialize_person(item).model_dump() for item in items],
@@ -703,7 +851,7 @@ def update_person(item_id: str, payload: PersonUpdate, db: Session = Depends(get
 
 
 @app.delete("/api/personnel/{item_id}", status_code=204)
-def delete_person(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_person(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, PersonModel, item_id)
     db.delete(item)
     db.commit()
@@ -735,7 +883,7 @@ def update_exercise(item_id: str, payload: ExerciseUpdate, db: Session = Depends
 
 
 @app.delete("/api/exercises/{item_id}", status_code=204)
-def delete_exercise(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_exercise(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, ExerciseModel, item_id)
     db.delete(item)
     db.commit()
@@ -767,7 +915,7 @@ def update_training(item_id: str, payload: TrainingUpdate, db: Session = Depends
 
 
 @app.delete("/api/trainings/{item_id}", status_code=204)
-def delete_training(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_training(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, TrainingModel, item_id)
     db.delete(item)
     db.commit()
@@ -830,7 +978,7 @@ def return_equipment(item_id: str, db: Session = Depends(get_db), _: UserModel =
 
 
 @app.delete("/api/equipment/{item_id}", status_code=204)
-def delete_equipment(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_equipment(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, EquipmentModel, item_id)
     db.delete(item)
     db.commit()
@@ -890,7 +1038,7 @@ def create_supply_movement(item_id: str, payload: SupplyMovementCreate, db: Sess
 
 
 @app.delete("/api/supplies/{item_id}", status_code=204)
-def delete_supply(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_supply(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, SupplyModel, item_id)
     db.delete(item)
     db.commit()
@@ -946,7 +1094,7 @@ def return_vehicle(item_id: str, db: Session = Depends(get_db), _: UserModel = D
 
 
 @app.delete("/api/vehicles/{item_id}", status_code=204)
-def delete_vehicle(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_vehicle(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, VehicleModel, item_id)
     db.delete(item)
     db.commit()
@@ -978,7 +1126,7 @@ def update_duty(item_id: str, payload: DutyUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/api/duties/{item_id}", status_code=204)
-def delete_duty(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_duty(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, DutyModel, item_id)
     db.delete(item)
     db.commit()
@@ -1019,7 +1167,7 @@ def update_announcement(item_id: str, payload: AnnouncementUpdate, db: Session =
 
 
 @app.delete("/api/announcements/{item_id}", status_code=204)
-def delete_announcement(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> None:
+def delete_announcement(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, AnnouncementModel, item_id)
     db.delete(item)
     db.commit()
