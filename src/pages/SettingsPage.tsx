@@ -52,8 +52,8 @@ export default function SettingsPage() {
     return true;
   };
 
-  const availableRoles: Role[] = isDev ? ['reader', 'admin', 'fejleszto'] : ['reader', 'admin'];
-  const roleBadge: Record<string, string> = { admin: 'ADMIN', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
+  const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin', 'fejleszto'] : ['reader', 'editor', 'admin'];
+  const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
 
   return (
     <div>

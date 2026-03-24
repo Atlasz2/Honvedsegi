@@ -18,19 +18,44 @@ from .models import (
     UserModel,
     VehicleModel,
 )
-from .security import hash_password
+from .security import assert_password_strength, hash_password
+
+
+def _require_secret(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"Hiányzó kötelező környezeti változó: {name}. "
+            "Belső hálózati élesítéshez ne használj hardcode-olt jelszót."
+        )
+    assert_password_strength(value)
+    return value
+
+
+def _optional_secret_for_nonprod(name: str, default_value: str) -> str:
+    backend_env = os.getenv("BACKEND_ENV", "development").strip().lower()
+    value = os.getenv(name, "").strip()
+    if value:
+        assert_password_strength(value)
+        return value
+    if backend_env == "production":
+        raise RuntimeError(f"Production módban kötelező megadni: {name}")
+    assert_password_strength(default_value)
+    return default_value
 
 
 def seed_database(db: Session) -> None:
     if db.query(UserModel).first():
         return
 
-    dev_pwd = os.getenv("BACKEND_DEV_MASTER_PASSWORD", "SecureDevInit2026")
+    admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
+    dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
     users = [
-        UserModel(username="admin", password_hash=hash_password("admin123"), display_name="Szabó Anna", role="admin", active=True, protected=False),
-        UserModel(username="kovacs", password_hash=hash_password("admin123"), display_name="Kovács János", role="reader", active=True, protected=False),
-        UserModel(username="nagy", password_hash=hash_password("admin123"), display_name="Nagy Péter", role="reader", active=True, protected=False),
-        UserModel(username="dev", password_hash=hash_password("dev123"), display_name="Fejlesztő", role="fejleszto", active=True, protected=False),
+        UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
+        UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
+        UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
         UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
     ]
 
@@ -40,9 +65,9 @@ def seed_database(db: Session) -> None:
         PersonModel(id="p3", name="Nagy Péter", sztsz="10000003", rank="Tizedes", unit="1. szakasz", status="Tartalékos", email="nagy.peter@gmail.com", join_date="2020-09-10"),
         PersonModel(id="p4", name="Horváth Zoltán", sztsz="10000004", rank="Őrmester", unit="2. szakasz", status="Aktív", email="horvath.z@honved.hu", phone="+36 70 555 6666", join_date="2017-01-20"),
         PersonModel(id="p5", name="Kiss Erzsébet", sztsz="10000005", rank="Főhadnagy", unit="Törzs", status="Szabadságon", email="kiss.e@honved.hu", join_date="2015-07-04", notes="Szülési szabadság"),
-        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Közlegény", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
+        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Közkatona", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
         PersonModel(id="p9", name="Molnár Dóra", sztsz="10000009", rank="Hadnagy", unit="Törzs", status="Aktív", email="molnar.d@honved.hu", phone="+36 30 999 0000", join_date="2020-03-01"),
-        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Közlegény", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
+        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Közkatona", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
         PersonModel(id="p11", name="Lukács Béla", sztsz="10000011", rank="Törzsőrmester", unit="2. szakasz", status="Aktív", email="lukacs.b@honved.hu", join_date="2014-08-22"),
         PersonModel(id="p12", name="Farkas Réka", sztsz="10000012", rank="Százados", unit="Törzs", status="Aktív", email="farkas.r@honved.hu", phone="+36 20 444 5555", join_date="2012-04-10"),
     ]
@@ -125,27 +150,38 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         db.query(model).delete()
     db.commit()
 
-    dev_pwd = os.getenv("BACKEND_DEV_MASTER_PASSWORD", "SecureDevInit2026")
+    admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
+    dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
     users = [
-        UserModel(username="admin", password_hash=hash_password("admin123"), display_name="Szabó Anna", role="admin", active=True, protected=False),
-        UserModel(username="kovacs", password_hash=hash_password("admin123"), display_name="Kovács János", role="reader", active=True, protected=False),
-        UserModel(username="nagy", password_hash=hash_password("admin123"), display_name="Nagy Péter", role="reader", active=True, protected=False),
-        UserModel(username="dev", password_hash=hash_password("dev123"), display_name="Fejlesztő", role="fejleszto", active=True, protected=False),
+        UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
+        UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
+        UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
         UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
     ]
 
-    first_names = [
+    male_first_names = [
         "Ádám", "Bence", "Csaba", "Dávid", "Erik", "Ferenc", "Gábor", "Hunor", "István", "János", "Kristóf", "Levente",
-        "Márk", "Norbert", "Olivér", "Péter", "Richárd", "Sándor", "Tamás", "Viktor", "Zoltán", "Anita", "Beáta", "Csilla",
-        "Dóra", "Erika", "Fanni", "Gabriella", "Hanna", "Ilona", "Judit", "Katalin", "Lilla", "Mária", "Nóra", "Orsolya",
-        "Petra", "Réka", "Szilvia", "Tímea", "Virág", "Zsófia"
+        "Márk", "Norbert", "Olivér", "Péter", "Richárd", "Sándor", "Tamás", "Viktor", "Zoltán", "Máté", "Balázs", "Attila",
+    ]
+    female_first_names = [
+        "Anita", "Beáta", "Csilla", "Dóra", "Erika", "Fanni", "Gabriella", "Hanna", "Ilona", "Judit", "Katalin", "Lilla",
+        "Mária", "Nóra", "Orsolya", "Petra", "Réka", "Szilvia", "Tímea", "Virág", "Zsófia", "Eszter", "Noémi", "Anna",
     ]
     last_names = [
         "Kovács", "Szabó", "Nagy", "Tóth", "Varga", "Kiss", "Molnár", "Németh", "Farkas", "Horváth", "Balogh", "Papp",
         "Lakatos", "Takács", "Juhász", "Mészáros", "Oláh", "Simon", "Rácz", "Fekete", "Bíró", "Boros", "Kelemen", "Lukács",
-        "Gulyás", "Sipos", "Veres", "Bodnár", "Király", "Szalai"
+        "Gulyás", "Sipos", "Veres", "Bodnár", "Király", "Szalai",
     ]
-    ranks = ["Közlegény", "Tizedes", "Szakaszvezető", "Őrmester", "Törzsőrmester", "Főtörzsőrmester", "Hadnagy", "Főhadnagy", "Százados", "Őrnagy"]
+    battalion_rank_weights = [
+        ("Közkatona", 22), ("Tizedes", 16), ("Szakaszvezető", 18), ("Őrmester", 16), ("Törzsőrmester", 10),
+        ("Főtörzsőrmester", 7), ("Hadnagy", 5), ("Főhadnagy", 3), ("Százados", 2), ("Őrnagy", 1),
+    ]
+    staff_rank_weights = [
+        ("Szakaszvezető", 10), ("Őrmester", 12), ("Törzsőrmester", 15), ("Főtörzsőrmester", 12), ("Hadnagy", 12),
+        ("Főhadnagy", 14), ("Százados", 14), ("Őrnagy", 7), ("Alezredes", 3), ("Ezredes", 1),
+    ]
 
     unit_plan = {
         "31 TVZ": 300,
@@ -153,6 +189,29 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         "19 TVZ": 300,
         "Ezredtörzs": 100,
     }
+
+    locations_by_unit = {
+        "31 TVZ": ["Budapest", "Szentendre", "Gödöllő", "Cegléd"],
+        "83 TVZ": ["Kecskemét", "Szolnok", "Jászberény", "Tiszakécske"],
+        "19 TVZ": ["Veszprém", "Pápa", "Tapolca", "Ajka"],
+        "Ezredtörzs": ["Budapest", "Szentendre", "Veszprém"],
+    }
+    street_names = [
+        "Kossuth Lajos utca", "Petőfi Sándor utca", "Rákóczi út", "Ady Endre utca", "József Attila utca",
+        "Dózsa György út", "Szabadság tér", "Templom utca", "Fő utca", "Béke utca",
+    ]
+
+    def _pick_rank(unit_name: str) -> str:
+        data = staff_rank_weights if unit_name == "Ezredtörzs" else battalion_rank_weights
+        return rng.choices([name for name, _ in data], weights=[w for _, w in data], k=1)[0]
+
+    def _slug(value: str) -> str:
+        return (
+            value.lower()
+            .replace("á", "a").replace("é", "e").replace("í", "i")
+            .replace("ó", "o").replace("ö", "o").replace("ő", "o")
+            .replace("ú", "u").replace("ü", "u").replace("ű", "u")
+        )
 
     personnel: list[PersonModel] = []
     person_names: dict[str, str] = {}
@@ -164,25 +223,32 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     for unit, count in unit_plan.items():
         for _ in range(count):
             person_id = f"p{person_counter}"
-            first = rng.choice(first_names)
+            first = rng.choice(female_first_names if rng.random() < 0.18 else male_first_names)
             last = rng.choice(last_names)
-            full_name = f"{last} {first} {person_counter:03d}"
+            full_name = f"{last} {first}"
             status = rng.choices(["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"], weights=[76, 16, 6, 2], k=1)[0]
 
             join_year = rng.randint(2010, 2025)
             join_month = rng.randint(1, 12)
             join_day = rng.randint(1, 28)
+            birth_year = rng.randint(1976, 2004)
+            birth_month = rng.randint(1, 12)
+            birth_day = rng.randint(1, 28)
+            city = rng.choice(locations_by_unit[unit])
+            house_number = rng.randint(1, 178)
 
             personnel.append(
                 PersonModel(
                     id=person_id,
                     name=full_name,
                     sztsz=str(sztsz_counter),
-                    rank=rng.choice(ranks),
+                    rank=_pick_rank(unit),
                     unit=unit,
                     status=status,
-                    email=f"katona{person_counter}@honved.local",
-                    phone=f"+36 {rng.choice([20,30,70])} {rng.randint(100,999)} {rng.randint(1000,9999)}",
+                    email=f"{_slug(last)}.{_slug(first)}{rng.randint(1, 99)}@honved.local",
+                    phone=f"+36 {rng.choice([20, 30, 70])} {rng.randint(100, 999)} {rng.randint(1000, 9999)}",
+                    birth_date=f"{birth_year:04d}-{birth_month:02d}-{birth_day:02d}",
+                    address=f"{city}, {rng.choice(street_names)} {house_number}.",
                     join_date=f"{join_year:04d}-{join_month:02d}-{join_day:02d}",
                     notes="",
                 )
@@ -194,8 +260,10 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
 
     active_or_reserve = [p.id for p in personnel if p.status in {"Aktív", "Tartalékos"}]
 
-    exercise_types = ["Lőgyakorlat", "Terepgyakorlat", "Törzsgyakorlat", "Mesterlövész", "NBC védelmi", "Egyéb"]
-    training_types = ["Alapkiképzés", "Szakmai kiképzés", "Parancsnoki tanfolyam", "Elsősegély", "Lövészeti", "Egyéb"]
+    exercise_types = ["Lőgyakorlat", "Terepgyakorlat", "Törzsgyakorlat", "Mesterlövész", "NBC védelmi", "Válságkezelési"]
+    exercise_name_prefixes = ["Acél Pajzs", "Vihar", "Őrszem", "Turul", "Hajnal", "Kard", "Fokozott Készenlét", "Zrínyi"]
+    training_types = ["Alapkiképzés", "Szakmai kiképzés", "Parancsnoki tanfolyam", "Elsősegély", "Lövészeti", "Híradó"]
+    training_name_prefixes = ["Törzsvezetési", "Rádióforgalmi", "Harcászati", "Lövészeti", "Logisztikai", "Egészségügyi"]
     duty_types = ["Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás", "Egyéb"]
 
     base_date = datetime(2026, 1, 1)
@@ -208,17 +276,24 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         max_personnel = rng.randint(12, 60)
         assigned_count = rng.randint(5, min(max_personnel, 35))
         assigned_ids = rng.sample(active_or_reserve, assigned_count)
-        assigned = [{"personId": pid, "personName": person_names[pid], "role": rng.choice(["résztvevő", "rajparancsnok", "megfigyelő", "biztosító"])} for pid in assigned_ids]
+        assigned = [
+            {"personId": pid, "personName": person_names[pid], "role": rng.choice(["résztvevő", "rajparancsnok", "megfigyelő", "biztosító"])}
+            for pid in assigned_ids
+        ]
         exercises.append(
             ExerciseModel(
                 id=f"e{index}",
-                name=f"Gyakorlat {index:03d}",
+                name=f"{rng.choice(exercise_name_prefixes)} {rng.randint(1, 4)}/{(base_date.year % 100):02d}",
                 type=rng.choice(exercise_types),
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Esztergom, Lőtér", "Veszprém, Kiképzőbázis", "Budapest, Ludovika", "Kiskunhalas", "Táborfalva"]),
                 max_personnel=max_personnel,
-                description="Automatikusan generált próbagyakorlat.",
+                description=rng.choice([
+                    "Raj és szakasz szintű lő- és mozgásfoglalkozás.",
+                    "Objektumvédelmi és reagálási eljárások gyakorlása.",
+                    "Parancsnoki döntési ciklus és törzsmunka gyakorlása.",
+                ]),
                 status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
                 assigned=assigned,
             )
@@ -232,18 +307,25 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         max_personnel = rng.randint(10, 50)
         assigned_count = rng.randint(4, min(max_personnel, 28))
         assigned_ids = rng.sample(active_or_reserve, assigned_count)
-        assigned = [{"personId": pid, "personName": person_names[pid], "attendance": rng.choice(["Tervezett", "Megjelent", "Hiányzott", "Beteg"])} for pid in assigned_ids]
+        assigned = [
+            {"personId": pid, "personName": person_names[pid], "attendance": rng.choice(["Tervezett", "Megjelent", "Hiányzott", "Beteg"])}
+            for pid in assigned_ids
+        ]
         trainings.append(
             TrainingModel(
                 id=f"t{index}",
-                name=f"Kiképzés {index:03d}",
+                name=f"{rng.choice(training_name_prefixes)} felkészítés {index:03d}",
                 type=rng.choice(training_types),
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Budapest", "Kecskemét", "Szolnok", "Debrecen", "Esztergom"]),
                 organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
                 max_personnel=max_personnel,
-                description="Automatikusan generált próbakiképzés.",
+                description=rng.choice([
+                    "Beosztáshoz kötött éves felkészítés.",
+                    "Minősítő és ismétlő foglalkozás.",
+                    "Elméleti és gyakorlati modulok kombinált végrehajtása.",
+                ]),
                 status=rng.choice(["Tervezett", "Folyamatban", "Befejezett"]),
                 assigned=assigned,
             )
@@ -264,7 +346,12 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 location=rng.choice(["Laktanya", "Főkapu", "Parancsnoki épület", "Lőtér", "Raktárbázis"]),
                 person_id=pid,
                 person_name=person_names[pid],
-                notes="Automatikusan generált próbaszolgálat.",
+                notes=rng.choice([
+                    "Váltás átadás-átvétel naplózva.",
+                    "Szolgálati eligazítás megtartva.",
+                    "Rendkívüli esemény nem történt.",
+                    "Megerősített készültségi fokozat.",
+                ]),
                 status=rng.choice(["Tervezett", "Teljesített", "Lemondva"]),
             )
         )
@@ -278,10 +365,14 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 id=f"eq{index}",
                 name=rng.choice(["Rohamsisak M92", "Golyóálló mellény", "Éjjellátó NVG-7", "Távcső", "Rádiókészlet"]),
                 category=rng.choice(equipment_categories),
-                serial_number=f"SER-{index:05d}",
-                qr_code=f"QR-{index:05d}",
+                serial_number=f"HDF-{rng.randint(11, 99)}-{index:05d}",
+                qr_code=f"EQ-{base_date.year}-{index:05d}",
                 condition=rng.choice(["Jó", "Javítandó", "Selejtezendő"]),
-                description="Automatikusan generált eszköz.",
+                description=rng.choice([
+                    "Éves felülvizsgálatra kötelezett eszköz.",
+                    "Raktári nyilvántartás szerint kiadható.",
+                    "Műszaki állapot ellenőrzése szükséges következő ciklusban.",
+                ]),
                 checked_out_to=assigned_to,
                 checked_out_to_name=person_names[assigned_to] if assigned_to else None,
                 checked_out_date="2026-03-01" if assigned_to else None,
@@ -290,30 +381,44 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         )
 
     supplies: list[SupplyModel] = []
+    supply_templates = [
+        ("5.56x45 NATO lőszer", "Lőszer", "db"),
+        ("7.62x39 lőszer", "Lőszer", "db"),
+        ("9x19 pisztolylőszer", "Lőszer", "db"),
+        ("Dízel üzemanyag", "Üzemanyag", "liter"),
+        ("Benzin 95", "Üzemanyag", "liter"),
+        ("Palackozott ivóvíz", "Élelmiszer", "liter"),
+        ("MRE csomag", "Élelmiszer", "csomag"),
+        ("Kötszer csomag", "Egészségügy", "db"),
+        ("Fertőtlenítő oldat", "Egészségügy", "liter"),
+        ("Akkumulátor 12V", "Műszaki", "db"),
+    ]
     supply_units = ["db", "liter", "kg", "csomag"]
     for index in range(1, 81):
         min_qty = rng.randint(20, 300)
         current_qty = rng.randint(0, 1200)
+        template_name, template_category, template_unit = rng.choice(supply_templates)
         supplies.append(
             SupplyModel(
                 id=f"s{index}",
-                name=f"Készletanyag {index:03d}",
-                category=rng.choice(["Lőszer", "Üzemanyag", "Élelmiszer", "Egészségügy", "Műszaki"]),
-                unit=rng.choice(supply_units),
+                name=f"{template_name} #{index:03d}",
+                category=template_category,
+                unit=template_unit if rng.random() < 0.85 else rng.choice(supply_units),
                 current_qty=current_qty,
                 min_qty=min_qty,
-                description="Automatikusan generált készlettétel.",
+                description="Raktári készlettétel, rendszeres leltározással.",
                 movements=[],
             )
         )
 
     vehicles: list[VehicleModel] = []
+    vehicle_prefixes = ["HDF", "MH", "HK", "GKD"]
     for index in range(1, 121):
         assigned_to = rng.choice(active_or_reserve) if rng.random() < 0.2 else None
         vehicles.append(
             VehicleModel(
                 id=f"v{index}",
-                plate_number=f"TEST-{index:03d}",
+                plate_number=f"{rng.choice(vehicle_prefixes)}-{index:03d}",
                 type=rng.choice(["Terepjáró", "Tehergépjármű", "Személyautó", "Busz"]),
                 make_model=rng.choice(["Mercedes G", "Land Rover Defender", "MAN TGS", "Toyota Hilux"]),
                 year=rng.randint(2008, 2025),
@@ -321,7 +426,11 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 next_service=(base_date + timedelta(days=rng.randint(1, 240))).strftime("%Y-%m-%d"),
                 next_inspection=(base_date + timedelta(days=rng.randint(30, 360))).strftime("%Y-%m-%d"),
                 status=rng.choice(["Elérhető", "Használatban", "Szervizben", "Meghibásodott", "Selejtezett"]),
-                notes="Automatikusan generált jármű.",
+                notes=rng.choice([
+                    "Napi menetlevél lezárva.",
+                    "Következő időszakos szerviz ütemezve.",
+                    "Műszaki ellenőrzés rendben.",
+                ]),
                 assigned_to=assigned_to,
                 assigned_to_name=person_names[assigned_to] if assigned_to else None,
                 service_log=[],
@@ -329,32 +438,48 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         )
 
     announcements: list[AnnouncementModel] = []
+    announcement_titles = [
+        "Heti szolgálati beosztás frissítve",
+        "Lőtéri foglalkozás felszerelésellenőrzés",
+        "Behívási névsor egyeztetés",
+        "Raktári leltáridőpont módosítás",
+        "Egészségügyi alkalmassági nap",
+        "Járműpark karbantartási ütemterv",
+    ]
+    announcement_bodies = [
+        "A kijelölt állomány részére a végrehajtási utasítás a törzs irodában átvehető.",
+        "Az érintett alegységek részére a pontos kezdési időpont külön üzenetben kerül kiküldésre.",
+        "Az adategyeztetés határideje péntek 12:00, hiány esetén visszajelzés kötelező.",
+        "A végrehajtás során felmerült eltéréseket az ügyeleti naplóban rögzíteni kell.",
+    ]
     for index in range(1, 41):
         day = base_date + timedelta(days=rng.randint(0, 365))
         announcements.append(
             AnnouncementModel(
                 id=f"a{index}",
-                title=f"Közlemény {index:03d}",
+                title=rng.choice(announcement_titles),
                 category=rng.choice(["Általános", "Fontos", "Sürgős", "Gyakorlat", "Adminisztráció"]),
-                content="Automatikusan generált próbaközlemény.",
-                author=rng.choice(["Szabó Anna", "Kovács János", "Nagy Péter", "Fejlesztő"]),
+                content=rng.choice(announcement_bodies),
+                author=rng.choice(["Rendszer Admin", "Törzsfőnök", "Kiképzési tiszt", "Logisztikai tiszt"]),
                 date=day.strftime("%Y-%m-%d"),
                 pinned=rng.random() < 0.15,
             )
         )
 
     logs: list[ActivityLogModel] = []
+    display_name_map = {"admin": "Rendszer Admin", "olvaso": "Teszt Olvasó", "szerkeszto": "Teszt Szerkesztő", "dev_master": "Fejlesztő Mester"}
     for index in range(1, 401):
         ts = base_date + timedelta(days=rng.randint(0, 365), hours=rng.randint(0, 23), minutes=rng.randint(0, 59))
+        log_user_id = rng.choice(["admin", "olvaso", "szerkeszto", "dev_master"])
         logs.append(
             ActivityLogModel(
                 id=f"al{index}",
                 timestamp=ts.replace(tzinfo=timezone.utc),
-                user_id=rng.choice(["admin", "kovacs", "nagy", "dev"]),
-                user_name=rng.choice(["Szabó Anna", "Kovács János", "Nagy Péter", "Fejlesztő"]),
+                user_id=log_user_id,
+                user_name=display_name_map.get(log_user_id, log_user_id),
                 action=rng.choice(["létrehozva", "módosítva", "törölve"]),
                 module=rng.choice(["Személyek", "Gyakorlatok", "Kiképzések", "Szolgálatok", "Felszerelés", "Készletek"]),
-                record_name=f"Rekord {index:03d}",
+                record_name=rng.choice(["Heti beosztás", "Kiképzési terv", "Leltárjegyzék", "Szolgálati napló", "Készenléti jelentés"]),
             )
         )
 

@@ -15,6 +15,31 @@ const statusClass: Record<string, string> = {
   'Tervezett': 'badge-planned', 'Folyamatban': 'badge-ongoing', 'Befejezett': 'badge-completed', 'Törölve': 'badge-cancelled',
 };
 
+const RANK_SHORT: Record<string, string> = {
+  'Közkatona': 'kkt',
+  'Őrvezető': 'őrv.',
+  'Tizedes': 'tzs.',
+  'Szakaszvezető': 'szkv.',
+  'Őrmester': 'őrm.',
+  'Törzsőrmester': 'tőrm.',
+  'Főtörzsőrmester': 'ftőrm.',
+  'Zászlós': 'zls.',
+  'Törzszászlós': 'tzls.',
+  'Főtörzszászlós': 'ftzls.',
+  'Hadnagy': 'hdgy.',
+  'Főhadnagy': 'fhdgy.',
+  'Százados': 'szds.',
+  'Őrnagy': 'őrgy.',
+  'Alezredes': 'alez.',
+  'Ezredes': 'ezds.',
+  'Dandártábornok': 'ddjt.',
+  'Vezérőrnagy': 'vezőrm.',
+  'Altábornagy': 'altbgy.',
+  'Vezérezredes': 'vezds.',
+};
+
+const shortRank = (rank?: string) => (rank ? (RANK_SHORT[rank] || rank) : '-');
+
 const emptyExercise = { name: '', type: 'Lőgyakorlat', startDate: '', endDate: '', location: '', maxPersonnel: 20, description: '', status: 'Tervezett' as const, assigned: [] as ExerciseAssignment[] };
 
 export default function Exercises() {
@@ -112,7 +137,7 @@ export default function Exercises() {
       toast.warning(`Figyelem: ${p.name} már beosztva: ${overlapping.map(o => o.name).join(', ')}`);
     }
     try {
-      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, role: addPersonRole }] };
+      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, role: addPersonRole, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
       await store.update(updated);
       setDetail(updated);
       setAddPersonId('');
@@ -251,15 +276,21 @@ export default function Exercises() {
             </div>
 
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Beosztás</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Beosztás</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
-                {detail.assigned.map(a => (
-                  <tr key={a.personId}>
-                    <td>{a.personName}</td>
-                    <td className="text-brass font-mono text-xs">{a.role}</td>
-                    {canEdit && <td><button onClick={() => { void removePerson(a.personId); }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
-                  </tr>
-                ))}
+                {detail.assigned.map(a => {
+                  const person = personnelData.find(p => p.id === a.personId);
+                  const rankLabel = a.rankShort || shortRank(a.rank || person?.rank);
+                  const sztszLabel = a.sztsz || person?.sztsz || '-';
+                  return (
+                    <tr key={a.personId}>
+                      <td>{a.personName}</td>
+                      <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
+                      <td className="text-brass font-mono text-xs">{a.role}</td>
+                      {canEdit && <td><button onClick={() => { void removePerson(a.personId); }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 

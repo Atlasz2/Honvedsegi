@@ -7,8 +7,8 @@ import LoginPage from "@/components/LoginPage";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Personnel from "@/pages/Personnel";
-import Exercises from "@/pages/Exercises";
-import Training from "@/pages/Training";
+import Operations from "@/pages/Operations";
+import Events from "@/pages/Events";
 import Equipment from "@/pages/Equipment";
 import Inventory from "@/pages/Inventory";
 import Vehicles from "@/pages/Vehicles";
@@ -16,7 +16,6 @@ import Duties from "@/pages/Duties";
 import Announcements from "@/pages/Announcements";
 import SettingsPage from "@/pages/SettingsPage";
 import ActivityLogPage from "@/pages/ActivityLogPage";
-import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -28,8 +27,10 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/personnel" element={<Personnel />} />
-        <Route path="/exercises" element={<Exercises />} />
-        <Route path="/training" element={<Training />} />
+        <Route path="/operations" element={<Operations />} />
+        <Route path="/events" element={<Events />} />
+        <Route path="/exercises" element={<Navigate to="/operations" replace />} />
+        <Route path="/training" element={<Navigate to="/operations" replace />} />
         <Route path="/equipment" element={<Equipment />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/vehicles" element={<Vehicles />} />

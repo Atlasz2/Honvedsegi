@@ -43,6 +43,16 @@ class SessionTokenModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class LoginAttemptModel(Base):
+    __tablename__ = "login_attempts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PersonModel(Base):
     __tablename__ = "personnel"
 
@@ -58,6 +68,25 @@ class PersonModel(Base):
     address: Mapped[str] = mapped_column(Text, default="")
     join_date: Mapped[str] = mapped_column(String, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class EventModel(Base):
+    __tablename__ = "events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    event_type: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    type: Mapped[str] = mapped_column(String)
+    start_date: Mapped[str] = mapped_column(String, index=True)
+    end_date: Mapped[str] = mapped_column(String)
+    location: Mapped[str] = mapped_column(String, default="")
+    organizer: Mapped[str | None] = mapped_column(String, nullable=True, default="")
+    max_personnel: Mapped[int] = mapped_column(Integer, default=0)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, index=True)
+    assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
 
 
 class ExerciseModel(Base):
@@ -84,13 +113,10 @@ class TrainingModel(Base):
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
     location: Mapped[str] = mapped_column(String, default="")
-    organizer: Mapped[str] = mapped_column(String, default="")
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-
-
 class EquipmentModel(Base):
     __tablename__ = "equipment"
 
@@ -174,3 +200,4 @@ class ActivityLogModel(Base):
     action: Mapped[str] = mapped_column(String)
     module: Mapped[str] = mapped_column(String)
     record_name: Mapped[str] = mapped_column(String)
+

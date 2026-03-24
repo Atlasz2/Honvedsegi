@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
-Role = Literal["reader", "admin", "fejleszto"]
+Role = Literal["reader", "editor", "admin", "fejleszto"]
 PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
 ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Törölve"]
 TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett"]
@@ -78,11 +79,27 @@ class PersonBase(BaseModel):
 
 
 class PersonCreate(PersonBase):
-    pass
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        digits = re.sub(r"\D", "", raw)
+        if digits.startswith("06"):
+            digits = digits[2:]
+        elif digits.startswith("36"):
+            digits = digits[2:]
+        if len(digits) != 9:
+            raise ValueError("A telefonszám formátuma: +36 XX XXX XXXX")
+        return f"+36 {digits[:2]} {digits[2:5]} {digits[5:]}"
 
 
 class PersonUpdate(PersonBase):
-    pass
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str) -> str:
+        return PersonCreate.normalize_phone(value)
 
 
 class PersonRead(PersonBase):
@@ -148,6 +165,48 @@ class TrainingUpdate(TrainingBase):
 
 class TrainingRead(TrainingBase):
     id: str
+
+
+class OperationRead(BaseModel):
+    id: str
+    name: str
+    type: str
+    operationType: Literal["exercise", "training"]
+    startDate: str
+    endDate: str
+    location: str
+    organizer: str | None = None
+    maxPersonnel: int
+    description: str
+    status: str
+    assigned: list[dict] = []
+
+class EventBase(BaseModel):
+    eventType: Literal["esemeny"] = "esemeny"
+    name: str
+    type: str
+    startDate: str
+    endDate: str
+    location: str = ""
+    organizer: str = ""
+    maxPersonnel: int = 0
+    description: str = ""
+    status: ExerciseStatus
+    assigned: list[dict] = []
+
+
+class EventCreate(EventBase):
+    pass
+
+
+class EventUpdate(EventBase):
+    pass
+
+
+class EventRead(EventBase):
+    id: str
+
+
 
 
 class CheckoutRecord(BaseModel):
@@ -328,3 +387,5 @@ class ActivityLogRead(BaseModel):
     action: ActivityAction
     module: str
     recordName: str
+
+

@@ -1,4 +1,4 @@
-export type Role = 'reader' | 'admin' | 'fejleszto';
+export type Role = 'reader' | 'editor' | 'admin' | 'fejleszto';
 
 export interface User {
   username: string;
@@ -35,6 +35,9 @@ export interface ExerciseAssignment {
   personId: string;
   personName: string;
   role: string;
+  rank?: string;
+  rankShort?: string;
+  sztsz?: string;
 }
 
 export interface Exercise {
@@ -54,6 +57,9 @@ export interface TrainingAssignment {
   personId: string;
   personName: string;
   attendance: 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
+  rank?: string;
+  rankShort?: string;
+  sztsz?: string;
 }
 
 export interface Training {
@@ -68,6 +74,21 @@ export interface Training {
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
   assigned: TrainingAssignment[];
+}
+
+export interface AppEvent {
+  id: string;
+  eventType: 'esemeny';
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  organizer: string;
+  maxPersonnel: number;
+  description: string;
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'T?r?lve';
+  assigned: Array<Record<string, unknown>>;
 }
 
 export interface CheckoutRecord {

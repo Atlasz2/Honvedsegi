@@ -24,13 +24,14 @@ export default function AnnouncementsPage() {
     try {
       const nextData = await store.getAll();
       setData(nextData);
-      if (detail) {
-        setDetail(nextData.find(item => item.id === detail.id) || null);
-      }
+      setDetail(currentDetail => {
+        if (!currentDetail) return null;
+        return nextData.find(item => item.id === currentDetail.id) || null;
+      });
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  }, [detail]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -76,23 +77,30 @@ export default function AnnouncementsPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {sorted.length === 0 && <div className="col-span-2 text-center text-muted-foreground font-mono py-12">Nincs adat</div>}
         {sorted.map(a => (
-          <div key={a.id} className={`bg-card border border-border p-4 cursor-pointer hover:bg-secondary transition-colors ${a.pinned ? 'border-l-2 border-l-primary' : ''}`} style={{ borderRadius: '2px' }} onClick={() => setDetail(a)}>
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center gap-2">
-                {a.pinned && <Pin className="w-3.5 h-3.5 text-primary" />}
-                <h3 className="font-bold font-rajdhani">{a.title}</h3>
+          <div
+            key={a.id}
+            className={`bg-card border border-border cursor-pointer transition-colors hover:bg-secondary ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
+            style={{ borderRadius: '2px' }}
+            onClick={() => setDetail(a)}
+          >
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                {a.pinned && <Pin className="w-3.5 h-3.5 text-primary shrink-0" />}
+                <h3 className="font-bold font-rajdhani uppercase tracking-military truncate">{a.title}</h3>
               </div>
               <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${catClass[a.category]}`} style={{ borderRadius: '2px' }}>
                 {a.category === 'Sürgős' && <span className="pulse-dot-red" />}{a.category}
               </span>
             </div>
-            <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{a.content}</p>
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span className="text-brass">{a.author}</span>
-              <span className="font-mono text-primary">{a.date}</span>
+            <div className="px-4 py-3">
+              <p className="text-sm text-muted-foreground line-clamp-3 mb-3">{a.content}</p>
+              <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-2">
+                <span className="text-brass uppercase tracking-military">{a.author}</span>
+                <span className="font-mono text-primary">{a.date}</span>
+              </div>
             </div>
           </div>
         ))}

@@ -2,15 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, Crosshair, GraduationCap, Shield as ShieldIcon,
-  Package, Truck, Calendar, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut
+  LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
+  Package, Truck, Calendar, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut
 } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
   { path: '/personnel', label: 'Személyek', icon: Users },
-  { path: '/exercises', label: 'Gyakorlatok', icon: Crosshair },
-  { path: '/training', label: 'Kiképzések', icon: GraduationCap },
+  { path: '/operations', label: 'M\u0171veletek', icon: Crosshair },
+  { path: '/events', label: 'Esem\u00E9nyek', icon: CalendarDays },
   { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon },
   { path: '/inventory', label: 'Készletek', icon: Package },
   { path: '/vehicles', label: 'Járművek', icon: Truck },
@@ -22,6 +22,7 @@ const navItems = [
 const roleBadge: Record<string, string> = {
   admin: 'ADMIN',
   reader: 'OLVASÓ',
+  editor: 'SZERKESZTŐ',
   fejleszto: 'FEJLESZTŐ',
 };
 
@@ -147,4 +148,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+
 

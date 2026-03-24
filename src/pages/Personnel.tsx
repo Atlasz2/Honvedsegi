@@ -7,9 +7,25 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 
-const RANKS = ['Közlegény','Tizedes','Szakaszvezető','Őrmester','Törzsőrmester','Főtörzsőrmester','Zászlós','Törzszászlós','Főtörzszászlós','Hadnagy','Főhadnagy','Százados','Őrnagy','Alezredes','Ezredes'];
+const RANKS = ['Közkatona','Tizedes','Szakaszvezető','Őrmester','Törzsőrmester','Főtörzsőrmester','Zászlós','Törzszászlós','Főtörzszászlós','Hadnagy','Főhadnagy','Százados','Őrnagy','Alezredes','Ezredes'];
 const STATUSES = ['Aktív','Tartalékos','Szabadságon','Leszerelt'] as const;
 const UNIT_OPTIONS = ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'] as const;
+const PHONE_REGEX = /^\+36 \d{2} \d{3} \d{4}$/;
+
+function normalizeHungarianPhone(input: string): string {
+  const digitsRaw = input.replace(/\D/g, '');
+  let digits = digitsRaw;
+  if (digits.startsWith('06')) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('36')) {
+    digits = digits.slice(2);
+  }
+  digits = digits.slice(0, 9);
+  if (!digits) return '';
+  if (digits.length <= 2) return `+36 ${digits}`;
+  if (digits.length <= 5) return `+36 ${digits.slice(0, 2)} ${digits.slice(2)}`;
+  return `+36 ${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5)}`;
+}
 
 const statusClass: Record<string, string> = {
   'Aktív': 'badge-active', 'Tartalékos': 'badge-reserve', 'Szabadságon': 'badge-leave', 'Leszerelt': 'badge-discharged',
@@ -18,7 +34,7 @@ const statusClass: Record<string, string> = {
 const emptyPerson: Omit<Person, 'id'> = {
   name: '',
   sztsz: '',
-  rank: 'Közlegény',
+  rank: 'Közkatona',
   unit: '31 TVZ',
   status: 'Aktív',
   email: '',
@@ -40,16 +56,21 @@ type FormFieldProps = {
   type?: string;
   required?: boolean;
   maxLength?: number;
+  placeholder?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
 };
 
-function FormField({ label, field, form, setForm, errors, type = 'text', required, maxLength }: FormFieldProps) {
+function FormField({ label, field, form, setForm, errors, type = 'text', required, maxLength, placeholder, inputMode }: FormFieldProps) {
   return (
     <div>
       <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">{label}{required && ' *'}</label>
       {type === 'textarea' ? (
         <textarea
           value={form[field] as string}
-          onChange={e => setForm(prev => ({ ...prev, [field]: e.target.value }))}
+          onChange={e => {
+            const nextValue = field === 'phone' ? normalizeHungarianPhone(e.target.value) : e.target.value;
+            setForm(prev => ({ ...prev, [field]: nextValue }));
+          }}
           className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary resize-none h-20"
           style={{ borderRadius: '2px' }}
         />
@@ -58,7 +79,10 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
           type={type}
           maxLength={maxLength}
           value={form[field] as string}
-          onChange={e => setForm(prev => ({ ...prev, [field]: e.target.value }))}
+          onChange={e => {
+            const nextValue = field === 'phone' ? normalizeHungarianPhone(e.target.value) : e.target.value;
+            setForm(prev => ({ ...prev, [field]: nextValue }));
+          }}
           className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
           style={{ borderRadius: '2px' }}
         />
@@ -131,6 +155,7 @@ export default function Personnel() {
     if (!form.sztsz.trim()) e.sztsz = 'Kötelező mező';
     if (!/^\d{8}$/.test(form.sztsz.trim())) e.sztsz = 'Pontosan 8 számjegy';
     if (!form.unit.trim()) e.unit = 'Kötelező mező';
+    if (form.phone && !PHONE_REGEX.test(form.phone)) e.phone = 'Formátum: +36 XX XXX XXXX';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -138,7 +163,7 @@ export default function Personnel() {
   const handleSave = async () => {
     if (!validate()) return;
     try {
-      const normalizedForm = { ...form, sztsz: form.sztsz.trim() };
+      const normalizedForm = { ...form, sztsz: form.sztsz.trim(), phone: normalizeHungarianPhone(form.phone).trim() };
       if (editing) {
         await store.update({ ...editing, ...normalizedForm });
         await logAction(user!.displayName, user!.username, 'módosítva', 'Személyek', normalizedForm.name);
@@ -340,7 +365,7 @@ export default function Personnel() {
             </select>
           </div>
           <FormField label="Email" field="email" form={form} setForm={setForm} errors={errors} type="email" />
-          <FormField label="Telefon" field="phone" form={form} setForm={setForm} errors={errors} />
+          <FormField label="Telefon" field="phone" form={form} setForm={setForm} errors={errors} maxLength={15} placeholder="+36 30 123 4567" inputMode="tel" />
           <FormField label="Születési dátum" field="birthDate" form={form} setForm={setForm} errors={errors} type="date" />
           <FormField label="Lakcím" field="address" form={form} setForm={setForm} errors={errors} />
           <FormField label="Belépés dátuma" field="joinDate" form={form} setForm={setForm} errors={errors} type="date" />

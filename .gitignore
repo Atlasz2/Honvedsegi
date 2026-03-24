@@ -29,3 +29,6 @@ backend/app/__pycache__/
 *.njsproj
 *.sln
 *.sw?
+
+backend/data/*.db-shm
+backend/data/*.db-wal

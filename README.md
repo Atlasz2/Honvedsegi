@@ -78,7 +78,7 @@ pip install -r backend/requirements.txt
 
 ```powershell
 cd backend
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 4. Frontend indítása
@@ -95,11 +95,98 @@ http://127.0.0.1:8000/api
 
 Ha ettől eltérő backend címet akarsz használni, állítsd be a `VITE_API_URL` környezeti változót.
 
-## Demo belépések
+## Kötelező biztonsági változók
 
-- admin / admin123
-- kovacs / admin123
-- dev / dev123
+A backend indításához kötelezően be kell állítani:
+
+- `BACKEND_ADMIN_PASSWORD`
+- `BACKEND_DEV_MASTER_PASSWORD`
+- `BACKEND_PASSWORD_PEPPER` (hosszú, random, csak szerveren tárolt titok)
+- `BACKEND_TOKEN_PEPPER` (session token fingerprinthez használt külön titok)
+- `BACKEND_READER_PASSWORD` (olvasó tesztfiók jelszava)
+- `BACKEND_EDITOR_PASSWORD` (szerkesztő tesztfiók jelszava)
+
+Éles (production) módban kötelező hálózati korlátozások:
+
+- `BACKEND_ENV=production`
+- `BACKEND_ALLOWED_ORIGINS`
+  - példa: `http://192.168.1.50:8080`
+- `BACKEND_ALLOWED_HOSTS`
+  - példa: `192.168.1.50,localhost`
+
+Fontos: production módban a backend API dokumentáció (`/docs`, `/redoc`, `/openapi.json`) le van tiltva.
+
+A rendszerben csak a `dev_master` lehet fejlesztői (god-level) szerepben.
+Más felhasználóhoz a `fejleszto` szerep API-n keresztül nem rendelhető.
+
+## Szerepkörök (éles modell)
+
+- **Olvasó (`reader`)**: csak olvasás, módosítás nélkül.
+- **Szerkesztő (`editor`)**: olvasás + adatmódosítás.
+- **Admin (`admin`)**: olvasás + adatmódosítás + beállítások (felhasználókezelés) az alkalmazáson belül.
+- **Dev master (`fejleszto`, `dev_master` felhasználó)**: teljes jogosultság (god-level), kizárólag a fejlesztői csapatnak, más felhasználónak nem adható ki.
+
+## Teszt belépések (jelenlegi)
+
+A jelenlegi rendszerben a bejelentkezési adatok környezeti változókból jönnek.
+
+- `olvaso` / `${BACKEND_READER_PASSWORD}`
+- `szerkeszto` / `${BACKEND_EDITOR_PASSWORD}`
+- `admin` / `${BACKEND_ADMIN_PASSWORD}`
+- `dev_master` / `${BACKEND_DEV_MASTER_PASSWORD}`
+
+Gyors helyi teszthez (csak teszt környezetben) használhatsz fix értékeket:
+
+```powershell
+$env:BACKEND_READER_PASSWORD = "OlvasoTeszt_2026!"
+$env:BACKEND_EDITOR_PASSWORD = "SzerkesztoTeszt_2026!"
+$env:BACKEND_ADMIN_PASSWORD = "AdminTeszt_2026!"
+$env:BACKEND_DEV_MASTER_PASSWORD = "DevMasterTeszt_2026!"
+$env:BACKEND_PASSWORD_PEPPER = "HOSSZU_RANDOM_PEPPER_CSERELD_LE_ELESBEN"
+$env:BACKEND_TOKEN_PEPPER = "KULON_RANDOM_TOKEN_PEPPER_CSERELD_LE_ELESBEN"
+```
+
+Ezek után a teszt loginok:
+
+- `olvaso` / `OlvasoTeszt_2026!`
+- `szerkeszto` / `SzerkesztoTeszt_2026!`
+- `admin` / `AdminTeszt_2026!`
+- `dev_master` / `DevMasterTeszt_2026!`
+
+## Éles intranet checklist (Windows)
+
+1. Titkok kezelése
+   - Állíts be egyedi, hosszú értékeket: `BACKEND_ADMIN_PASSWORD`, `BACKEND_DEV_MASTER_PASSWORD`, `BACKEND_PASSWORD_PEPPER`, `BACKEND_TOKEN_PEPPER`.
+   - Ezek ne kerüljenek forráskódba, ticketbe vagy képernyőképre.
+
+2. Hálózati korlátozás
+   - `BACKEND_ENV=production`
+   - `BACKEND_ALLOWED_ORIGINS` csak belső frontend cím(ek)re.
+   - `BACKEND_ALLOWED_HOSTS` csak belső backend hostnév/IP.
+
+3. Backend futtatás szolgáltatásként
+   - A backendet dedikált Windows service accounttal futtasd.
+   - Ne interaktív felhasználó alatt fusson.
+
+4. Frontend kiadás
+   - `npm run build` kimenetet szolgáld ki belső webszerverről (IIS/Nginx intraneten).
+   - Dev szervert (`npm run dev`) ne használd élesben.
+
+5. Tűzfal szabályok
+   - Engedélyezd a backend portot csak belső tartományokból.
+   - Külső/nyilvános interfészekről tiltsd.
+
+6. Mentés és visszaállítás
+   - Napi SQLite mentés kötelező (`.db` + WAL konzisztens mentés).
+   - Rendszeresen végezz visszaállítás-próbát.
+
+7. Naplózás és audit
+   - Bekapcsolt Windows Event + alkalmazás logok.
+   - Sikertelen belépések monitorozása.
+
+8. Frissítési üzemrend
+   - Biztonsági frissítés előtt backup, utána health check.
+   - Verzióváltást csak karbantartási ablakban.
 
 ## Miért jó ez az irány az alapkövetelményre
 
@@ -156,3 +243,57 @@ A backend SQLite konfigurációja konkurens használatra lett hangolva:
 - indexelt keresés a személyeknél, beleértve az SZTSz mezőt
 
 Ez a terhelési szint (kb. 10 egyidejű szerkesztő + 40 olvasó, ~1000 fő adat) intranetes környezetben reális.
+
+
+## Plusz beépített védelmek
+
+- Brute-force védelem: 5 hibás login után 15 perc lockout felhasználónévre.
+- Session token a DB-ben csak fingerprintként tárolódik (nem nyers token).
+- Security headerek minden válaszban: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control`.
+- Production módban HSTS header csak HTTPS kérésnél.
+
+
+## Automatizált éles üzem (ops/windows)
+
+A következő scriptek a `ops/windows` mappában találhatók:
+
+- `set-guardduty-secrets.ps1`
+- `install-guardduty-service.ps1`
+- `new-guardduty-firewall-rules.ps1`
+- `backup-guardduty-db.ps1`
+- `install-guardduty-backup-task.ps1`
+
+Ajánlott sorrend (rendszergazda PowerShell):
+
+```powershell
+cd <repo>\ops\windows
+
+.\set-guardduty-secrets.ps1 `
+  -AdminPassword "EROS_ADMIN_JELSZO" `
+  -DevMasterPassword "EROS_DEVMASTER_JELSZO" `
+  -PasswordPepper "NAGYON_HOSSZU_RANDOM_PEPPER" `
+  -TokenPepper "KULON_HOSSZU_RANDOM_TOKEN_PEPPER" `
+  -AllowedOrigins "http://192.168.1.50:8080" `
+  -AllowedHosts "192.168.1.50,localhost"
+
+.\new-guardduty-firewall-rules.ps1 -BackendPort 8000 -AllowedSubnet "192.168.1.0/24"
+.\install-guardduty-service.ps1 -BackendHost "0.0.0.0" -BackendPort 8000
+.\install-guardduty-backup-task.ps1 -DailyAt "02:00"
+```
+
+Szolgáltatás ellenőrzés:
+
+```powershell
+Get-Service GuardGuardDutyApi
+```
+
+Kézi mentés futtatása:
+
+```powershell
+.\backup-guardduty-db.ps1
+```
+
+
+## TODO
+
+- Adatimport modul k?sz?t?se Excel, Word ?s PDF ?llom?nyok migr?l?s?hoz

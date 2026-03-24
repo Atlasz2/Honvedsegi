@@ -8,11 +8,14 @@ import {
   Person,
   Supply,
   Training,
+  AppEvent,
   User,
   Vehicle,
 } from './types';
 
-const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000/api`;
+const defaultApiBase = import.meta.env.DEV
+  ? "/api"
+  : `${window.location.protocol}//${window.location.hostname}:8000/api`;
 const API_BASE = import.meta.env.VITE_API_URL || defaultApiBase;
 const TOKEN_KEY = 'honved_auth_token';
 
@@ -85,14 +88,32 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
   if (response.status === 204) {
     return undefined as T;
   }
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+
+  const raw = await response.text();
+  let data: unknown = null;
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = raw;
+    }
+  }
+
   if (!response.ok) {
     if (response.status === 401) {
       clearToken();
     }
-    throw new Error(data?.detail || 'A kérés sikertelen volt');
+
+    const detail =
+      typeof data === 'object' && data !== null && 'detail' in data
+        ? String((data as { detail?: unknown }).detail ?? '')
+        : typeof data === 'string'
+          ? data
+          : '';
+
+    throw new Error(detail || `A k?r?s sikertelen volt (${response.status})`);
   }
+
   return data as T;
 }
 
@@ -161,6 +182,7 @@ export const personnel = {
 };
 export const exercises = createCrud<Exercise>('/exercises');
 export const trainings = createCrud<Training>('/trainings');
+export const events = createCrud<AppEvent>('/events');
 export const duties = createCrud<Duty>('/duties');
 export const announcements = createCrud<Announcement>('/announcements',);
 
@@ -269,3 +291,5 @@ export const reports = {
     window.URL.revokeObjectURL(url);
   },
 };
+
+

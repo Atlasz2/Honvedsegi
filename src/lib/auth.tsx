@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: result.success, error: result.error };
   }, []);
 
-  const canEdit = user?.role === 'admin' || user?.role === 'fejleszto';
+  const canEdit = user?.role === 'editor' || user?.role === 'admin' || user?.role === 'fejleszto';
   const isAdmin = user?.role === 'admin' || user?.role === 'fejleszto';
   const isDev = user?.role === 'fejleszto';
 

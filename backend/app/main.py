@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, TypeVar
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import Response
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session
@@ -14,8 +17,10 @@ from .models import (
     ActivityLogModel,
     AnnouncementModel,
     DutyModel,
+    EventModel,
     EquipmentModel,
     ExerciseModel,
+    LoginAttemptModel,
     PersonModel,
     SessionTokenModel,
     SupplyModel,
@@ -35,6 +40,9 @@ from .schemas import (
     DutyUpdate,
     EquipmentCheckoutRequest,
     EquipmentCreate,
+    EventCreate,
+    EventRead,
+    EventUpdate,
     EquipmentRead,
     EquipmentUpdate,
     ExerciseCreate,
@@ -42,6 +50,7 @@ from .schemas import (
     ExerciseUpdate,
     LoginRequest,
     LoginResponse,
+    OperationRead,
     PersonCreate,
     PersonRead,
     PersonUpdate,
@@ -60,26 +69,72 @@ from .schemas import (
     VehicleRead,
     VehicleUpdate,
 )
-from .security import hash_password, issue_token, verify_password
+from .security import assert_password_strength, fingerprint_token, hash_password, issue_token, needs_rehash, verify_password
 from .seed import seed_database
 
 
 ModelT = TypeVar("ModelT")
 SESSION_HOURS = 8
+MAX_FAILED_LOGINS = 5
+LOCKOUT_MINUTES = 15
+GOD_USERNAME = "dev_master"
+GOD_ROLE = "fejleszto"
+BACKEND_ENV = os.getenv("BACKEND_ENV", "development").strip().lower()
+IS_PRODUCTION = BACKEND_ENV == "production"
+
+
+def _required_env_csv(name: str) -> list[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        raise RuntimeError(f"Hiányzó kötelező környezeti változó production módban: {name}")
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    if not items:
+        raise RuntimeError(f"Üres környezeti változó production módban: {name}")
+    return items
 
 app = FastAPI(
     title="Guard Guard Duty API",
     version="1.0.0",
     description="FastAPI backend katonai adminisztrációs rendszerhez SQLite adatbázissal.",
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
+
+if IS_PRODUCTION:
+    ALLOWED_ORIGINS = _required_env_csv("BACKEND_ALLOWED_ORIGINS")
+    ALLOWED_HOSTS = _required_env_csv("BACKEND_ALLOWED_HOSTS")
+else:
+    _allowed_origins_raw = os.getenv("BACKEND_ALLOWED_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080")
+    ALLOWED_ORIGINS = [origin.strip() for origin in _allowed_origins_raw.split(",") if origin.strip()]
+    _allowed_hosts_raw = os.getenv("BACKEND_ALLOWED_HOSTS", "localhost,127.0.0.1")
+    ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts_raw.split(",") if host.strip()]
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=ALLOWED_HOSTS,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cache-Control"] = "no-store"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 
 def _utc_now() -> datetime:
@@ -90,6 +145,38 @@ def _as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _get_login_attempt(db: Session, username: str) -> LoginAttemptModel:
+    attempt = db.scalar(select(LoginAttemptModel).where(LoginAttemptModel.username == username))
+    if not attempt:
+        attempt = LoginAttemptModel(username=username, failed_count=0)
+        db.add(attempt)
+        db.flush()
+    return attempt
+
+
+def _is_login_locked(attempt: LoginAttemptModel) -> bool:
+    return bool(attempt.locked_until and _as_utc(attempt.locked_until) > _utc_now())
+
+
+def _register_failed_login(db: Session, username: str) -> None:
+    attempt = _get_login_attempt(db, username)
+    attempt.failed_count = int(attempt.failed_count or 0) + 1
+    attempt.last_failed_at = _utc_now()
+    if attempt.failed_count >= MAX_FAILED_LOGINS:
+        attempt.failed_count = 0
+        attempt.locked_until = _utc_now() + timedelta(minutes=LOCKOUT_MINUTES)
+    db.commit()
+
+
+def _reset_login_attempt(db: Session, username: str) -> None:
+    attempt = db.scalar(select(LoginAttemptModel).where(LoginAttemptModel.username == username))
+    if not attempt:
+        return
+    attempt.failed_count = 0
+    attempt.locked_until = None
+    db.commit()
 
 
 def _date_overlap(start_value: str, end_value: str, range_start: date, range_end: date) -> bool:
@@ -183,7 +270,24 @@ def _serialize_training(item: TrainingModel) -> TrainingRead:
         startDate=item.start_date,
         endDate=item.end_date,
         location=item.location,
-        organizer=item.organizer,
+        organizer=getattr(item, "organizer", "") or "",
+        maxPersonnel=item.max_personnel,
+        description=item.description,
+        status=item.status,
+        assigned=item.assigned or [],
+    )
+
+
+def _serialize_event(item: EventModel) -> EventRead:
+    return EventRead(
+        id=item.id,
+        eventType=item.event_type,
+        name=item.name,
+        type=item.type,
+        startDate=item.start_date,
+        endDate=item.end_date,
+        location=item.location,
+        organizer=item.organizer or "",
         maxPersonnel=item.max_personnel,
         description=item.description,
         status=item.status,
@@ -291,7 +395,8 @@ def _get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bejelentkezés szükséges")
 
     token_value = authorization.split(" ", 1)[1].strip()
-    session_token = db.scalar(select(SessionTokenModel).where(SessionTokenModel.token == token_value))
+    token_key = fingerprint_token(token_value)
+    session_token = db.scalar(select(SessionTokenModel).where(SessionTokenModel.token == token_key))
     if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Érvénytelen munkamenet")
     if _as_utc(session_token.expires_at) < _utc_now():
@@ -306,7 +411,7 @@ def _get_current_user(
 
 
 def _require_editor(user: UserModel = Depends(_get_current_user)) -> UserModel:
-    if user.role not in {"admin", "fejleszto"}:
+    if user.role not in {"editor", "admin", "fejleszto"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nincs jogosultság a művelethez")
     return user
 
@@ -315,6 +420,46 @@ def _require_admin(user: UserModel = Depends(_get_current_user)) -> UserModel:
     if user.role not in {"admin", "fejleszto"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin jogosultság szükséges")
     return user
+
+
+def _is_god_user(user: UserModel) -> bool:
+    return user.username == GOD_USERNAME and user.role == GOD_ROLE and user.active
+
+
+def _require_god_user(user: UserModel = Depends(_get_current_user)) -> UserModel:
+    if not _is_god_user(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Csak a dev_master jogosult erre a műveletre")
+    return user
+
+
+def _enforce_single_god_user(db: Session) -> None:
+    god_user = db.scalar(select(UserModel).where(UserModel.username == GOD_USERNAME))
+    if not god_user:
+        dev_pwd = os.getenv("BACKEND_DEV_MASTER_PASSWORD", "").strip()
+        if not dev_pwd:
+            raise RuntimeError("Hiányzó BACKEND_DEV_MASTER_PASSWORD a dev_master létrehozásához")
+        god_user = UserModel(
+            username=GOD_USERNAME,
+            password_hash=hash_password(dev_pwd),
+            display_name="Fejlesztő Mester",
+            role=GOD_ROLE,
+            active=True,
+            protected=True,
+        )
+        db.add(god_user)
+
+    god_user.role = GOD_ROLE
+    god_user.active = True
+    god_user.protected = True
+
+    other_devs = db.scalars(
+        select(UserModel).where(UserModel.role == GOD_ROLE, UserModel.username != GOD_USERNAME)
+    ).all()
+    for user in other_devs:
+        user.role = "admin"
+        user.protected = False
+
+    db.commit()
 
 
 def _normalize_sztsz(value: str) -> str:
@@ -392,11 +537,26 @@ def _apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpd
     target.start_date = payload.startDate
     target.end_date = payload.endDate
     target.location = payload.location
-    target.organizer = payload.organizer
+    if hasattr(target, "organizer"):
+        target.organizer = payload.organizer
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     target.status = payload.status
     target.assigned = [item.model_dump() for item in payload.assigned]
+
+
+def _apply_event(target: EventModel, payload: EventCreate | EventUpdate) -> None:
+    target.event_type = payload.eventType
+    target.name = payload.name
+    target.type = payload.type
+    target.start_date = payload.startDate
+    target.end_date = payload.endDate
+    target.location = payload.location
+    target.organizer = payload.organizer
+    target.max_personnel = payload.maxPersonnel
+    target.description = payload.description
+    target.status = payload.status
+    target.assigned = payload.assigned
 
 
 def _apply_equipment(target: EquipmentModel, payload: EquipmentCreate | EquipmentUpdate) -> None:
@@ -454,6 +614,7 @@ def on_startup() -> None:
     with SessionLocal() as db:
         seed_database(db)
         _ensure_personnel_sztsz_schema(db)
+        _enforce_single_god_user(db)
 
 
 @app.get("/api/health")
@@ -630,16 +791,32 @@ def operations_pdf_report(
 
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+    attempt = _get_login_attempt(db, payload.username)
+    if _is_login_locked(attempt):
+        raise HTTPException(status_code=429, detail="Túl sok hibás próbálkozás. Próbáld újra később.")
+
     user = db.scalar(select(UserModel).where(UserModel.username == payload.username))
     if not user or not verify_password(payload.password, user.password_hash):
+        _register_failed_login(db, payload.username)
         raise HTTPException(status_code=401, detail="Hibás felhasználónév vagy jelszó")
     if not user.active:
         raise HTTPException(status_code=403, detail="A felhasználó inaktív")
 
+    if needs_rehash(user.password_hash):
+        try:
+            assert_password_strength(payload.password)
+            user.password_hash = hash_password(payload.password)
+        except ValueError:
+            # Régi, gyenge jelszó esetén ne bukjon el a login; a rehash ilyenkor elmarad.
+            pass
+
+    _reset_login_attempt(db, payload.username)
+
     expiry = _utc_now() + timedelta(hours=SESSION_HOURS)
     user.last_login = _utc_now()
     token_value = issue_token()
-    db.add(SessionTokenModel(token=token_value, user_id=user.id, expires_at=expiry))
+    token_key = fingerprint_token(token_value)
+    db.add(SessionTokenModel(token=token_key, user_id=user.id, expires_at=expiry))
     db.commit()
     db.refresh(user)
     return LoginResponse(token=token_value, user=_user_to_auth_payload(user, expiry))
@@ -658,7 +835,8 @@ def logout(
     _: UserModel = Depends(_get_current_user),
 ):
     token_value = authorization.split(" ", 1)[1].strip()
-    session_token = db.scalar(select(SessionTokenModel).where(SessionTokenModel.token == token_value))
+    token_key = fingerprint_token(token_value)
+    session_token = db.scalar(select(SessionTokenModel).where(SessionTokenModel.token == token_key))
     if session_token:
         db.delete(session_token)
         db.commit()
@@ -667,8 +845,8 @@ def logout(
 @app.get("/api/users", response_model=list[UserRead])
 def list_users(db: Session = Depends(get_db), current_user: UserModel = Depends(_require_admin)) -> list[UserRead]:
     items = db.scalars(select(UserModel).order_by(UserModel.username)).all()
-    if current_user.role != "fejleszto":
-        items = [u for u in items if u.role != "fejleszto"]
+    if not _is_god_user(current_user):
+        items = [u for u in items if u.username != GOD_USERNAME and u.role != GOD_ROLE]
     return [_to_user_read(item) for item in items]
 
 
@@ -676,8 +854,11 @@ def list_users(db: Session = Depends(get_db), current_user: UserModel = Depends(
 def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user: UserModel = Depends(_require_admin)) -> UserRead:
     if db.scalar(select(UserModel).where(UserModel.username == payload.username)):
         raise HTTPException(status_code=409, detail="Ez a felhasználónév már foglalt")
-    if payload.role == "fejleszto" and current_user.role != "fejleszto":
-        raise HTTPException(status_code=403, detail="Fejlesztő szerepet csak fejlesztő állíthat be")
+    if payload.username == GOD_USERNAME or payload.role == GOD_ROLE:
+        raise HTTPException(status_code=403, detail="A dev_master szint kizárólagos és nem osztható ki")
+    if current_user.role == "admin" and payload.role == GOD_ROLE:
+        raise HTTPException(status_code=403, detail="Admin nem hozhat létre fejlesztő szintű felhasználót")
+    assert_password_strength(payload.password)
     user = UserModel(
         username=payload.username,
         password_hash=hash_password(payload.password),
@@ -696,18 +877,17 @@ def update_user(username: str, payload: UserUpdate, db: Session = Depends(get_db
     user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not user:
         raise HTTPException(status_code=404, detail="Felhasználó nem található")
-    if user.username == current_user.username:
-        raise HTTPException(status_code=400, detail="Saját felhasználó nem módosítható itt")
     if user.protected:
         raise HTTPException(status_code=403, detail="Vedett felhasznalo nem modositható")
-    if user.role == "fejleszto" and current_user.role != "fejleszto":
-        raise HTTPException(status_code=404, detail="Felhasználó nem található")
-    if payload.role == "fejleszto" and current_user.role != "fejleszto":
-        raise HTTPException(status_code=403, detail="Fejlesztő szerepet csak fejlesztő állíthat be")
+    if user.username == GOD_USERNAME or payload.role == GOD_ROLE:
+        raise HTTPException(status_code=403, detail="A dev_master szint kizárólagos és nem módosítható")
+    if current_user.role == "admin" and (user.role == GOD_ROLE or payload.role == GOD_ROLE):
+        raise HTTPException(status_code=403, detail="Admin nem adhat fejlesztő szintet")
     user.display_name = payload.display_name
     user.role = payload.role
     user.active = payload.active
     if payload.password:
+        assert_password_strength(payload.password)
         user.password_hash = hash_password(payload.password)
     db.commit()
     db.refresh(user)
@@ -721,12 +901,10 @@ def delete_user(username: str, db: Session = Depends(get_db), current_user: User
     user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not user:
         raise HTTPException(status_code=404, detail="Felhasználó nem található")
-    if user.username == current_user.username:
-        raise HTTPException(status_code=400, detail="Saját felhasználó nem törölhető")
-    if user.role == "fejleszto" and current_user.role != "fejleszto":
-        raise HTTPException(status_code=404, detail="Felhasználó nem található")
-    if user.protected:
-        raise HTTPException(status_code=403, detail="Vedett felhasznalo nem torolheto")
+    if user.protected or user.username == GOD_USERNAME or user.role == GOD_ROLE:
+        raise HTTPException(status_code=403, detail="A dev_master felhasználó nem törölhető")
+    if current_user.role == "admin" and user.role == GOD_ROLE:
+        raise HTTPException(status_code=403, detail="Admin nem törölhet fejlesztő szintű felhasználót")
     
     # Logout all sessions for this user
     db.query(SessionTokenModel).filter(SessionTokenModel.user_id == user.id).delete()
@@ -917,6 +1095,80 @@ def update_training(item_id: str, payload: TrainingUpdate, db: Session = Depends
 @app.delete("/api/trainings/{item_id}", status_code=204)
 def delete_training(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
     item = _require_model(db, TrainingModel, item_id)
+    db.delete(item)
+    db.commit()
+
+
+@app.get("/api/operations", response_model=list[OperationRead])
+def list_operations(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)) -> list[OperationRead]:
+    exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
+    trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
+    
+    operations = []
+    
+    for ex in exercises:
+        operations.append(OperationRead(
+            id=ex.id,
+            name=ex.name,
+            type=ex.type,
+            operationType="exercise",
+            startDate=ex.start_date,
+            endDate=ex.end_date,
+            location=ex.location,
+            organizer=None,
+            maxPersonnel=ex.max_personnel,
+            description=ex.description,
+            status=ex.status,
+            assigned=ex.assigned or [],
+        ))
+    
+    for tr in trainings:
+        operations.append(OperationRead(
+            id=tr.id,
+            name=tr.name,
+            type=tr.type,
+            operationType="training",
+            startDate=tr.start_date,
+            endDate=tr.end_date,
+            location=tr.location,
+            organizer=getattr(tr, "organizer", "") or "",
+            maxPersonnel=tr.max_personnel,
+            description=tr.description,
+            status=tr.status,
+            assigned=tr.assigned or [],
+        ))
+    
+    operations.sort(key=lambda x: x.startDate)
+    return operations
+
+@app.get("/api/events", response_model=list[EventRead])
+def list_events(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)) -> list[EventRead]:
+    items = db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
+    return [_serialize_event(item) for item in items]
+
+
+@app.post("/api/events", response_model=EventRead)
+def create_event(payload: EventCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> EventRead:
+    item = EventModel()
+    _apply_event(item, payload)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _serialize_event(item)
+
+
+@app.put("/api/events/{item_id}", response_model=EventRead)
+def update_event(item_id: str, payload: EventUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)) -> EventRead:
+    item = _require_model(db, EventModel, item_id)
+    _apply_event(item, payload)
+    db.commit()
+    db.refresh(item)
+    return _serialize_event(item)
+
+
+@app.delete("/api/events/{item_id}", status_code=204)
+def delete_event(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+    item = _require_model(db, EventModel, item_id)
     db.delete(item)
     db.commit()
 
@@ -1192,6 +1444,8 @@ def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db
     db.commit()
     db.refresh(item)
     return _serialize_log(item)
+
+
 
 
 

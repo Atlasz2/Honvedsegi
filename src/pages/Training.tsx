@@ -13,6 +13,31 @@ const STATUSES = ['Tervezett','Folyamatban','Befejezett'] as const;
 const ATTENDANCE = ['Tervezett','Megjelent','Hiányzott','Beteg'] as const;
 const statusClass: Record<string, string> = { 'Tervezett': 'badge-planned', 'Folyamatban': 'badge-ongoing', 'Befejezett': 'badge-completed' };
 
+const RANK_SHORT: Record<string, string> = {
+  'Közkatona': 'kkt',
+  'Őrvezető': 'őrv.',
+  'Tizedes': 'tzs.',
+  'Szakaszvezető': 'szkv.',
+  'Őrmester': 'őrm.',
+  'Törzsőrmester': 'tőrm.',
+  'Főtörzsőrmester': 'ftőrm.',
+  'Zászlós': 'zls.',
+  'Törzszászlós': 'tzls.',
+  'Főtörzszászlós': 'ftzls.',
+  'Hadnagy': 'hdgy.',
+  'Főhadnagy': 'fhdgy.',
+  'Százados': 'szds.',
+  'Őrnagy': 'őrgy.',
+  'Alezredes': 'alez.',
+  'Ezredes': 'ezds.',
+  'Dandártábornok': 'ddjt.',
+  'Vezérőrnagy': 'vezőrm.',
+  'Altábornagy': 'altbgy.',
+  'Vezérezredes': 'vezds.',
+};
+
+const shortRank = (rank?: string) => (rank ? (RANK_SHORT[rank] || rank) : '-');
+
 export default function TrainingPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Training[]>([]);
@@ -104,7 +129,7 @@ export default function TrainingPage() {
     const p = personnelData.find(x => x.id === addPersonId);
     if (!p) return;
     try {
-      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, attendance: 'Tervezett' as const }] };
+      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, attendance: 'Tervezett' as const, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
       await store.update(updated);
       setDetail(updated);
       setAddPersonId('');
@@ -236,35 +261,41 @@ export default function TrainingPage() {
             </div>
 
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Jelenlét</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Jelenlét</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
-                {detail.assigned.map(a => (
-                  <tr key={a.personId}>
-                    <td>{a.personName}</td>
-                    <td>
-                      {canEdit ? (
-                        <select value={a.attendance} onChange={e => { void updateAttendance(a.personId, e.target.value); }} className="bg-input border border-border px-2 py-1 text-xs" style={{ borderRadius: '2px' }}>
-                          {ATTENDANCE.map(at => <option key={at} value={at}>{at}</option>)}
-                        </select>
-                      ) : (
-                        <span className={`px-2 py-0.5 text-xs font-mono ${a.attendance === 'Megjelent' ? 'badge-active' : a.attendance === 'Hiányzott' ? 'badge-cancelled' : a.attendance === 'Beteg' ? 'badge-reserve' : 'badge-planned'}`} style={{ borderRadius: '2px' }}>{a.attendance}</span>
-                      )}
-                    </td>
-                    {canEdit && <td><button onClick={() => {
-                      void (async () => {
-                        if (!detail) return;
-                        try {
-                          const updated = { ...detail, assigned: detail.assigned.filter(x => x.personId !== a.personId) };
-                          await store.update(updated);
-                          setDetail(updated);
-                          await refresh();
-                        } catch (error) {
-                          toast.error(getErrorMessage(error));
-                        }
-                      })();
-                    }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
-                  </tr>
-                ))}
+                {detail.assigned.map(a => {
+                  const person = personnelData.find(p => p.id === a.personId);
+                  const rankLabel = a.rankShort || shortRank(a.rank || person?.rank);
+                  const sztszLabel = a.sztsz || person?.sztsz || '-';
+                  return (
+                    <tr key={a.personId}>
+                      <td>{a.personName}</td>
+                      <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
+                      <td>
+                        {canEdit ? (
+                          <select value={a.attendance} onChange={e => { void updateAttendance(a.personId, e.target.value); }} className="bg-input border border-border px-2 py-1 text-xs" style={{ borderRadius: '2px' }}>
+                            {ATTENDANCE.map(at => <option key={at} value={at}>{at}</option>)}
+                          </select>
+                        ) : (
+                          <span className={`px-2 py-0.5 text-xs font-mono ${a.attendance === 'Megjelent' ? 'badge-active' : a.attendance === 'Hiányzott' ? 'badge-cancelled' : a.attendance === 'Beteg' ? 'badge-reserve' : 'badge-planned'}`} style={{ borderRadius: '2px' }}>{a.attendance}</span>
+                        )}
+                      </td>
+                      {canEdit && <td><button onClick={() => {
+                        void (async () => {
+                          if (!detail) return;
+                          try {
+                            const updated = { ...detail, assigned: detail.assigned.filter(x => x.personId !== a.personId) };
+                            await store.update(updated);
+                            setDetail(updated);
+                            await refresh();
+                          } catch (error) {
+                            toast.error(getErrorMessage(error));
+                          }
+                        })();
+                      }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { duties as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Duty, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -14,6 +15,7 @@ const STATUSES = ['Tervezett','Teljesített','Lemondva'] as const;
 const statusClass: Record<string, string> = { 'Tervezett': 'badge-planned', 'Teljesített': 'badge-completed', 'Lemondva': 'badge-cancelled' };
 
 export default function DutiesPage() {
+  const location = useLocation();
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Duty[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
@@ -23,6 +25,7 @@ export default function DutiesPage() {
   const [dateTo, setDateTo] = useState('');
   const [editing, setEditing] = useState<Duty | null>(null);
   const [creating, setCreating] = useState(false);
+  const [detail, setDetail] = useState<Duty | null>(null);
   const [form, setForm] = useState({ type: TYPES[0], startDate: '', endDate: '', location: '', personId: '', personName: '', notes: '', status: 'Tervezett' as Duty['status'] });
   const [deleteTarget, setDeleteTarget] = useState<Duty | null>(null);
   const [calMonth, setCalMonth] = useState(new Date());
@@ -42,6 +45,13 @@ export default function DutiesPage() {
     const iv = setInterval(() => { void refresh(); }, 30000);
     return () => clearInterval(iv);
   }, [refresh]);
+
+  useEffect(() => {
+    const navState = location.state as { openDutyId?: string } | null;
+    if (!navState?.openDutyId || data.length === 0) return;
+    const found = data.find(item => item.id === navState.openDutyId);
+    if (found) setDetail(found);
+  }, [location.state, data]);
 
   const filtered = data.filter(d => {
     if (filter && d.status !== filter) return false;
@@ -120,13 +130,13 @@ export default function DutiesPage() {
             <tbody>
               {filtered.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
               {filtered.sort((a, b) => a.startDate.localeCompare(b.startDate)).map(d => (
-                <tr key={d.id}>
+                <tr key={d.id} className="cursor-pointer" onClick={() => setDetail(d)}>
                   <td className="font-mono text-primary text-xs">{d.startDate.replace('T', ' ')} → {d.endDate.replace('T', ' ')}</td>
                   <td><span className="mono-chip">{d.type}</span></td>
                   <td>{d.location}</td>
                   <td className="text-brass">{d.personName}</td>
                   <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[d.status]}`} style={{ borderRadius: '2px' }}>{d.status}</span></td>
-                  {canEdit && <td><div className="flex gap-1">
+                  {canEdit && <td onClick={e => e.stopPropagation()}><div className="flex gap-1">
                     <button onClick={() => { setForm({ type: d.type, startDate: d.startDate, endDate: d.endDate, location: d.location, personId: d.personId, personName: d.personName, notes: d.notes, status: d.status }); setEditing(d); }} className="p-1.5 text-primary hover:bg-primary/10"><Pencil className="w-3.5 h-3.5" /></button>
                     <button onClick={() => setDeleteTarget(d)} className="p-1.5 text-destructive hover:bg-destructive/10"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div></td>}
@@ -159,6 +169,28 @@ export default function DutiesPage() {
           </div>
         </div>
       )}
+
+
+
+      <Modal open={!!detail} onClose={() => setDetail(null)} title="Szolgálat részletei">
+        {detail && (
+          <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mono-chip mt-1">{detail.type}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex mt-1 px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[detail.status]}`} style={{ borderRadius: '2px' }}>{detail.status}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Kezdete</span><p className="font-mono text-primary mt-1">{detail.startDate.replace('T', ' ')}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Vége</span><p className="font-mono text-primary mt-1">{detail.endDate.replace('T', ' ')}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Személy</span><p className="mt-1">{detail.personName}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Helyszín</span><p className="mt-1">{detail.location || 'Nincs megadva'}</p></div>
+            </div>
+            {detail.notes && <p className="text-muted-foreground">{detail.notes}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              {canEdit && <button onClick={() => { setForm({ type: detail.type, startDate: detail.startDate, endDate: detail.endDate, location: detail.location, personId: detail.personId, personName: detail.personName, notes: detail.notes, status: detail.status }); setEditing(detail); setDetail(null); }} className="btn-mil-secondary text-xs">Szerkesztés</button>}
+              <button onClick={() => setDetail(null)} className="btn-mil-secondary text-xs">Bezárás</button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Szolgálat szerkesztése' : 'Új szolgálat'}>
         <div className="space-y-3">
