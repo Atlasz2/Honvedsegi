@@ -40,6 +40,51 @@ type PersonnelPagedResult = {
   totalPages: number;
 };
 
+export type ImportIssue = {
+  line: number;
+  message: string;
+};
+
+export type ImportEntity = "personnel" | "exercises";
+
+export type ImportPreviewItem = {
+  line: number;
+  action: "create" | "update" | "skip";
+  key: string;
+  name: string;
+  enabled: boolean;
+  data: Record<string, string>;
+  rawData: Record<string, string>;
+  unknownData: Record<string, string>;
+  issues: string[];
+};
+
+export type ImportPreviewResult = {
+  draftId: string;
+  entity: ImportEntity;
+  totalRows: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  issues: ImportIssue[];
+  items: ImportPreviewItem[];
+};
+
+export type ImportDraftUpdateItem = {
+  line: number;
+  enabled: boolean;
+  data: Record<string, string>;
+};
+
+export type ImportConfirmResult = {
+  draftId: string;
+  entity: ImportEntity;
+  applied: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+};
+
 function getSession(): StoredSession | null {
   try {
     const raw = localStorage.getItem(TOKEN_KEY);
@@ -74,7 +119,8 @@ function toUser(raw: BackendUser): User {
 
 async function request<T>(path: string, init: RequestInit = {}, includeAuth = true): Promise<T> {
   const headers = new Headers(init.headers || {});
-  if (!headers.has('Content-Type') && init.body) {
+  const isFormDataBody = typeof FormData !== 'undefined' && init.body instanceof FormData;
+  if (!headers.has('Content-Type') && init.body && !isFormDataBody) {
     headers.set('Content-Type', 'application/json');
   }
   if (includeAuth) {
@@ -140,12 +186,13 @@ export async function logoutSession() {
 }
 
 export async function login(username: string, password: string): Promise<{ success: boolean; error?: string; token?: AuthToken }> {
+  const normalizedUsername = username.trim();
   try {
     const result = await request<{ token: string; user: AuthToken }>(
       '/auth/login',
       {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: normalizedUsername, password }),
       },
       false,
     );
@@ -251,11 +298,97 @@ export function initializeData() {
 
 
 
+export type ReportPreviewListItem = {
+  id: string;
+  itemType: 'exercise' | 'training' | 'event' | 'duty';
+  name?: string;
+  type?: string;
+  personId?: string;
+  personName?: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  status: string;
+  maxPersonnel?: number;
+  assignedCount?: number;
+  organizer?: string;
+  previewRow: string;
+};
+
+export type ReportPreviewSection = {
+  key: string;
+  title: string;
+  count: number;
+  truncated: boolean;
+  items: ReportPreviewListItem[];
+};
+
+export type ReportPreviewFocusDetail = {
+  label: string;
+  value: string;
+};
+
+export type ReportPreviewFocusParticipant = {
+  personName: string;
+  detail: string;
+};
+
+export type ReportPreviewFocus = {
+  type: 'exercise' | 'training' | 'event' | 'duty';
+  id: string;
+  headline: string;
+  description: string;
+  participants: ReportPreviewFocusParticipant[];
+  details: ReportPreviewFocusDetail[];
+};
+
+export type ReportPreviewResponse = {
+  template: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
+  title: string;
+  interval: {
+    dateFrom: string;
+    dateTo: string;
+  };
+  focusType: 'exercise' | 'training' | 'event' | 'duty' | null;
+  focusId: string | null;
+  summary: {
+    exercises: number;
+    trainings: number;
+    events: number;
+    duties: number;
+  };
+  sections: ReportPreviewSection[];
+  focus: ReportPreviewFocus | null;
+};
 export const reports = {
-  downloadOperationsPdf: async (params?: { dateFrom?: string; dateTo?: string }) => {
+  previewOperationsReport: (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
+    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    focusId?: string;
+  }) => {
     const query = new URLSearchParams();
     if (params?.dateFrom) query.set('date_from', params.dateFrom);
     if (params?.dateTo) query.set('date_to', params.dateTo);
+    if (params?.template) query.set('template', params.template);
+    if (params?.focusType) query.set('focus_type', params.focusType);
+    if (params?.focusId) query.set('focus_id', params.focusId);
+    return request<ReportPreviewResponse>(`/reports/operations/preview${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  downloadOperationsPdf: async (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
+    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    focusId?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.dateFrom) query.set('date_from', params.dateFrom);
+    if (params?.dateTo) query.set('date_to', params.dateTo);
+    if (params?.template) query.set('template', params.template);
+    if (params?.focusType) query.set('focus_type', params.focusType);
+    if (params?.focusId) query.set('focus_id', params.focusId);
 
     const token = getAccessToken();
     const headers = new Headers();
@@ -283,13 +416,38 @@ export const reports = {
     const link = document.createElement('a');
     const from = params?.dateFrom || 'kezdet';
     const to = params?.dateTo || 'veg';
+    const template = params?.template || 'overview';
+    const focusPart = params?.focusType && params?.focusId ? `-${params.focusType}-${params.focusId}` : '';
     link.href = url;
-    link.download = `hadmuveleti-riport-${from}-${to}.pdf`;
+    link.download = `hadmuveleti-jelentes-${template}${focusPart}-${from}-${to}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   },
 };
+export async function previewImport(entity: ImportEntity, file: File): Promise<ImportPreviewResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return request<ImportPreviewResult>(`/import/${entity}/preview`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function updateImportDraft(entity: ImportEntity, draftId: string, items: ImportDraftUpdateItem[]): Promise<ImportPreviewResult> {
+  return request<ImportPreviewResult>(`/import/${entity}/draft/${draftId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ items }),
+  });
+}
+
+export async function confirmImport(entity: ImportEntity, draftId: string): Promise<ImportConfirmResult> {
+  return request<ImportConfirmResult>(`/import/${entity}/confirm/${draftId}`, {
+    method: 'POST',
+  });
+}
+
+
 
 

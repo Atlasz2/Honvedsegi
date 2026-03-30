@@ -8,6 +8,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,14 +48,26 @@ export default function LoginPage() {
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Jelszó</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full bg-input border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:border-primary"
-              style={{ borderRadius: '2px' }}
-              disabled={submitting}
-            />
+            <div className="flex gap-2">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="flex-1 bg-input border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:border-primary"
+                style={{ borderRadius: '2px' }}
+                disabled={submitting}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(prev => !prev)}
+                className="border border-border px-3 py-2 text-xs uppercase tracking-military text-foreground hover:bg-accent"
+                style={{ borderRadius: '2px' }}
+                disabled={submitting}
+                aria-label={showPassword ? 'Jelszó elrejtése' : 'Jelszó megjelenítése'}
+              >
+                {showPassword ? 'Elrejtés' : 'Mutat'}
+              </button>
+            </div>
           </div>
           {error && <p className="text-destructive text-sm font-mono">{error}</p>}
           <button type="submit" className="btn-mil-primary w-full py-3" disabled={submitting}>

@@ -389,3 +389,58 @@ class ActivityLogRead(BaseModel):
     recordName: str
 
 
+
+class ImportIssue(BaseModel):
+    line: int
+    message: str
+
+
+class PersonnelImportResult(BaseModel):
+    totalRows: int
+    created: int
+    updated: int
+    skipped: int
+    dryRun: bool = False
+    issues: list[ImportIssue] = []
+
+
+class ImportPreviewItem(BaseModel):
+    line: int
+    action: Literal["create", "update", "skip"]
+    key: str
+    name: str
+    enabled: bool = True
+    data: dict[str, str] = {}
+    rawData: dict[str, str] = {}
+    unknownData: dict[str, str] = {}
+    issues: list[str] = []
+
+
+class ImportPreviewResult(BaseModel):
+    draftId: str
+    entity: Literal["personnel", "exercises"]
+    totalRows: int
+    created: int
+    updated: int
+    skipped: int
+    issues: list[ImportIssue] = []
+    items: list[ImportPreviewItem] = []
+
+
+class ImportDraftItemUpdate(BaseModel):
+    line: int
+    enabled: bool = True
+    data: dict[str, str] = {}
+
+
+class ImportDraftUpdateRequest(BaseModel):
+    items: list[ImportDraftItemUpdate] = []
+
+
+class ImportConfirmResult(BaseModel):
+    draftId: str
+    entity: Literal["personnel", "exercises"]
+    applied: bool
+    created: int
+    updated: int
+    skipped: int

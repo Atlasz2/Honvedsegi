@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
+from uuid import uuid4
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, TypeVar
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import Response
@@ -50,6 +52,9 @@ from .schemas import (
     ExerciseUpdate,
     LoginRequest,
     LoginResponse,
+    ImportConfirmResult,
+    ImportDraftUpdateRequest,
+    ImportPreviewResult,
     OperationRead,
     PersonCreate,
     PersonRead,
@@ -70,6 +75,7 @@ from .schemas import (
     VehicleUpdate,
 )
 from .security import assert_password_strength, fingerprint_token, hash_password, issue_token, needs_rehash, verify_password
+from .importers import ENTITY_CONFIG, ImportRow, parse_import
 from .seed import seed_database
 
 
@@ -81,6 +87,254 @@ GOD_USERNAME = "dev_master"
 GOD_ROLE = "fejleszto"
 BACKEND_ENV = os.getenv("BACKEND_ENV", "development").strip().lower()
 IS_PRODUCTION = BACKEND_ENV == "production"
+
+
+IMPORT_DRAFTS: dict[str, dict[str, Any]] = {}
+IMPORT_DRAFT_TTL_MINUTES = 30
+
+
+def _save_import_draft(
+    draft_id: str,
+    entity: str,
+    rows: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
+    created: int,
+    updated: int,
+    skipped: int,
+) -> str:
+    IMPORT_DRAFTS[draft_id] = {
+        "entity": entity,
+        "rows": rows,
+        "operations": operations,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "expires_at": _utc_now() + timedelta(minutes=IMPORT_DRAFT_TTL_MINUTES),
+    }
+    return draft_id
+
+
+def _store_import_draft(
+    entity: str,
+    rows: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
+    created: int,
+    updated: int,
+    skipped: int,
+) -> str:
+    return _save_import_draft(uuid4().hex, entity, rows, operations, created, updated, skipped)
+
+
+def _get_import_draft(entity: str, draft_id: str) -> dict[str, Any]:
+    draft = IMPORT_DRAFTS.get(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Import draft nem található")
+    if draft["entity"] != entity:
+        raise HTTPException(status_code=400, detail="A draft más entitáshoz tartozik")
+    if draft["expires_at"] < _utc_now():
+        IMPORT_DRAFTS.pop(draft_id, None)
+        raise HTTPException(status_code=410, detail="Import draft lejárt")
+    return draft
+
+
+def _pop_import_draft(entity: str, draft_id: str) -> dict[str, Any]:
+    draft = _get_import_draft(entity, draft_id)
+    return IMPORT_DRAFTS.pop(draft_id)
+
+
+def _normalize_import_mapping(data: dict[str, Any] | None) -> dict[str, str]:
+    if not data:
+        return {}
+    normalized: dict[str, str] = {}
+    for key, value in data.items():
+        text_key = str(key).strip()
+        if not text_key:
+            continue
+        text_value = "" if value is None else str(value).strip()
+        normalized[text_key] = text_value
+    return normalized
+
+
+def _serialize_import_row(row: ImportRow | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(row, ImportRow):
+        return {
+            "line": row.source_line,
+            "enabled": row.enabled,
+            "data": _normalize_import_mapping(row.data),
+            "rawData": _normalize_import_mapping(row.raw_data),
+            "unknownData": _normalize_import_mapping(row.unknown_data),
+        }
+    return {
+        "line": int(row.get("line", 0)),
+        "enabled": bool(row.get("enabled", True)),
+        "data": _normalize_import_mapping(row.get("data")),
+        "rawData": _normalize_import_mapping(row.get("rawData") or row.get("raw_data")),
+        "unknownData": _normalize_import_mapping(row.get("unknownData") or row.get("unknown_data")),
+    }
+
+
+def _ordered_missing_fields(entity: str, data: dict[str, str]) -> list[str]:
+    required = ENTITY_CONFIG[entity]["required"]
+    column_order = ENTITY_CONFIG[entity]["column_order"]
+    missing = [field for field in column_order if field in required and not data.get(field)]
+    for field in required:
+        if field not in missing and not data.get(field):
+            missing.append(field)
+    return missing
+
+
+def _extract_validation_messages(exc: Exception) -> list[str]:
+    if hasattr(exc, "errors"):
+        messages: list[str] = []
+        for error in exc.errors():
+            loc = ".".join(str(part) for part in error.get("loc", []) if part is not None)
+            label = loc or "sor"
+            err_type = str(error.get("type") or "")
+            if err_type == "missing":
+                messages.append(f"Hianyzik a kotelezo mezo: {label}")
+                continue
+            if err_type == "literal_error":
+                expected = str(error.get("ctx", {}).get("expected") or "")
+                invalid_value = error.get("input")
+                if expected:
+                    messages.append(f"{label}: ervenytelen ertek ({invalid_value}). Engedelyezett: {expected}")
+                else:
+                    messages.append(f"{label}: ervenytelen ertek ({invalid_value})")
+                continue
+            messages.append(f"{label}: {error.get('msg') or 'Ervenytelen ertek'}")
+        unique_messages: list[str] = []
+        seen: set[str] = set()
+        for message in messages:
+            if message in seen:
+                continue
+            seen.add(message)
+            unique_messages.append(message)
+        return unique_messages
+    text = str(exc).strip()
+    return [text] if text else ["Ervenytelen sor"]
+
+
+def _fallback_import_identity(entity: str, line: int, data: dict[str, str], raw_data: dict[str, str]) -> tuple[str, str]:
+    if entity == "personnel":
+        key = data.get("sztsz") or raw_data.get("sztsz") or raw_data.get("azonosito") or f"sor-{line}"
+        name = data.get("name") or raw_data.get("nev") or raw_data.get("name") or "-"
+        return key, name
+    key = data.get("name") or raw_data.get("nev") or raw_data.get("name") or f"sor-{line}"
+    name = data.get("name") or raw_data.get("nev") or raw_data.get("name") or "-"
+    return key, name
+
+
+def _evaluate_import_rows(entity: str, source_rows: list[ImportRow | dict[str, Any]], db: Session) -> dict[str, Any]:
+    created = 0
+    updated = 0
+    skipped = 0
+    issues: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    operations: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+
+    for source in source_rows:
+        row = _serialize_import_row(source)
+        rows.append(row)
+
+        line = row["line"]
+        enabled = row["enabled"]
+        data = row["data"]
+        raw_data = row["rawData"]
+        unknown_data = row["unknownData"]
+        preview_data = {k: v for k, v in data.items() if v is not None and str(v).strip()}
+        preview_raw = {k: v for k, v in raw_data.items() if v is not None and str(v).strip()}
+        preview_unknown = {k: v for k, v in unknown_data.items() if v is not None and str(v).strip()}
+        key, name = _fallback_import_identity(entity, line, preview_data, preview_raw)
+        item_issues: list[str] = []
+        action = "skip"
+
+        if not enabled:
+            item_issues.append("Felhasznalo altal kihagyva")
+        else:
+            missing = _ordered_missing_fields(entity, preview_data)
+            if missing:
+                item_issues.append(f"Hianyzik a kotelezo mezo: {', '.join(missing)}")
+            else:
+                try:
+                    if entity == "personnel":
+                        payload = PersonCreate(**preview_data)
+                        payload.sztsz = _normalize_sztsz(payload.sztsz)
+                        existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == payload.sztsz))
+                        action = "update" if existing else "create"
+                        key = payload.sztsz
+                        name = payload.name
+                    else:
+                        payload = ExerciseCreate(**preview_data)
+                        existing = db.scalar(
+                            select(ExerciseModel).where(
+                                ExerciseModel.name == payload.name,
+                                ExerciseModel.start_date == payload.startDate,
+                                ExerciseModel.type == payload.type,
+                            )
+                        )
+                        action = "update" if existing else "create"
+                        key = f"{payload.name}::{payload.startDate}::{payload.type}"
+                        name = payload.name
+
+                    if action == "create":
+                        created += 1
+                    else:
+                        updated += 1
+
+                    operations.append({
+                        "entity": entity,
+                        "action": action,
+                        "payload": payload.model_dump(),
+                    })
+                except Exception as exc:
+                    item_issues.extend(_extract_validation_messages(exc))
+
+        if item_issues or not enabled:
+            skipped += 1
+            action = "skip"
+            for message in item_issues:
+                issues.append({"line": line, "message": message})
+
+        items.append({
+            "line": line,
+            "action": action,
+            "key": key,
+            "name": name,
+            "enabled": enabled,
+            "data": preview_data,
+            "rawData": preview_raw,
+            "unknownData": preview_unknown,
+            "issues": item_issues,
+        })
+
+    if not rows:
+        issues.append({"line": 0, "message": "Nem sikerult ertelmezheto sort kiolvasni a fajlbol."})
+
+    return {
+        "entity": entity,
+        "totalRows": len(rows),
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "issues": issues,
+        "items": items,
+        "operations": operations,
+        "rows": rows,
+    }
+
+
+def _preview_response(payload: dict[str, Any], draft_id: str) -> ImportPreviewResult:
+    return ImportPreviewResult(
+        draftId=draft_id,
+        entity=payload["entity"],
+        totalRows=payload["totalRows"],
+        created=payload["created"],
+        updated=payload["updated"],
+        skipped=payload["skipped"],
+        issues=payload["issues"],
+        items=payload["items"],
+    )
 
 
 def _required_env_csv(name: str) -> list[str]:
@@ -463,10 +717,12 @@ def _enforce_single_god_user(db: Session) -> None:
 
 
 def _normalize_sztsz(value: str) -> str:
-    normalized = value.strip()
-    if len(normalized) != 8 or not normalized.isdigit():
-        raise HTTPException(status_code=400, detail="Az SZTSz pontosan 8 számjegy lehet")
-    return normalized
+    normalized = re.sub(r"\s+", "", (value or "").strip()).upper()
+    if re.fullmatch(r"\d{8}", normalized):
+        return normalized
+    if re.fullmatch(r"[A-Z]{2}\d{6}", normalized):
+        return normalized
+    raise HTTPException(status_code=400, detail="Az SZTSz formátuma 8 számjegy vagy 2 betű + 6 számjegy lehet")
 
 
 def _assert_unique_sztsz(db: Session, sztsz: str, exclude_id: str | None = None) -> None:
@@ -706,18 +962,112 @@ def operations_summary(
     }
 
 
-@app.get("/api/reports/operations.pdf")
-def operations_pdf_report(
-    date_from: str | None = None,
-    date_to: str | None = None,
-    db: Session = Depends(get_db),
-    _: UserModel = Depends(_get_current_user),
-):
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"PDF modul hiba: {exc}") from exc
+def _report_title(template: str) -> str:
+    title_map = {
+        "overview": "Összesített műveleti riport",
+        "operations": "Műveleti naptár riport",
+        "duties": "Szolgálati kivonat",
+        "events": "Eseménynaptár riport",
+        "focus": "Részletes fókusz riport",
+    }
+    return title_map[template]
+
+
+def _serialize_report_list_item(item: Any, item_type: str) -> dict[str, Any]:
+    if item_type == "duty":
+        return {
+            "id": item.id,
+            "itemType": item_type,
+            "type": item.type,
+            "personId": item.person_id,
+            "personName": item.person_name,
+            "startDate": item.start_date,
+            "endDate": item.end_date,
+            "location": item.location or "-",
+            "status": item.status,
+            "previewRow": f"- {item.start_date} -> {item.end_date} | {item.type} | {item.person_name} | {item.location or '-'} | {item.status}",
+        }
+
+    assigned = getattr(item, "assigned", None) or []
+    payload = {
+        "id": item.id,
+        "itemType": item_type,
+        "name": item.name,
+        "type": getattr(item, "type", "-") or "-",
+        "startDate": item.start_date,
+        "endDate": item.end_date,
+        "location": item.location or "-",
+        "status": item.status,
+        "maxPersonnel": getattr(item, "max_personnel", 0),
+        "assignedCount": len(assigned),
+        "previewRow": f"- {item.start_date} -> {item.end_date} | {item.name} | {item.location or '-'} | {item.status}",
+    }
+    if hasattr(item, "organizer"):
+        payload["organizer"] = getattr(item, "organizer", "") or "-"
+    return payload
+
+
+def _serialize_focus_report(item: Any, focus_type: str, focus_id: str) -> dict[str, Any]:
+    if focus_type == "duty":
+        return {
+            "type": focus_type,
+            "id": focus_id,
+            "headline": f"Szolgálat: {item.type}",
+            "description": "",
+            "participants": [],
+            "details": [
+                {"label": "Időszak", "value": f"{item.start_date} - {item.end_date}"},
+                {"label": "Személy", "value": item.person_name},
+                {"label": "Helyszín", "value": item.location or "-"},
+                {"label": "Státusz", "value": item.status},
+            ],
+        }
+
+    assigned = getattr(item, "assigned", None) or []
+    participants = []
+    for entry in assigned[:250]:
+        participants.append(
+            {
+                "personName": entry.get("personName") or entry.get("person_name") or "-",
+                "detail": entry.get("role") or entry.get("attendance") or "-",
+            }
+        )
+
+    details = [
+        {"label": "Típus", "value": getattr(item, "type", "-") or "-"},
+        {"label": "Időszak", "value": f"{item.start_date} - {item.end_date}"},
+        {"label": "Helyszín", "value": item.location or "-"},
+        {"label": "Státusz", "value": item.status},
+        {"label": "Max. létszám", "value": str(getattr(item, "max_personnel", 0))},
+        {"label": "Hozzárendelve", "value": f"{len(assigned)} fő"},
+    ]
+    if hasattr(item, "organizer"):
+        details.insert(4, {"label": "Szervező", "value": getattr(item, "organizer", "") or "-"})
+
+    return {
+        "type": focus_type,
+        "id": focus_id,
+        "headline": f"Megnevezés: {item.name}",
+        "description": getattr(item, "description", "") or "",
+        "participants": participants,
+        "details": details,
+    }
+
+
+def _build_operations_report_data(
+    db: Session,
+    date_from: str | None,
+    date_to: str | None,
+    template: str,
+    focus_type: str | None,
+    focus_id: str | None,
+) -> dict[str, Any]:
+    allowed_templates = {"overview", "operations", "duties", "events", "focus"}
+    allowed_focus_types = {"exercise", "training", "event", "duty"}
+    if template not in allowed_templates:
+        raise HTTPException(status_code=400, detail="Nem támogatott riportminta")
+    if focus_type and focus_type not in allowed_focus_types:
+        raise HTTPException(status_code=400, detail="Nem támogatott fókusz típus")
 
     start_date = _parse_iso_date(date_from) if date_from else _utc_now().date()
     end_date = _parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
@@ -735,69 +1085,382 @@ def operations_pdf_report(
         item for item in db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
         if _date_overlap(item.start_date, item.end_date, start_date, end_date)
     ]
+    event_items = [
+        item for item in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
+        if _date_overlap(item.start_date, item.end_date, start_date, end_date)
+    ]
     duty_items = [
         item for item in db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
         if _date_overlap(item.start_date, item.end_date, start_date, end_date)
     ]
 
+    sections: list[dict[str, Any]] = []
+
+    def add_section(key: str, title: str, items: list[Any], item_type: str, limit: int):
+        visible_items = items[:limit]
+        sections.append(
+            {
+                "key": key,
+                "title": title,
+                "count": len(items),
+                "truncated": len(items) > len(visible_items),
+                "items": [_serialize_report_list_item(item, item_type) for item in visible_items],
+            }
+        )
+
+    focus_payload = None
+    if template == "focus":
+        if not focus_type or not focus_id:
+            raise HTTPException(status_code=400, detail="A fókusz riporthoz típus és azonosító szükséges")
+
+        item = None
+        if focus_type == "exercise":
+            item = db.scalar(select(ExerciseModel).where(ExerciseModel.id == focus_id))
+        elif focus_type == "training":
+            item = db.scalar(select(TrainingModel).where(TrainingModel.id == focus_id))
+        elif focus_type == "event":
+            item = db.scalar(select(EventModel).where(EventModel.id == focus_id))
+        elif focus_type == "duty":
+            item = db.scalar(select(DutyModel).where(DutyModel.id == focus_id))
+
+        if not item:
+            raise HTTPException(status_code=404, detail="A kiválasztott rekord nem található")
+
+        focus_payload = _serialize_focus_report(item, focus_type, focus_id)
+    else:
+        if template in {"overview", "operations"}:
+            add_section("exercises", "Gyakorlatok", exercise_items, "exercise", 300)
+            add_section("trainings", "Kiképzések", training_items, "training", 300)
+        if template == "overview":
+            add_section("events", "Események", event_items, "event", 300)
+            add_section("duties", "Szolgálatok", duty_items, "duty", 400)
+        elif template == "duties":
+            add_section("duties", "Szolgálatok", duty_items, "duty", 400)
+        elif template == "events":
+            add_section("events", "Események", event_items, "event", 300)
+
+    return {
+        "template": template,
+        "title": _report_title(template),
+        "interval": {
+            "dateFrom": start_date.isoformat(),
+            "dateTo": end_date.isoformat(),
+        },
+        "focusType": focus_type,
+        "focusId": focus_id,
+        "summary": {
+            "exercises": len(exercise_items),
+            "trainings": len(training_items),
+            "events": len(event_items),
+            "duties": len(duty_items),
+        },
+        "sections": sections,
+        "focus": focus_payload,
+    }
+
+
+@app.get("/api/reports/operations/preview")
+def operations_report_preview(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    template: str = "overview",
+    focus_type: str | None = None,
+    focus_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_get_current_user),
+):
+    return _build_operations_report_data(db, date_from, date_to, template, focus_type, focus_id)
+
+
+@app.get("/api/reports/operations.pdf")
+def operations_pdf_report(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    template: str = "overview",
+    focus_type: str | None = None,
+    focus_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_get_current_user),
+):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+            HRFlowable, KeepTogether,
+        )
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF modul hiba: {exc}") from exc
+
+    # ── Fontok regisztrálása (magyar karakterek) ──────────────────────────────
+    try:
+        pdfmetrics.registerFont(TTFont("Arial", "C:/Windows/Fonts/Arial.ttf"))
+        pdfmetrics.registerFont(TTFont("Arial-Bold", "C:/Windows/Fonts/Arialbd.ttf"))
+        pdfmetrics.registerFont(TTFont("Arial-Italic", "C:/Windows/Fonts/Ariali.ttf"))
+        pdfmetrics.registerFontFamily("Arial", normal="Arial", bold="Arial-Bold", italic="Arial-Italic")
+        body_font = "Arial"
+        bold_font = "Arial-Bold"
+    except Exception:
+        body_font = "Helvetica"
+        bold_font = "Helvetica-Bold"
+
+    # ── Szín paletta ──────────────────────────────────────────────────────────
+    C_DARK   = colors.HexColor("#1e293b")   # fejléc háttér
+    C_MED    = colors.HexColor("#334155")   # szekció fejléc háttér
+    C_LIGHT  = colors.HexColor("#f1f5f9")   # sáv-háttér
+    C_ACCENT = colors.HexColor("#3b82f6")   # kiemelő kék
+    C_WHITE  = colors.white
+    C_BORDER = colors.HexColor("#cbd5e1")
+
+    # ── Stílusok ──────────────────────────────────────────────────────────────
+    def ps(name, font=body_font, size=9, leading=12, color=C_DARK, bold=False, **kw):
+        return ParagraphStyle(
+            name, fontName=bold_font if bold else font,
+            fontSize=size, leading=leading, textColor=color, **kw
+        )
+
+    sTitle    = ps("title",   size=18, leading=22, bold=True,  color=C_WHITE)
+    sSub      = ps("sub",     size=10, leading=14, color=colors.HexColor("#94a3b8"))
+    sSection  = ps("sec",     size=11, leading=14, bold=True,  color=C_WHITE)
+    sLabel    = ps("label",   size=8,  leading=11, bold=True,  color=C_MED)
+    sValue    = ps("value",   size=9,  leading=12, color=C_DARK)
+    sCell     = ps("cell",    size=8,  leading=11, color=C_DARK)
+    sCellBold = ps("cellb",   size=8,  leading=11, bold=True,  color=C_DARK)
+    sEmpty    = ps("empty",   size=8,  leading=11, color=colors.HexColor("#94a3b8"))
+    sDesc     = ps("desc",    size=8,  leading=12, color=C_DARK)
+
     from io import BytesIO
-
     buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
 
-    y = height - 40
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=1.5*cm,  bottomMargin=2*cm,
+        title="Guard Guard Duty – Riport",
+    )
+    W = A4[0] - 3*cm   # hasznos szélesség
 
-    def line(text_value: str):
-        nonlocal y
-        if y < 40:
-            pdf.showPage()
-            y = height - 40
-        pdf.drawString(40, y, text_value)
-        y -= 14
+    story = []
+    report_data = _build_operations_report_data(db, date_from, date_to, template, focus_type, focus_id)
+    interval    = report_data["interval"]
+    start_date  = interval["dateFrom"]
+    end_date    = interval["dateTo"]
+    summary     = report_data["summary"]
 
-    pdf.setFont("Helvetica-Bold", 12)
-    line("Hadmuveleti riport")
-    pdf.setFont("Helvetica", 10)
-    line(f"Intervallum: {start_date.isoformat()} - {end_date.isoformat()}")
-    line("")
+    # ── Fejléc banner ─────────────────────────────────────────────────────────
+    subtitle_text = f"Intervallum: {start_date}  –  {end_date}"
+    if template == "focus":
+        subtitle_text += f"   |   Fókusz: {focus_type or '–'}"
 
-    pdf.setFont("Helvetica-Bold", 11)
-    line(f"Gyakorlatok ({len(exercise_items)} db)")
-    pdf.setFont("Helvetica", 9)
-    for item in exercise_items[:300]:
-        line(f"- {item.start_date} -> {item.end_date} | {item.name} | {item.location} | {item.status}")
+    header_table = Table(
+        [[Paragraph(report_data["title"], sTitle)],
+         [Paragraph(subtitle_text, sSub)]],
+        colWidths=[W],
+    )
+    header_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), C_DARK),
+        ("ROWBACKGROUNDS", (0,0), (-1,-1), [C_DARK, C_DARK]),
+        ("TOPPADDING",    (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING",   (0,0), (-1,-1), 14),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 14),
+        ("ROUNDEDCORNERS", [6]),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 0.4*cm))
 
-    line("")
-    pdf.setFont("Helvetica-Bold", 11)
-    line(f"Kikepzesek ({len(training_items)} db)")
-    pdf.setFont("Helvetica", 9)
-    for item in training_items[:300]:
-        line(f"- {item.start_date} -> {item.end_date} | {item.name} | {item.location} | {item.status}")
+    # ── Összesítő kártyák ─────────────────────────────────────────────────────
+    summary_labels = [
+        ("Gyakorlatok",  str(summary["exercises"])),
+        ("Kiképzések",   str(summary["trainings"])),
+        ("Események",    str(summary["events"])),
+        ("Szolgálatok",  str(summary["duties"])),
+    ]
+    card_w = W / 4 - 0.1*cm
+    card_data = [[
+        Table([[Paragraph(v, ps("cv", size=20, leading=24, bold=True, color=C_ACCENT))],
+               [Paragraph(l, ps("cl", size=8,  leading=10, color=colors.HexColor("#64748b")))]],
+              colWidths=[card_w])
+        for l, v in summary_labels
+    ]]
+    card_styles = []
+    for col in range(4):
+        card_styles += [
+            ("BACKGROUND",    (col,0), (col,0), C_LIGHT),
+            ("BOX",           (col,0), (col,0), 0.5, C_BORDER),
+            ("TOPPADDING",    (col,0), (col,0), 8),
+            ("BOTTOMPADDING", (col,0), (col,0), 8),
+            ("LEFTPADDING",   (col,0), (col,0), 10),
+            ("RIGHTPADDING",  (col,0), (col,0), 10),
+        ]
+    cards_table = Table(card_data, colWidths=[card_w + 0.1*cm]*4)
+    cards_table.setStyle(TableStyle(card_styles))
+    story.append(cards_table)
+    story.append(Spacer(1, 0.5*cm))
 
-    line("")
-    pdf.setFont("Helvetica-Bold", 11)
-    line(f"Szolgalatok ({len(duty_items)} db)")
-    pdf.setFont("Helvetica", 9)
-    for item in duty_items[:400]:
-        line(f"- {item.start_date} -> {item.end_date} | {item.type} | {item.person_name} | {item.location} | {item.status}")
+    # ── Segédfüggvények ───────────────────────────────────────────────────────
+    def section_header(title: str, count: int | None = None):
+        label = title if count is None else f"{title}  ({count} db)"
+        t = Table([[Paragraph(label, sSection)]], colWidths=[W])
+        t.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0), (-1,-1), C_MED),
+            ("TOPPADDING",    (0,0), (-1,-1), 7),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+            ("LEFTPADDING",   (0,0), (-1,-1), 12),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 12),
+        ]))
+        return t
 
-    pdf.save()
+    def info_row(label: str, value: str):
+        return Table(
+            [[Paragraph(label, sLabel), Paragraph(value, sValue)]],
+            colWidths=[3.5*cm, W - 3.5*cm],
+        )
+
+    def data_table(headers: list[str], rows: list[list[str]], col_widths: list[float]):
+        h_cells = [Paragraph(h, sCellBold) for h in headers]
+        body    = [h_cells] + [[Paragraph(str(c), sCell) for c in row] for row in rows]
+        styles  = [
+            ("BACKGROUND",    (0,0), (-1,0),  C_DARK),
+            ("TEXTCOLOR",     (0,0), (-1,0),  C_WHITE),
+            ("FONTNAME",      (0,0), (-1,0),  bold_font),
+            ("FONTSIZE",      (0,0), (-1,0),  8),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [C_WHITE, C_LIGHT]),
+            ("GRID",          (0,0), (-1,-1), 0.3, C_BORDER),
+            ("TOPPADDING",    (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING",   (0,0), (-1,-1), 6),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 6),
+            ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ]
+        t = Table(body, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle(styles))
+        return t
+
+    # ── Tartalom: fókusz riport ───────────────────────────────────────────────
+    if template == "focus":
+        focus = report_data["focus"]
+        story.append(KeepTogether([
+            section_header(focus["headline"]),
+            Spacer(1, 0.2*cm),
+        ]))
+        for det in focus["details"]:
+            story.append(info_row(det["label"], det["value"]))
+            story.append(Spacer(1, 0.15*cm))
+        if focus["description"]:
+            story.append(Spacer(1, 0.3*cm))
+            story.append(section_header("Leírás"))
+            story.append(Spacer(1, 0.2*cm))
+            for raw_line in focus["description"].splitlines():
+                story.append(Paragraph(raw_line or " ", sDesc))
+        if focus["participants"]:
+            story.append(Spacer(1, 0.4*cm))
+            story.append(section_header("Résztvevők", len(focus["participants"])))
+            story.append(Spacer(1, 0.2*cm))
+            rows = [[e["personName"], e["detail"]] for e in focus["participants"]]
+            story.append(data_table(
+                ["Név", "Részleg / szerep"],
+                rows,
+                [W * 0.55, W * 0.45],
+            ))
+
+    # ── Tartalom: lista riportok ──────────────────────────────────────────────
+    else:
+        col_cfg = {
+            "duty":     (["Kezdés", "Vége", "Típus", "Személy", "Helyszín", "Státusz"],
+                         [2.2*cm, 2.2*cm, 2.8*cm, 4.5*cm, 3.5*cm, 2.5*cm]),
+            "exercise": (["Kezdés", "Vége", "Megnevezés", "Helyszín", "Státusz"],
+                         [2.2*cm, 2.2*cm, 5.5*cm, 4.0*cm, 3.5*cm]),
+            "training": (["Kezdés", "Vége", "Megnevezés", "Helyszín", "Státusz"],
+                         [2.2*cm, 2.2*cm, 5.5*cm, 4.0*cm, 3.5*cm]),
+            "event":    (["Kezdés", "Vége", "Megnevezés", "Helyszín", "Státusz"],
+                         [2.2*cm, 2.2*cm, 5.5*cm, 4.0*cm, 3.5*cm]),
+        }
+        type_map = {
+            "duty":     "duty",
+            "exercises":"exercise",
+            "trainings":"training",
+            "events":   "event",
+            "duties":   "duty",
+        }
+        for sec in report_data["sections"]:
+            item_type = type_map.get(sec["key"], "exercise")
+            headers, widths = col_cfg.get(item_type, col_cfg["exercise"])
+
+            story.append(Spacer(1, 0.3*cm))
+            story.append(section_header(sec["title"], sec["count"]))
+            story.append(Spacer(1, 0.2*cm))
+
+            if not sec["items"]:
+                story.append(Paragraph("Nincs találat a megadott feltételekre.", sEmpty))
+                story.append(Spacer(1, 0.2*cm))
+                continue
+
+            def _row(item: dict, itype: str) -> list[str]:
+                if itype == "duty":
+                    return [
+                        item.get("startDate",""), item.get("endDate",""),
+                        item.get("type",""), item.get("personName",""),
+                        item.get("location",""), item.get("status",""),
+                    ]
+                return [
+                    item.get("startDate",""), item.get("endDate",""),
+                    item.get("name",""), item.get("location",""), item.get("status",""),
+                ]
+
+            rows = [_row(it, item_type) for it in sec["items"]]
+            story.append(data_table(headers, rows, widths))
+            if sec.get("truncated"):
+                story.append(Paragraph(
+                    f"(Csak az első {len(sec['items'])} sor látható – szűkítsd az intervallumot a teljes listához.)",
+                    sEmpty,
+                ))
+            story.append(Spacer(1, 0.1*cm))
+
+    # ── Lábléc (oldalszám egyszerű megoldással) ───────────────────────────────
+    from reportlab.platypus import PageBreak
+    def _add_page_number(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont(body_font, 7)
+        canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+        page_num = f"{canvas_obj.getPageNumber()}. oldal  |  Guard Guard Duty – {report_data['title']}"
+        canvas_obj.drawRightString(A4[0] - 1.5*cm, 1.2*cm, page_num)
+        canvas_obj.restoreState()
+
+    doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
     data = buffer.getvalue()
     buffer.close()
 
-    return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=hadmuveleti-riport.pdf"})
-
-
+    filename_map = {
+        "overview": "osszesitett-muveleti-riport.pdf",
+        "operations": "muveleti-naptar-riport.pdf",
+        "duties": "szolgalati-kivonat.pdf",
+        "events": "esemenynaptar-riport.pdf",
+        "focus": f"fokusz-riport-{focus_type or 'elem'}.pdf",
+    }
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename_map.get(template, 'riport.pdf')}"},
+    )
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
-    attempt = _get_login_attempt(db, payload.username)
+    normalized_username = (payload.username or "").strip()
+    if not normalized_username:
+        raise HTTPException(status_code=401, detail="Hibás felhasználónév vagy jelszó")
+
+    attempt = _get_login_attempt(db, normalized_username)
     if _is_login_locked(attempt):
         raise HTTPException(status_code=429, detail="Túl sok hibás próbálkozás. Próbáld újra később.")
 
-    user = db.scalar(select(UserModel).where(UserModel.username == payload.username))
+    user = db.scalar(select(UserModel).where(UserModel.username == normalized_username))
     if not user or not verify_password(payload.password, user.password_hash):
-        _register_failed_login(db, payload.username)
+        _register_failed_login(db, normalized_username)
         raise HTTPException(status_code=401, detail="Hibás felhasználónév vagy jelszó")
     if not user.active:
         raise HTTPException(status_code=403, detail="A felhasználó inaktív")
@@ -810,7 +1473,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             # Régi, gyenge jelszó esetén ne bukjon el a login; a rehash ilyenkor elmarad.
             pass
 
-    _reset_login_attempt(db, payload.username)
+    _reset_login_attempt(db, normalized_username)
 
     expiry = _utc_now() + timedelta(hours=SESSION_HOURS)
     user.last_login = _utc_now()
@@ -951,46 +1614,74 @@ def list_personnel_paged(
         filters.append(PersonModel.status == status_filter.strip())
 
     base_query = select(PersonModel)
-    count_query = select(func.count(PersonModel.id))
     for condition in filters:
         base_query = base_query.where(condition)
-        count_query = count_query.where(condition)
 
-    rank_order = case(
-        (PersonModel.rank == "Közlegény", 1),
-        (PersonModel.rank == "Tizedes", 2),
-        (PersonModel.rank == "Szakaszvezető", 3),
-        (PersonModel.rank == "Őrmester", 4),
-        (PersonModel.rank == "Törzsőrmester", 5),
-        (PersonModel.rank == "Főtörzsőrmester", 6),
-        (PersonModel.rank == "Zászlós", 7),
-        (PersonModel.rank == "Törzszászlós", 8),
-        (PersonModel.rank == "Főtörzszászlós", 9),
-        (PersonModel.rank == "Hadnagy", 10),
-        (PersonModel.rank == "Főhadnagy", 11),
-        (PersonModel.rank == "Százados", 12),
-        (PersonModel.rank == "Őrnagy", 13),
-        (PersonModel.rank == "Alezredes", 14),
-        (PersonModel.rank == "Ezredes", 15),
-        else_=999,
-    )
-    sort_fields = {
-        "name": PersonModel.name,
-        "rank": rank_order,
-        "sztsz": PersonModel.sztsz,
-        "unit": PersonModel.unit,
-        "status": PersonModel.status,
-        "joinDate": PersonModel.join_date,
+    rank_order = {
+        "honvéd": 1,
+        "honved": 1,
+        "közkatona": 1,
+        "közlegény": 1,
+        "tizedes": 2,
+        "szakaszvezető": 3,
+        "őrmester": 4,
+        "törzsőrmester": 5,
+        "főtörzsőrmester": 6,
+        "zászlós": 7,
+        "törzszászlós": 8,
+        "főtörzszászlós": 9,
+        "hadnagy": 10,
+        "főhadnagy": 11,
+        "százados": 12,
+        "őrnagy": 13,
+        "alezredes": 14,
+        "ezredes": 15,
     }
-    sort_column = sort_fields.get(sort_by, PersonModel.name)
-    order_clause = sort_column.desc() if sort_dir.lower() == "desc" else sort_column.asc()
 
-    total = db.scalar(count_query) or 0
+    def _normalized_text(value: str | None) -> str:
+        return (value or "").strip().lower()
+
+    def _rank_value(item: PersonModel) -> int | None:
+        return rank_order.get(_normalized_text(item.rank))
+
+    sort_key_builders = {
+        "name": lambda item: (_normalized_text(item.name), _normalized_text(item.sztsz)),
+        "sztsz": lambda item: (_normalized_text(item.sztsz), _normalized_text(item.name)),
+        "unit": lambda item: (_normalized_text(item.unit), _normalized_text(item.name)),
+        "status": lambda item: (_normalized_text(item.status), _normalized_text(item.name)),
+        "joinDate": lambda item: (_normalized_text(item.join_date), _normalized_text(item.name)),
+    }
+
+    all_items = db.scalars(base_query).all()
+    reverse = sort_dir.lower() == "desc"
+
+    if sort_by == "rank":
+        if reverse:
+            all_items.sort(
+                key=lambda item: (
+                    _rank_value(item) is None,
+                    -(_rank_value(item) or 0),
+                    _normalized_text(item.name),
+                )
+            )
+        else:
+            all_items.sort(
+                key=lambda item: (
+                    _rank_value(item) is None,
+                    _rank_value(item) or 999,
+                    _normalized_text(item.name),
+                )
+            )
+    else:
+        sort_key = sort_key_builders.get(sort_by, sort_key_builders["name"])
+        all_items.sort(key=sort_key, reverse=reverse)
+
+    total = len(all_items)
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
     offset = (page - 1) * page_size
 
-    items = db.scalars(base_query.order_by(order_clause, PersonModel.name.asc()).offset(offset).limit(page_size)).all()
+    items = all_items[offset : offset + page_size]
 
     return {
         "items": [_serialize_person(item).model_dump() for item in items],
@@ -1033,6 +1724,148 @@ def delete_person(item_id: str, db: Session = Depends(get_db), _: UserModel = De
     item = _require_model(db, PersonModel, item_id)
     db.delete(item)
     db.commit()
+
+
+
+
+@app.post("/api/import/{entity}/preview", response_model=ImportPreviewResult)
+def preview_import(
+    entity: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_require_editor),
+) -> ImportPreviewResult:
+    if entity not in {"personnel", "exercises"}:
+        raise HTTPException(status_code=400, detail="Nem támogatott import cél")
+
+    filename = file.filename or ""
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Üres fájl")
+
+    try:
+        rows = parse_import(entity, filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    preview = _evaluate_import_rows(entity, rows, db)
+    valid_count = preview["created"] + preview["updated"]
+
+    if rows and valid_count == 0:
+        alternative_entity = "exercises" if entity == "personnel" else "personnel"
+        try:
+            alternative_rows = parse_import(alternative_entity, filename, content)
+            alternative_preview = _evaluate_import_rows(alternative_entity, alternative_rows, db)
+            alternative_valid = alternative_preview["created"] + alternative_preview["updated"]
+            if alternative_valid > 0:
+                alternative_preview["issues"].insert(
+                    0,
+                    {
+                        "line": 0,
+                        "message": "A rendszer automatikusan a masik import cel szerint ertelmezte a fajlt, mert ott tobb ervenyes sort talalt.",
+                    },
+                )
+                preview = alternative_preview
+                entity = alternative_entity
+        except Exception:
+            pass
+
+    draft_id = _store_import_draft(
+        entity,
+        preview["rows"],
+        preview["operations"],
+        preview["created"],
+        preview["updated"],
+        preview["skipped"],
+    )
+    return _preview_response(preview, draft_id)
+
+
+@app.put("/api/import/{entity}/draft/{draft_id}", response_model=ImportPreviewResult)
+def update_import_draft(
+    entity: str,
+    draft_id: str,
+    payload: ImportDraftUpdateRequest,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_require_editor),
+) -> ImportPreviewResult:
+    if entity not in {"personnel", "exercises"}:
+        raise HTTPException(status_code=400, detail="Nem támogatott import cél")
+
+    draft = _get_import_draft(entity, draft_id)
+    updates = {item.line: item for item in payload.items}
+    source_rows: list[dict[str, Any]] = []
+
+    for row in draft.get("rows", []):
+        updated_row = dict(row)
+        row_update = updates.get(int(updated_row.get("line", 0)))
+        if row_update is not None:
+            updated_row["enabled"] = row_update.enabled
+            updated_row["data"] = _normalize_import_mapping(row_update.data)
+        source_rows.append(updated_row)
+
+    preview = _evaluate_import_rows(entity, source_rows, db)
+    _save_import_draft(
+        draft_id,
+        entity,
+        preview["rows"],
+        preview["operations"],
+        preview["created"],
+        preview["updated"],
+        preview["skipped"],
+    )
+    return _preview_response(preview, draft_id)
+
+
+@app.post("/api/import/{entity}/confirm/{draft_id}", response_model=ImportConfirmResult)
+def confirm_import(
+    entity: str,
+    draft_id: str,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_require_editor),
+) -> ImportConfirmResult:
+    draft = _pop_import_draft(entity, draft_id)
+    operations = draft["operations"]
+
+    for op in operations:
+        payload = op["payload"]
+
+        if entity == "personnel":
+            dto = PersonCreate(**payload)
+            dto.sztsz = _normalize_sztsz(dto.sztsz)
+            existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == dto.sztsz))
+            if existing:
+                _apply_person(existing, dto)
+            else:
+                item = PersonModel()
+                _apply_person(item, dto)
+                db.add(item)
+        else:
+            dto = ExerciseCreate(**payload)
+            existing = db.scalar(
+                select(ExerciseModel).where(
+                    ExerciseModel.name == dto.name,
+                    ExerciseModel.start_date == dto.startDate,
+                    ExerciseModel.type == dto.type,
+                )
+            )
+            if existing:
+                _apply_exercise(existing, dto)
+            else:
+                item = ExerciseModel()
+                _apply_exercise(item, dto)
+                db.add(item)
+
+    db.commit()
+
+    return ImportConfirmResult(
+        draftId=draft_id,
+        entity=entity,
+        applied=True,
+        created=draft["created"],
+        updated=draft["updated"],
+        skipped=draft["skipped"],
+    )
 
 
 @app.get("/api/exercises", response_model=list[ExerciseRead])
@@ -1444,6 +2277,13 @@ def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db
     db.commit()
     db.refresh(item)
     return _serialize_log(item)
+
+
+
+
+
+
+
 
 
 

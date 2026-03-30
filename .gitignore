@@ -32,3 +32,9 @@ backend/app/__pycache__/
 
 backend/data/*.db-shm
 backend/data/*.db-wal
+
+# Temp scripts
+.tmp-*
+backend/.tmp-*
+backend/*.db
+
