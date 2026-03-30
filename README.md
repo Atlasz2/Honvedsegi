@@ -87,13 +87,32 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 npm run dev
 ```
 
-A frontend alapértelmezetten a következő API címet használja:
+A frontend alapértelmezetten relatív API útvonalat használ:
 
 ```text
-http://127.0.0.1:8000/api
+/api
 ```
 
 Ha ettől eltérő backend címet akarsz használni, állítsd be a `VITE_API_URL` környezeti változót.
+
+## Offline / intranet üzem (internet nélkül)
+
+A rendszer internet nélkül is futtatható, ha a függőségeket előre letöltöd vagy belső tükörből szolgálod ki.
+
+- Frontend csomagok:
+  - használj belső npm registry-t vagy előre feltöltött npm cache-t
+  - telepítés internet nélkül: `npm ci --offline`
+- Backend csomagok:
+  - készíts wheelhouse mappát internetes gépen: `pip download -r backend/requirements.txt -d backend/wheels`
+  - telepítés intraneten: `pip install --no-index --find-links backend/wheels -r backend/requirements.txt`
+- Frontend kiadás:
+  - `npm run build`
+  - a `dist/` kimenetet szolgáld ki intranetes webszerverről (IIS/Nginx)
+- API kommunikáció:
+  - javasolt, hogy ugyanazon host alatt menjen frontend + backend
+  - frontend útvonal: `/api`
+  - backend végpontok: `/api/...`
+  - ha külön host/port kell, állítsd be a `VITE_API_URL` értékét
 
 ## Kötelező biztonsági változók
 
@@ -103,6 +122,7 @@ A backend indításához kötelezően be kell állítani:
 - `BACKEND_DEV_MASTER_PASSWORD`
 - `BACKEND_PASSWORD_PEPPER` (hosszú, random, csak szerveren tárolt titok)
 - `BACKEND_TOKEN_PEPPER` (session token fingerprinthez használt külön titok)
+- `BACKEND_DATA_KEY` (Fernet base64 kulcs a személyzeti adatok érzékeny mezőinek DB-szintű titkosításához; `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` paranccsal generálható)
 - `BACKEND_READER_PASSWORD` (olvasó tesztfiók jelszava)
 - `BACKEND_EDITOR_PASSWORD` (szerkesztő tesztfiók jelszava)
 
@@ -144,6 +164,7 @@ $env:BACKEND_ADMIN_PASSWORD = "AdminTeszt_2026!"
 $env:BACKEND_DEV_MASTER_PASSWORD = "DevMasterTeszt_2026!"
 $env:BACKEND_PASSWORD_PEPPER = "HOSSZU_RANDOM_PEPPER_CSERELD_LE_ELESBEN"
 $env:BACKEND_TOKEN_PEPPER = "KULON_RANDOM_TOKEN_PEPPER_CSERELD_LE_ELESBEN"
+$env:BACKEND_DATA_KEY = "<Fernet.generate_key() kimenetét add meg itt>"
 ```
 
 Ezek után a teszt loginok:
@@ -262,6 +283,7 @@ A következő scriptek a `ops/windows` mappában találhatók:
 - `new-guardduty-firewall-rules.ps1`
 - `backup-guardduty-db.ps1`
 - `install-guardduty-backup-task.ps1`
+- `test-guardduty-health.ps1`
 
 Ajánlott sorrend (rendszergazda PowerShell):
 
@@ -271,6 +293,8 @@ cd <repo>\ops\windows
 .\set-guardduty-secrets.ps1 `
   -AdminPassword "EROS_ADMIN_JELSZO" `
   -DevMasterPassword "EROS_DEVMASTER_JELSZO" `
+  -ReaderPassword "EROS_OLVASO_JELSZO" `
+  -EditorPassword "EROS_SZERKESZTO_JELSZO" `
   -PasswordPepper "NAGYON_HOSSZU_RANDOM_PEPPER" `
   -TokenPepper "KULON_HOSSZU_RANDOM_TOKEN_PEPPER" `
   -AllowedOrigins "http://192.168.1.50:8080" `
@@ -291,6 +315,12 @@ Kézi mentés futtatása:
 
 ```powershell
 .\backup-guardduty-db.ps1
+```
+
+Telephelyi elérés ellenőrzése (bármely kliens gépről):
+```powershell
+cd <repo>\ops\windows
+.\test-guardduty-health.ps1 -BaseUrl "http://guardduty.intra.honved:8000"
 ```
 
 

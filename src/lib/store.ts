@@ -13,9 +13,7 @@ import {
   Vehicle,
 } from './types';
 
-const defaultApiBase = import.meta.env.DEV
-  ? "/api"
-  : `${window.location.protocol}//${window.location.hostname}:8000/api`;
+const defaultApiBase = "/api";
 const API_BASE = import.meta.env.VITE_API_URL || defaultApiBase;
 const TOKEN_KEY = 'honved_auth_token';
 
@@ -425,6 +423,104 @@ export const reports = {
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   },
+  downloadOperationsExcel: async (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    template?: "overview" | "operations" | "duties" | "events" | "focus";
+    focusType?: "exercise" | "training" | "event" | "duty";
+    focusId?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.dateFrom) query.set("date_from", params.dateFrom);
+    if (params?.dateTo) query.set("date_to", params.dateTo);
+    if (params?.template) query.set("template", params.template);
+    if (params?.focusType) query.set("focus_type", params.focusType);
+    if (params?.focusId) query.set("focus_id", params.focusId);
+
+    const token = getAccessToken();
+    const headers = new Headers();
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    const response = await fetch(`${API_BASE}/reports/operations.xlsx${query.toString() ? `?${query.toString()}` : ""}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        throw new Error(parsed?.detail || "Excel lekérdezés sikertelen");
+      } catch {
+        throw new Error(text || "Excel lekérdezés sikertelen");
+      }
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const from = params?.dateFrom || "kezdet";
+    const to = params?.dateTo || "veg";
+    const template = params?.template || "overview";
+    const focusPart = params?.focusType && params?.focusId ? `-${params.focusType}-${params.focusId}` : "";
+    link.href = url;
+    link.download = `hadmuveleti-jelentes-${template}${focusPart}-${from}-${to}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
+  downloadOperationsWord: async (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    template?: "overview" | "operations" | "duties" | "events" | "focus";
+    focusType?: "exercise" | "training" | "event" | "duty";
+    focusId?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.dateFrom) query.set("date_from", params.dateFrom);
+    if (params?.dateTo) query.set("date_to", params.dateTo);
+    if (params?.template) query.set("template", params.template);
+    if (params?.focusType) query.set("focus_type", params.focusType);
+    if (params?.focusId) query.set("focus_id", params.focusId);
+
+    const token = getAccessToken();
+    const headers = new Headers();
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    const response = await fetch(`${API_BASE}/reports/operations.docx${query.toString() ? `?${query.toString()}` : ""}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        throw new Error(parsed?.detail || "Word lekérdezés sikertelen");
+      } catch {
+        throw new Error(text || "Word lekérdezés sikertelen");
+      }
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const from = params?.dateFrom || "kezdet";
+    const to = params?.dateTo || "veg";
+    const template = params?.template || "overview";
+    const focusPart = params?.focusType && params?.focusId ? `-${params.focusType}-${params.focusId}` : "";
+    link.href = url;
+    link.download = `hadmuveleti-jelentes-${template}${focusPart}-${from}-${to}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
 };
 export async function previewImport(entity: ImportEntity, file: File): Promise<ImportPreviewResult> {
   const formData = new FormData();
@@ -447,6 +543,11 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
     method: 'POST',
   });
 }
+
+
+
+
+
 
 
 

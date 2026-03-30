@@ -113,10 +113,12 @@ class TrainingModel(Base):
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
     location: Mapped[str] = mapped_column(String, default="")
+    organizer: Mapped[str] = mapped_column(String, default="")
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
 class EquipmentModel(Base):
     __tablename__ = "equipment"
 

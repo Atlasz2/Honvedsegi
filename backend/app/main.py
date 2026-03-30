@@ -74,7 +74,7 @@ from .schemas import (
     VehicleRead,
     VehicleUpdate,
 )
-from .security import assert_password_strength, fingerprint_token, hash_password, issue_token, needs_rehash, verify_password
+from .security import assert_data_key_configured, assert_password_strength, decrypt_text, encrypt_text, fingerprint_token, hash_password, is_encrypted_text, issue_token, needs_rehash, verify_password
 from .importers import ENTITY_CONFIG, ImportRow, parse_import
 from .seed import seed_database
 
@@ -484,20 +484,32 @@ def _to_user_read(user: UserModel) -> UserRead:
     )
 
 
+
+def _enc(value: str | None) -> str | None:
+    if not value:
+        return value
+    return encrypt_text(value)
+
+
+def _dec(value: str | None) -> str | None:
+    if not value:
+        return value
+    return decrypt_text(value)
+
 def _serialize_person(item: PersonModel) -> PersonRead:
     return PersonRead(
         id=item.id,
-        name=item.name,
+        name=_dec(item.name),
         sztsz=item.sztsz,
         rank=item.rank,
         unit=item.unit,
         status=item.status,
-        email=item.email,
-        phone=item.phone,
-        birthDate=item.birth_date,
-        address=item.address,
-        joinDate=item.join_date,
-        notes=item.notes,
+        email=_dec(item.email),
+        phone=_dec(item.phone),
+        birthDate=_dec(item.birth_date),
+        address=_dec(item.address),
+        joinDate=_dec(item.join_date),
+        notes=_dec(item.notes),
     )
 
 
@@ -762,17 +774,17 @@ def _ensure_personnel_sztsz_schema(db: Session) -> None:
 
 
 def _apply_person(target: PersonModel, payload: PersonCreate | PersonUpdate) -> None:
-    target.name = payload.name
+    target.name = encrypt_text(payload.name)
     target.sztsz = payload.sztsz
     target.rank = payload.rank
     target.unit = payload.unit
     target.status = payload.status
-    target.email = payload.email
-    target.phone = payload.phone
-    target.birth_date = payload.birthDate
-    target.address = payload.address
-    target.join_date = payload.joinDate
-    target.notes = payload.notes
+    target.email = _enc(payload.email)
+    target.phone = _enc(payload.phone)
+    target.birth_date = _enc(payload.birthDate)
+    target.address = _enc(payload.address)
+    target.join_date = _enc(payload.joinDate)
+    target.notes = _enc(payload.notes)
 
 
 def _apply_exercise(target: ExerciseModel, payload: ExerciseCreate | ExerciseUpdate) -> None:
@@ -864,19 +876,47 @@ def _apply_duty(target: DutyModel, payload: DutyCreate | DutyUpdate) -> None:
     target.status = payload.status
 
 
+
+_PERSON_ENC_FIELDS = ("name", "email", "phone", "birth_date", "address", "join_date", "notes")
+
+
+def _ensure_personnel_encryption(db: Session) -> None:
+    if not os.getenv("BACKEND_DATA_KEY", "").strip():
+        return
+    rows = db.scalars(select(PersonModel)).all()
+    changed = False
+    for person in rows:
+        for field in _PERSON_ENC_FIELDS:
+            value = getattr(person, field)
+            if value and not is_encrypted_text(value):
+                setattr(person, field, encrypt_text(value))
+                changed = True
+    if changed:
+        db.commit()
+
 @app.on_event("startup")
 def on_startup() -> None:
+    assert_data_key_configured(IS_PRODUCTION)
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         seed_database(db)
         _ensure_personnel_sztsz_schema(db)
+        _ensure_personnel_encryption(db)
         _enforce_single_god_user(db)
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Adatbázis nem elérhető: {exc}") from exc
 
+    return {
+        "status": "ok",
+        "environment": BACKEND_ENV,
+        "time": _utc_now().isoformat(),
+    }
 
 @app.get("/api/operations/summary")
 def operations_summary(
@@ -1578,8 +1618,9 @@ def delete_user(username: str, db: Session = Depends(get_db), current_user: User
 
 @app.get("/api/personnel", response_model=list[PersonRead])
 def list_personnel(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)) -> list[PersonRead]:
-    items = db.scalars(select(PersonModel).order_by(PersonModel.name)).all()
-    return [_serialize_person(item) for item in items]
+    items = [_serialize_person(item) for item in db.scalars(select(PersonModel)).all()]
+    items.sort(key=lambda item: ((item.name or "").strip().lower(), (item.sztsz or "").strip().lower()))
+    return items
 
 
 @app.get("/api/personnel/paged")
@@ -1598,16 +1639,6 @@ def list_personnel_paged(
     page_size = max(1, min(page_size, 100))
 
     filters = []
-    if q.strip():
-        pattern = f"%{q.strip()}%"
-        filters.append(
-            or_(
-                PersonModel.name.ilike(pattern),
-                PersonModel.sztsz.ilike(pattern),
-                PersonModel.rank.ilike(pattern),
-                PersonModel.unit.ilike(pattern),
-            )
-        )
     if unit.strip():
         filters.append(PersonModel.unit == unit.strip())
     if status_filter.strip() and status_filter.strip() != "Összes":
@@ -1622,18 +1653,29 @@ def list_personnel_paged(
         "honved": 1,
         "közkatona": 1,
         "közlegény": 1,
+        "kozkatona": 1,
         "tizedes": 2,
         "szakaszvezető": 3,
+        "szakaszvezeto": 3,
         "őrmester": 4,
+        "ormester": 4,
         "törzsőrmester": 5,
+        "torzsormester": 5,
         "főtörzsőrmester": 6,
+        "fotozsormester": 6,
         "zászlós": 7,
+        "szaszlos": 7,
         "törzszászlós": 8,
+        "torszszaszlos": 8,
         "főtörzszászlós": 9,
+        "fotoszszaszlos": 9,
         "hadnagy": 10,
         "főhadnagy": 11,
+        "fohadnagy": 11,
         "százados": 12,
+        "szazados": 12,
         "őrnagy": 13,
+        "ornagy": 13,
         "alezredes": 14,
         "ezredes": 15,
     }
@@ -1641,7 +1683,7 @@ def list_personnel_paged(
     def _normalized_text(value: str | None) -> str:
         return (value or "").strip().lower()
 
-    def _rank_value(item: PersonModel) -> int | None:
+    def _rank_value(item: PersonRead) -> int | None:
         return rank_order.get(_normalized_text(item.rank))
 
     sort_key_builders = {
@@ -1649,10 +1691,21 @@ def list_personnel_paged(
         "sztsz": lambda item: (_normalized_text(item.sztsz), _normalized_text(item.name)),
         "unit": lambda item: (_normalized_text(item.unit), _normalized_text(item.name)),
         "status": lambda item: (_normalized_text(item.status), _normalized_text(item.name)),
-        "joinDate": lambda item: (_normalized_text(item.join_date), _normalized_text(item.name)),
+        "joinDate": lambda item: (_normalized_text(item.joinDate), _normalized_text(item.name)),
     }
 
-    all_items = db.scalars(base_query).all()
+    all_items = [_serialize_person(item) for item in db.scalars(base_query).all()]
+    query_text = q.strip().lower()
+    if query_text:
+        all_items = [
+            item
+            for item in all_items
+            if query_text in _normalized_text(item.name)
+            or query_text in _normalized_text(item.sztsz)
+            or query_text in _normalized_text(item.rank)
+            or query_text in _normalized_text(item.unit)
+        ]
+
     reverse = sort_dir.lower() == "desc"
 
     if sort_by == "rank":
@@ -1684,7 +1737,7 @@ def list_personnel_paged(
     items = all_items[offset : offset + page_size]
 
     return {
-        "items": [_serialize_person(item).model_dump() for item in items],
+        "items": [item.model_dump() for item in items],
         "page": page,
         "pageSize": page_size,
         "total": total,
@@ -2285,6 +2338,175 @@ def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db
 
 
 
+
+
+
+
+
+
+
+
+def _report_filename_base(template: str, focus_type: str | None = None) -> str:
+    base_map = {
+        "overview": "osszesitett-muveleti-riport",
+        "operations": "muveleti-naptar-riport",
+        "duties": "szolgalati-kivonat",
+        "events": "esemenynaptar-riport",
+        "focus": f"fokusz-riport-{focus_type or 'elem'}",
+    }
+    return base_map.get(template, "riport")
+
+
+@app.get("/api/reports/operations.xlsx")
+def operations_excel_report(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    template: str = "overview",
+    focus_type: str | None = None,
+    focus_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_get_current_user),
+):
+    try:
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Excel modul hiba: {exc}") from exc
+
+    data = _build_operations_report_data(db, date_from, date_to, template, focus_type, focus_id)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Riport"
+    dark = PatternFill(fill_type="solid", start_color="1E293B", end_color="1E293B")
+    white_bold = Font(color="FFFFFF", bold=True)
+    ws["A1"] = data["title"]
+    ws["A1"].font = Font(size=14, bold=True)
+    ws["A2"] = f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}"
+    ws["A4"] = "Gyakorlatok"; ws["B4"] = data["summary"]["exercises"]
+    ws["A5"] = "Kikepzesek"; ws["B5"] = data["summary"]["trainings"]
+    ws["A6"] = "Esemenyek"; ws["B6"] = data["summary"]["events"]
+    ws["A7"] = "Szolgalatok"; ws["B7"] = data["summary"]["duties"]
+    row = 9
+    if data["focus"]:
+        focus = data["focus"]
+        ws.cell(row=row, column=1, value="Fokusz riport").font = Font(bold=True); row += 1
+        ws.cell(row=row, column=1, value=focus["headline"]); row += 2
+        ws.cell(row=row, column=1, value="Reszlet")
+        ws.cell(row=row, column=2, value="Ertek")
+        for col in (1, 2):
+            ws.cell(row=row, column=col).fill = dark
+            ws.cell(row=row, column=col).font = white_bold
+        row += 1
+        for detail in focus["details"]:
+            ws.cell(row=row, column=1, value=detail["label"])
+            ws.cell(row=row, column=2, value=detail["value"])
+            row += 1
+        if focus["description"]:
+            row += 1
+            ws.cell(row=row, column=1, value="Leiras").font = Font(bold=True)
+            row += 1
+            ws.cell(row=row, column=1, value=focus["description"]).alignment = Alignment(wrap_text=True)
+            row += 2
+        if focus["participants"]:
+            ws.cell(row=row, column=1, value="Resztvevok").font = Font(bold=True); row += 1
+            ws.cell(row=row, column=1, value="Nev")
+            ws.cell(row=row, column=2, value="Reszleg / szerep")
+            for col in (1, 2):
+                ws.cell(row=row, column=col).fill = dark
+                ws.cell(row=row, column=col).font = white_bold
+            row += 1
+            for part in focus["participants"]:
+                ws.cell(row=row, column=1, value=part["personName"])
+                ws.cell(row=row, column=2, value=part["detail"])
+                row += 1
+    else:
+        for section in data["sections"]:
+            ws.cell(row=row, column=1, value=f"{section['title']} ({section['count']} db)").font = Font(bold=True)
+            row += 1
+            is_duty = section["key"] == "duties"
+            headers = ["Kezdes", "Vege", "Tipus", "Szemely", "Helyszin", "Statusz"] if is_duty else ["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"]
+            for col, value in enumerate(headers, start=1):
+                ws.cell(row=row, column=col, value=value).fill = dark
+                ws.cell(row=row, column=col).font = white_bold
+            row += 1
+            for item in section["items"]:
+                values = [item.get("startDate", ""), item.get("endDate", ""), item.get("type", ""), item.get("personName", ""), item.get("location", ""), item.get("status", "")] if is_duty else [item.get("startDate", ""), item.get("endDate", ""), item.get("name", ""), item.get("location", ""), item.get("status", "")]
+                for col, value in enumerate(values, start=1):
+                    ws.cell(row=row, column=col, value=value)
+                row += 1
+            if section.get("truncated"):
+                ws.cell(row=row, column=1, value=f"Csak az elso {len(section['items'])} sor lathato")
+                row += 1
+            row += 1
+    ws.column_dimensions["A"].width = 18; ws.column_dimensions["B"].width = 16; ws.column_dimensions["C"].width = 34
+    ws.column_dimensions["D"].width = 30; ws.column_dimensions["E"].width = 24; ws.column_dimensions["F"].width = 16
+    buf = BytesIO(); wb.save(buf); payload = buf.getvalue(); buf.close()
+    filename = f"{_report_filename_base(template, focus_type)}.xlsx"
+    return Response(content=payload, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.get("/api/reports/operations.docx")
+def operations_word_report(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    template: str = "overview",
+    focus_type: str | None = None,
+    focus_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(_get_current_user),
+):
+    try:
+        from io import BytesIO
+        from docx import Document
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Word modul hiba: {exc}") from exc
+
+    data = _build_operations_report_data(db, date_from, date_to, template, focus_type, focus_id)
+    doc = Document()
+    doc.add_heading(data["title"], level=1)
+    doc.add_paragraph(f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}")
+    s = data["summary"]
+    doc.add_paragraph(f"Osszesites: Gyakorlatok {s['exercises']}, Kikepzesek {s['trainings']}, Esemenyek {s['events']}, Szolgalatok {s['duties']}")
+    if data["focus"]:
+        focus = data["focus"]
+        doc.add_heading("Fokusz riport", level=2)
+        doc.add_paragraph(focus["headline"])
+        tbl = doc.add_table(rows=1, cols=2); tbl.style = "Table Grid"
+        tbl.rows[0].cells[0].text = "Reszlet"; tbl.rows[0].cells[1].text = "Ertek"
+        for detail in focus["details"]:
+            row = tbl.add_row().cells; row[0].text = str(detail["label"]); row[1].text = str(detail["value"])
+        if focus["description"]:
+            doc.add_heading("Leiras", level=3); doc.add_paragraph(focus["description"])
+        if focus["participants"]:
+            doc.add_heading("Resztvevok", level=3)
+            pt = doc.add_table(rows=1, cols=2); pt.style = "Table Grid"
+            pt.rows[0].cells[0].text = "Nev"; pt.rows[0].cells[1].text = "Reszleg / szerep"
+            for part in focus["participants"]:
+                row = pt.add_row().cells; row[0].text = str(part["personName"]); row[1].text = str(part["detail"])
+    else:
+        for section in data["sections"]:
+            doc.add_heading(f"{section['title']} ({section['count']} db)", level=2)
+            is_duty = section["key"] == "duties"
+            tbl = doc.add_table(rows=1, cols=6 if is_duty else 5); tbl.style = "Table Grid"
+            if is_duty:
+                hdr = ["Kezdes", "Vege", "Tipus", "Szemely", "Helyszin", "Statusz"]
+            else:
+                hdr = ["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"]
+            for idx, h in enumerate(hdr):
+                tbl.rows[0].cells[idx].text = h
+            for item in section["items"]:
+                row = tbl.add_row().cells
+                row[0].text = str(item.get("startDate", "")); row[1].text = str(item.get("endDate", ""))
+                if is_duty:
+                    row[2].text = str(item.get("type", "")); row[3].text = str(item.get("personName", "")); row[4].text = str(item.get("location", "")); row[5].text = str(item.get("status", ""))
+                else:
+                    row[2].text = str(item.get("name", "")); row[3].text = str(item.get("location", "")); row[4].text = str(item.get("status", ""))
+            if section.get("truncated"):
+                doc.add_paragraph(f"Csak az elso {len(section['items'])} sor lathato")
+    buf = BytesIO(); doc.save(buf); payload = buf.getvalue(); buf.close()
+    filename = f"{_report_filename_base(template, focus_type)}.docx"
+    return Response(content=payload, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 

@@ -79,8 +79,8 @@ def seed_database(db: Session) -> None:
     ]
 
     trainings = [
-        TrainingModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
-        TrainingModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
+        TrainingModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", organizer="Egészségügyi Csoport", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
+        TrainingModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", organizer="Kiképzési Törzs", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
     ]
 
     equipment = [
@@ -494,4 +494,5 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     db.add_all(announcements)
     db.add_all(logs)
     db.commit()
+
 

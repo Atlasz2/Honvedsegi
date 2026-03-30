@@ -194,6 +194,44 @@ export default function Dashboard() {
       toast.error(getErrorMessage(error));
     }
   };
+
+  const handleDownloadExcel = async () => {
+    try {
+      if (reportTemplate === "focus" && !reportFocusId) {
+        toast.error("Válassz konkrét rekordot a fókusz riporthoz");
+        return;
+      }
+      await reports.downloadOperationsExcel({
+        dateFrom: pdfFrom || undefined,
+        dateTo: pdfTo || undefined,
+        template: reportTemplate,
+        focusType: reportTemplate === "focus" ? reportFocusType : undefined,
+        focusId: reportTemplate === "focus" ? reportFocusId : undefined,
+      });
+      toast.success("Excel riport letöltve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleDownloadWord = async () => {
+    try {
+      if (reportTemplate === "focus" && !reportFocusId) {
+        toast.error("Válassz konkrét rekordot a fókusz riporthoz");
+        return;
+      }
+      await reports.downloadOperationsWord({
+        dateFrom: pdfFrom || undefined,
+        dateTo: pdfTo || undefined,
+        template: reportTemplate,
+        focusType: reportTemplate === "focus" ? reportFocusType : undefined,
+        focusId: reportTemplate === "focus" ? reportFocusId : undefined,
+      });
+      toast.success("Word riport letöltve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
   return (
     <div>
       <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military mb-6 text-foreground">Áttekintés</h1>
@@ -298,7 +336,7 @@ export default function Dashboard() {
       <div className="bg-card border border-border mb-6 p-4" style={{ borderRadius: "2px" }}>
         <div className="flex items-center gap-2 mb-3">
           <FileText className="w-4 h-4 text-primary" />
-          <h2 className="text-sm uppercase tracking-military font-mono text-primary">Export / PDF riport</h2>
+          <h2 className="text-sm uppercase tracking-military font-mono text-primary">Export riportok</h2>
         </div>
         <p className="text-xs text-muted-foreground font-mono mb-4">{selectedTemplate.description}</p>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 items-end">
@@ -338,6 +376,8 @@ export default function Dashboard() {
           <button onClick={() => { setPdfFrom(""); setPdfTo(""); }} className="btn-mil-secondary text-xs">Dátum törlése</button>
           <button onClick={() => { void handlePreview(); }} className="btn-mil-secondary text-xs" disabled={previewLoading}>{previewLoading ? "Előnézet betöltése..." : "Előnézet"}</button>
           <button onClick={() => { void handleDownloadPdf(); }} className="btn-mil-primary text-xs">PDF letöltés</button>
+          <button onClick={() => { void handleDownloadExcel(); }} className="btn-mil-primary text-xs">Excel letöltés</button>
+          <button onClick={() => { void handleDownloadWord(); }} className="btn-mil-primary text-xs">Word letöltés</button>
         </div>
       </div>
 
@@ -545,6 +585,9 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
+
 
 
 
