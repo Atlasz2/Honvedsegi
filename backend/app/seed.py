@@ -10,6 +10,7 @@ from .models import (
     AnnouncementModel,
     DutyModel,
     EquipmentModel,
+    EventModel,
     ExerciseModel,
     PersonModel,
     SessionTokenModel,
@@ -140,6 +141,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         AnnouncementModel,
         DutyModel,
         EquipmentModel,
+        EventModel,
         ExerciseModel,
         TrainingModel,
         SupplyModel,
@@ -175,18 +177,19 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         "Gulyás", "Sipos", "Veres", "Bodnár", "Király", "Szalai",
     ]
     battalion_rank_weights = [
-        ("Közkatona", 22), ("Tizedes", 16), ("Szakaszvezető", 18), ("Őrmester", 16), ("Törzsőrmester", 10),
-        ("Főtörzsőrmester", 7), ("Hadnagy", 5), ("Főhadnagy", 3), ("Százados", 2), ("Őrnagy", 1),
+        ("Honvéd", 26), ("Őrvezető", 18), ("Tizedes", 15), ("Szakaszvezető", 14), ("Őrmester", 10),
+        ("Törzsőrmester", 7), ("Főtörzsőrmester", 4), ("Zászlós", 2), ("Hadnagy", 2), ("Főhadnagy", 1),
+        ("Százados", 1),
     ]
     staff_rank_weights = [
-        ("Szakaszvezető", 10), ("Őrmester", 12), ("Törzsőrmester", 15), ("Főtörzsőrmester", 12), ("Hadnagy", 12),
-        ("Főhadnagy", 14), ("Százados", 14), ("Őrnagy", 7), ("Alezredes", 3), ("Ezredes", 1),
+        ("Szakaszvezető", 6), ("Őrmester", 8), ("Törzsőrmester", 10), ("Főtörzsőrmester", 10), ("Zászlós", 8),
+        ("Törzszászlós", 6), ("Hadnagy", 11), ("Főhadnagy", 13), ("Százados", 13), ("Őrnagy", 8),
+        ("Alezredes", 5), ("Ezredes", 2),
     ]
-
     unit_plan = {
-        "31 TVZ": 300,
-        "83 TVZ": 300,
-        "19 TVZ": 300,
+        "31 TVZ": 400,
+        "83 TVZ": 400,
+        "19 TVZ": 400,
         "Ezredtörzs": 100,
     }
 
@@ -327,6 +330,41 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                     "Elméleti és gyakorlati modulok kombinált végrehajtása.",
                 ]),
                 status=rng.choice(["Tervezett", "Folyamatban", "Befejezett"]),
+                assigned=assigned,
+            )
+        )
+
+    events: list[EventModel] = []
+    event_types = ["Általános", "Rendezvény", "Tájékoztató", "Ünnepség", "Parancsnoki", "Emléknap"]
+    event_name_prefixes = ["Állománygyűlés", "Nyílt nap", "Helyőrségi fórum", "Emlékező ünnepség", "Családi nap", "Parancsnoki értekezlet"]
+    for index in range(1, 141):
+        start = base_date + timedelta(days=rng.randint(0, 365))
+        duration = rng.randint(0, 2)
+        end = start + timedelta(days=duration)
+        max_personnel = rng.randint(40, 260)
+        assigned_count = rng.randint(15, min(max_personnel, 120))
+        assigned_ids = rng.sample(active_or_reserve, assigned_count)
+        assigned = [
+            {"personId": pid, "personName": person_names[pid], "role": rng.choice(["résztvevő", "biztosító", "szervező", "összekötő"])}
+            for pid in assigned_ids
+        ]
+        events.append(
+            EventModel(
+                id=f"ev{index}",
+                event_type="esemeny",
+                name=f"{rng.choice(event_name_prefixes)} {index:03d}",
+                type=rng.choice(event_types),
+                start_date=start.strftime("%Y-%m-%d"),
+                end_date=end.strftime("%Y-%m-%d"),
+                location=rng.choice(["Budapest", "Szentendre", "Veszprém", "Kecskemét", "Szolnok", "Pápa"]),
+                organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
+                max_personnel=max_personnel,
+                description=rng.choice([
+                    "Helyőrségi szintű koordinációs és tájékoztató esemény.",
+                    "Állományt érintő szervezési és adminisztratív feladatok egyeztetése.",
+                    "A tartalékos állomány részvételével végrehajtott esemény.",
+                ]),
+                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
                 assigned=assigned,
             )
         )
@@ -487,6 +525,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     db.add_all(personnel)
     db.add_all(exercises)
     db.add_all(trainings)
+    db.add_all(events)
     db.add_all(equipment)
     db.add_all(supplies)
     db.add_all(vehicles)
@@ -494,5 +533,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     db.add_all(announcements)
     db.add_all(logs)
     db.commit()
+
+
 
 

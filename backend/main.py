@@ -12,6 +12,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+@app.get("/")
+async def root():
+    """Egyszerű root végpont, hogy a backend ne 404-et adjon gyökér URL-en."""
+    return {
+        "status": "ok",
+        "message": "Backend fut.",
+        "docs": "/docs",
+        "szemelyek": "/szemelyek",
+    }
+
 class Szemely(BaseModel):
     nev: str
     rendfokozat: str

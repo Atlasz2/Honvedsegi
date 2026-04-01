@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
 import { exercises, duties, trainings, events, reports, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
+import type { Exercise, Duty, Training, AppEvent } from "@/lib/types";
 import { Users, Crosshair, FileText, BookOpen, Calendar } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,10 +34,10 @@ const FOCUS_TYPES: Array<{ value: ReportFocusType; label: string }> = [
 export default function Dashboard() {
   const navigate = useNavigate();
   const [, setTick] = useState(0);
-  const [exs, setExs] = useState<any[]>([]);
-  const [eventsData, setEventsData] = useState<any[]>([]);
-  const [dutiesData, setDutiesData] = useState<any[]>([]);
-  const [trainingsData, setTrainingsData] = useState<any[]>([]);
+  const [exs, setExs] = useState<Exercise[]>([]);
+  const [eventsData, setEventsData] = useState<AppEvent[]>([]);
+  const [dutiesData, setDutiesData] = useState<Duty[]>([]);
+  const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [showOnDutyDetails, setShowOnDutyDetails] = useState(false);
   const [showOngoingExercises, setShowOngoingExercises] = useState(false);
   const [showOngoingTrainings, setShowOngoingTrainings] = useState(false);
@@ -585,6 +586,8 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
 
 
 
