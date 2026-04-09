@@ -22,6 +22,7 @@ export interface Person {
   sztsz: string;
   rank: string;
   unit: string;
+  beosztas: string;
   status: 'Aktív' | 'Tartalékos' | 'Szabadságon' | 'Leszerelt';
   email: string;
   phone: string;
@@ -29,12 +30,14 @@ export interface Person {
   address: string;
   joinDate: string;
   notes: string;
+  qualifications: string[];
 }
 
 export interface ExerciseAssignment {
   personId: string;
   personName: string;
   role: string;
+  attendance?: string;
   rank?: string;
   rankShort?: string;
   sztsz?: string;
@@ -57,6 +60,7 @@ export interface TrainingAssignment {
   personId: string;
   personName: string;
   attendance: 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
+  qualificationApproved?: boolean;
   rank?: string;
   rankShort?: string;
   sztsz?: string;
@@ -70,10 +74,22 @@ export interface Training {
   endDate: string;
   location: string;
   organizer: string;
+  qualificationId: string;
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
   assigned: TrainingAssignment[];
+}
+
+
+export interface BasicAssignment {
+  personId: string;
+  personName: string;
+  rank?: string;
+  rankShort?: string;
+  sztsz?: string;
+  attendance?: string;
+  role?: string;
 }
 
 export interface AppEvent {
@@ -87,8 +103,8 @@ export interface AppEvent {
   organizer: string;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'T?r?lve';
-  assigned: Array<Record<string, unknown>>;
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  assigned: BasicAssignment[];
 }
 
 export interface CheckoutRecord {
@@ -166,6 +182,7 @@ export interface Duty {
   location: string;
   personId: string;
   personName: string;
+  assigned: BasicAssignment[];
   notes: string;
   status: 'Tervezett' | 'Teljesített' | 'Lemondva';
 }
@@ -188,4 +205,5 @@ export interface ActivityLogEntry {
   action: 'létrehozva' | 'módosítva' | 'törölve';
   module: string;
   recordName: string;
+  payload?: Record<string, unknown> | null;
 }

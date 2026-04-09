@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import LoginPage from "@/components/LoginPage";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
+import CalendarPage from "@/pages/CalendarPage";
 import Personnel from "@/pages/Personnel";
 import Operations from "@/pages/Operations";
 import Events from "@/pages/Events";
@@ -26,11 +27,13 @@ function AppRoutes() {
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/kozos-naptar" element={<CalendarPage />} />
+        <Route path="/kozos-naptar/*" element={<CalendarPage />} />
+        <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />
+        <Route path="/calendar/*" element={<Navigate to="/kozos-naptar" replace />} />
         <Route path="/personnel" element={<Personnel />} />
         <Route path="/operations" element={<Operations />} />
         <Route path="/events" element={<Events />} />
-        <Route path="/exercises" element={<Navigate to="/operations" replace />} />
-        <Route path="/training" element={<Navigate to="/operations" replace />} />
         <Route path="/equipment" element={<Equipment />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/vehicles" element={<Vehicles />} />
@@ -58,3 +61,6 @@ const App = () => (
 );
 
 export default App;
+
+
+

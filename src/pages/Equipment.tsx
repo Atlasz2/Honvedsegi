@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { equipment as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Equipment as Eq, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { rankWeight } from '@/lib/rank';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
@@ -109,7 +110,9 @@ export default function EquipmentPage() {
     }
   };
 
-  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+  const activePpl = personnelData
+    .filter(p => p.status === 'Aktív' || p.status === 'Tartalékos')
+    .sort((a, b) => rankWeight(b.rank) - rankWeight(a.rank) || a.name.localeCompare(b.name, 'hu'));
 
   return (
     <div>

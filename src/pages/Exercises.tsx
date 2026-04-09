@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { exercises as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Exercise, ExerciseAssignment, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { rankWeight, shortRank } from '@/lib/rank';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
@@ -15,34 +17,12 @@ const statusClass: Record<string, string> = {
   'Tervezett': 'badge-planned', 'Folyamatban': 'badge-ongoing', 'Befejezett': 'badge-completed', 'Törölve': 'badge-cancelled',
 };
 
-const RANK_SHORT: Record<string, string> = {
-  'Közkatona': 'kkt',
-  'Őrvezető': 'őrv.',
-  'Tizedes': 'tzs.',
-  'Szakaszvezető': 'szkv.',
-  'Őrmester': 'őrm.',
-  'Törzsőrmester': 'tőrm.',
-  'Főtörzsőrmester': 'ftőrm.',
-  'Zászlós': 'zls.',
-  'Törzszászlós': 'tzls.',
-  'Főtörzszászlós': 'ftzls.',
-  'Hadnagy': 'hdgy.',
-  'Főhadnagy': 'fhdgy.',
-  'Százados': 'szds.',
-  'Őrnagy': 'őrgy.',
-  'Alezredes': 'alez.',
-  'Ezredes': 'ezds.',
-  'Dandártábornok': 'ddjt.',
-  'Vezérőrnagy': 'vezőrm.',
-  'Altábornagy': 'altbgy.',
-  'Vezérezredes': 'vezds.',
-};
-
-const shortRank = (rank?: string) => (rank ? (RANK_SHORT[rank] || rank) : '-');
+const ATTENDANCE = ['Tervezett','Megjelent','Hiányzott','Beteg'] as const;
 
 const emptyExercise = { name: '', type: 'Lőgyakorlat', startDate: '', endDate: '', location: '', maxPersonnel: 20, description: '', status: 'Tervezett' as const, assigned: [] as ExerciseAssignment[] };
 
 export default function Exercises() {
+  const location = useLocation();
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Exercise[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
@@ -85,6 +65,13 @@ export default function Exercises() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+
+  useEffect(() => {
+    const navState = location.state as { openExerciseId?: string } | null;
+    if (!navState?.openExerciseId || data.length === 0) return;
+    const found = data.find(item => item.id === navState.openExerciseId);
+    if (found) setDetail(found);
+  }, [location.state, data]);
   const filtered = data.filter(e => {
     const normalizedSearch = search.trim().toLowerCase();
     if (normalizedSearch && ![e.name, e.type, e.location, e.description].some(value => value?.toLowerCase().includes(normalizedSearch))) return false;
@@ -137,7 +124,7 @@ export default function Exercises() {
       toast.warning(`Figyelem: ${p.name} már beosztva: ${overlapping.map(o => o.name).join(', ')}`);
     }
     try {
-      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, role: addPersonRole, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
+      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, role: addPersonRole, attendance: 'Tervezett' as const, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
       await store.update(updated);
       setDetail(updated);
       setAddPersonId('');
@@ -162,6 +149,18 @@ export default function Exercises() {
     }
   };
 
+  const updateAttendance = async (personId: string, att: string) => {
+    if (!detail) return;
+    try {
+      const updated = { ...detail, assigned: detail.assigned.map(a => a.personId === personId ? { ...a, attendance: att as 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' } : a) };
+      await store.update(updated);
+      setDetail(updated);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   const openCreate = () => { setForm({ ...emptyExercise, assigned: [] }); setErrors({}); setCreating(true); };
   const openEdit = (e: Exercise) => {
     setForm({ name: e.name, type: e.type, startDate: e.startDate, endDate: e.endDate, location: e.location, maxPersonnel: e.maxPersonnel, description: e.description, status: e.status, assigned: e.assigned });
@@ -170,7 +169,9 @@ export default function Exercises() {
     setEditing(e);
   };
 
-  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+  const activePpl = personnelData
+    .filter(p => p.status === 'Aktív' || p.status === 'Tartalékos')
+    .sort((a, b) => rankWeight(b.rank) - rankWeight(a.rank) || a.name.localeCompare(b.name, 'hu'));
 
   const exerciseStatusCounts = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Törölve: 0 };
   data.forEach(item => { if (item.status in exerciseStatusCounts) exerciseStatusCounts[item.status as keyof typeof exerciseStatusCounts]++; });
@@ -276,7 +277,7 @@ export default function Exercises() {
             </div>
 
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Beosztás</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Beosztás</th><th>Jelenlét</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
                 {detail.assigned.map(a => {
                   const person = personnelData.find(p => p.id === a.personId);
@@ -287,6 +288,15 @@ export default function Exercises() {
                       <td>{a.personName}</td>
                       <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
                       <td className="text-brass font-mono text-xs">{a.role}</td>
+                      <td>
+                        {canEdit ? (
+                          <select value={a.attendance ?? 'Tervezett'} onChange={e => { void updateAttendance(a.personId, e.target.value); }} className="bg-input border border-border px-2 py-1 text-xs" style={{ borderRadius: '2px' }}>
+                            {ATTENDANCE.map(at => <option key={at} value={at}>{at}</option>)}
+                          </select>
+                        ) : (
+                          <span className={`px-2 py-0.5 text-xs font-mono ${(a.attendance ?? 'Tervezett') === 'Megjelent' ? 'badge-active' : (a.attendance ?? 'Tervezett') === 'Hiányzott' ? 'badge-cancelled' : (a.attendance ?? 'Tervezett') === 'Beteg' ? 'badge-reserve' : 'badge-planned'}`} style={{ borderRadius: '2px' }}>{a.attendance ?? 'Tervezett'}</span>
+                        )}
+                      </td>
                       {canEdit && <td><button onClick={() => { void removePerson(a.personId); }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
                     </tr>
                   );

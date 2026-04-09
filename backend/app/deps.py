@@ -195,6 +195,7 @@ def _serialize_person(item: PersonModel) -> PersonRead:
         sztsz=item.sztsz,
         rank=item.rank,
         unit=item.unit,
+        beosztas=item.beosztas or "",
         status=item.status,
         email=item.email,
         phone=item.phone,
@@ -202,6 +203,7 @@ def _serialize_person(item: PersonModel) -> PersonRead:
         address=item.address,
         joinDate=item.join_date,
         notes=item.notes,
+        qualifications=item.qualifications or [],
     )
 
 
@@ -229,6 +231,7 @@ def _serialize_training(item: TrainingModel) -> TrainingRead:
         endDate=item.end_date,
         location=item.location,
         organizer=item.organizer or "",
+        qualificationId=item.qualification_id or "",
         maxPersonnel=item.max_personnel,
         description=item.description,
         status=item.status,
@@ -309,6 +312,7 @@ def _serialize_duty(item: DutyModel) -> DutyRead:
         location=item.location,
         personId=item.person_id,
         personName=item.person_name,
+        assigned=item.assigned or ([{"personId": item.person_id, "personName": item.person_name}] if item.person_id else []),
         notes=item.notes,
         status=item.status,
     )
@@ -335,6 +339,7 @@ def _serialize_log(item: ActivityLogModel) -> ActivityLogRead:
         action=item.action,
         module=item.module,
         recordName=item.record_name,
+        payload=item.payload,
     )
 
 # ── Appliers ──────────────────────────────────────────────────────────────
@@ -344,6 +349,7 @@ def _apply_person(target: PersonModel, payload: PersonCreate | PersonUpdate) -> 
     target.sztsz = payload.sztsz
     target.rank = payload.rank
     target.unit = payload.unit
+    target.beosztas = payload.beosztas
     target.status = payload.status
     target.email = payload.email
     target.phone = payload.phone
@@ -372,6 +378,7 @@ def _apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpd
     target.end_date = payload.endDate
     target.location = payload.location
     target.organizer = payload.organizer
+    target.qualification_id = payload.qualificationId
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     target.status = payload.status
@@ -435,7 +442,20 @@ def _apply_duty(target: DutyModel, payload: DutyCreate | DutyUpdate) -> None:
     target.start_date = payload.startDate
     target.end_date = payload.endDate
     target.location = payload.location
-    target.person_id = payload.personId
-    target.person_name = payload.personName
+    assigned = [item.model_dump() for item in payload.assigned]
+    if not assigned and payload.personId:
+        assigned = [{"personId": payload.personId, "personName": payload.personName}]
+    target.assigned = assigned
+    if assigned:
+        target.person_id = assigned[0].get("personId", "")
+        target.person_name = assigned[0].get("personName", "")
+    else:
+        target.person_id = ""
+        target.person_name = ""
     target.notes = payload.notes
     target.status = payload.status
+
+
+
+
+

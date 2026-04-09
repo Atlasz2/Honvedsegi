@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { trainings as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Training, TrainingAssignment, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { rankWeight, shortRank } from '@/lib/rank';
+import { QUALIFICATIONS } from '@/lib/qualifications';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
@@ -13,32 +16,9 @@ const STATUSES = ['Tervezett','Folyamatban','Befejezett'] as const;
 const ATTENDANCE = ['Tervezett','Megjelent','Hiányzott','Beteg'] as const;
 const statusClass: Record<string, string> = { 'Tervezett': 'badge-planned', 'Folyamatban': 'badge-ongoing', 'Befejezett': 'badge-completed' };
 
-const RANK_SHORT: Record<string, string> = {
-  'Közkatona': 'kkt',
-  'Őrvezető': 'őrv.',
-  'Tizedes': 'tzs.',
-  'Szakaszvezető': 'szkv.',
-  'Őrmester': 'őrm.',
-  'Törzsőrmester': 'tőrm.',
-  'Főtörzsőrmester': 'ftőrm.',
-  'Zászlós': 'zls.',
-  'Törzszászlós': 'tzls.',
-  'Főtörzszászlós': 'ftzls.',
-  'Hadnagy': 'hdgy.',
-  'Főhadnagy': 'fhdgy.',
-  'Százados': 'szds.',
-  'Őrnagy': 'őrgy.',
-  'Alezredes': 'alez.',
-  'Ezredes': 'ezds.',
-  'Dandártábornok': 'ddjt.',
-  'Vezérőrnagy': 'vezőrm.',
-  'Altábornagy': 'altbgy.',
-  'Vezérezredes': 'vezds.',
-};
-
-const shortRank = (rank?: string) => (rank ? (RANK_SHORT[rank] || rank) : '-');
 
 export default function TrainingPage() {
+  const location = useLocation();
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Training[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
@@ -49,13 +29,15 @@ export default function TrainingPage() {
   const [editing, setEditing] = useState<Training | null>(null);
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Training | null>(null);
-  const [form, setForm] = useState({ name: '', type: TYPES[0], startDate: '', endDate: '', location: '', organizer: '', maxPersonnel: 20, description: '', status: 'Tervezett' as Training['status'], assigned: [] as TrainingAssignment[] });
+  const [form, setForm] = useState({ name: '', type: TYPES[0], startDate: '', endDate: '', location: '', organizer: '', qualificationId: '', maxPersonnel: 20, description: '', status: 'Tervezett' as Training['status'], assigned: [] as TrainingAssignment[] });
   const [deleteTarget, setDeleteTarget] = useState<Training | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<{ personId: string; personName: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [addPersonId, setAddPersonId] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [personSearch, setPersonSearch] = useState('');
+
 
   const detailRef = useRef<Training | null>(null);
   detailRef.current = detail;
@@ -80,6 +62,13 @@ export default function TrainingPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+
+  useEffect(() => {
+    const navState = location.state as { openTrainingId?: string } | null;
+    if (!navState?.openTrainingId || data.length === 0) return;
+    const found = data.find(item => item.id === navState.openTrainingId);
+    if (found) setDetail(found);
+  }, [location.state, data]);
   const filtered = data.filter(t => {
     const normalizedSearch = search.trim().toLowerCase();
     if (normalizedSearch && ![t.name, t.type, t.location, t.organizer, t.description].some(value => value?.toLowerCase().includes(normalizedSearch))) return false;
@@ -125,11 +114,14 @@ export default function TrainingPage() {
   };
 
   const addPerson = async () => {
-    if (!detail || !addPersonId) return;
-    const p = personnelData.find(x => x.id === addPersonId);
+    if (!detail) return;
+    const candidates = activePpl.filter(p => !detail.assigned.some(a => a.personId === p.id) && (personSearch === '' || p.name.toLowerCase().includes(personSearch.toLowerCase()) || p.rank.toLowerCase().includes(personSearch.toLowerCase()) || p.sztsz.includes(personSearch)));
+    const targetId = addPersonId || (candidates.length === 1 ? candidates[0].id : '');
+    if (!targetId) return;
+    const p = personnelData.find(x => x.id === targetId);
     if (!p) return;
     try {
-      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, attendance: 'Tervezett' as const, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
+      const updated = { ...detail, assigned: [...detail.assigned, { personId: p.id, personName: p.name, attendance: 'Tervezett' as const, qualificationApproved: false, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz }] };
       await store.update(updated);
       setDetail(updated);
       setAddPersonId('');
@@ -139,11 +131,10 @@ export default function TrainingPage() {
       toast.error(getErrorMessage(error));
     }
   };
-
   const updateAttendance = async (personId: string, att: string) => {
     if (!detail) return;
     try {
-      const updated = { ...detail, assigned: detail.assigned.map(a => a.personId === personId ? { ...a, attendance: att as TrainingAssignment['attendance'] } : a) };
+      const updated = { ...detail, assigned: detail.assigned.map(a => a.personId === personId ? { ...a, attendance: att as TrainingAssignment['attendance'], qualificationApproved: att === 'Megjelent' ? Boolean(a.qualificationApproved) : false } : a) };
       await store.update(updated);
       setDetail(updated);
       await refresh();
@@ -152,12 +143,40 @@ export default function TrainingPage() {
     }
   };
 
-  const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');
+
+  const updateQualificationApproval = async (personId: string, approved: boolean) => {
+    if (!detail) return;
+    try {
+      const updated = { ...detail, assigned: detail.assigned.map(a => a.personId === personId ? { ...a, qualificationApproved: approved } : a) };
+      await store.update(updated);
+      setDetail(updated);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const confirmRemoveAssignedPerson = async () => {
+    if (!detail || !pendingRemoval) return;
+    try {
+      const updated = { ...detail, assigned: detail.assigned.filter(x => x.personId !== pendingRemoval.personId) };
+      await store.update(updated);
+      setDetail(updated);
+      setPendingRemoval(null);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const activePpl = personnelData
+    .filter(p => p.status === 'Aktív' || p.status === 'Tartalékos')
+    .sort((a, b) => rankWeight(b.rank) - rankWeight(a.rank) || a.name.localeCompare(b.name, 'hu'));
 
   const trainingStatusCounts = { Tervezett: 0, Folyamatban: 0, Befejezett: 0 };
   data.forEach(item => { if (item.status in trainingStatusCounts) trainingStatusCounts[item.status as keyof typeof trainingStatusCounts]++; });
 
-  const openCreate = () => { setForm({ name: '', type: TYPES[0], startDate: '', endDate: '', location: '', organizer: '', maxPersonnel: 20, description: '', status: 'Tervezett', assigned: [] }); setErrors({}); setCreating(true); };
+  const openCreate = () => { setForm({ name: '', type: TYPES[0], startDate: '', endDate: '', location: '', organizer: '', qualificationId: '', maxPersonnel: 20, description: '', status: 'Tervezett', assigned: [] }); setErrors({}); setCreating(true); };
   const openEdit = (t: Training) => { setForm({ ...t }); setErrors({}); setDetail(null); setEditing(t); };
 
   return (
@@ -261,14 +280,14 @@ export default function TrainingPage() {
             </div>
 
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Jelenlét</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Név</th><th>Rendf. / SZTSZ</th><th>Jelenlét</th><th>Képzettség</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
                 {detail.assigned.map(a => {
                   const person = personnelData.find(p => p.id === a.personId);
                   const rankLabel = a.rankShort || shortRank(a.rank || person?.rank);
                   const sztszLabel = a.sztsz || person?.sztsz || '-';
                   return (
-                    <tr key={a.personId}>
+                    <tr key={a.personId} className={detail.qualificationId && a.attendance === 'Megjelent' && !a.qualificationApproved ? 'bg-warning/10' : ''}>
                       <td>{a.personName}</td>
                       <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
                       <td>
@@ -280,19 +299,18 @@ export default function TrainingPage() {
                           <span className={`px-2 py-0.5 text-xs font-mono ${a.attendance === 'Megjelent' ? 'badge-active' : a.attendance === 'Hiányzott' ? 'badge-cancelled' : a.attendance === 'Beteg' ? 'badge-reserve' : 'badge-planned'}`} style={{ borderRadius: '2px' }}>{a.attendance}</span>
                         )}
                       </td>
-                      {canEdit && <td><button onClick={() => {
-                        void (async () => {
-                          if (!detail) return;
-                          try {
-                            const updated = { ...detail, assigned: detail.assigned.filter(x => x.personId !== a.personId) };
-                            await store.update(updated);
-                            setDetail(updated);
-                            await refresh();
-                          } catch (error) {
-                            toast.error(getErrorMessage(error));
-                          }
-                        })();
-                      }} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
+                      <td>
+                        {detail.qualificationId ? (
+                          canEdit ? (
+                            <input type="checkbox" checked={Boolean(a.qualificationApproved)} disabled={a.attendance !== 'Megjelent'} onChange={e => { void updateQualificationApproval(a.personId, e.target.checked); }} />
+                          ) : (
+                            <span className={`px-2 py-0.5 text-xs font-mono ${a.qualificationApproved ? 'badge-active' : 'badge-planned'}`} style={{ borderRadius: '2px' }}>{a.qualificationApproved ? 'Jóváhagyva' : 'Nincs jóváhagyva'}</span>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Nincs</span>
+                        )}
+                      </td>
+                      {canEdit && <td><button onClick={() => setPendingRemoval({ personId: a.personId, personName: a.personName })} className="text-destructive text-xs hover:underline">Eltávolítás</button></td>}
                     </tr>
                   );
                 })}
@@ -305,7 +323,6 @@ export default function TrainingPage() {
                   <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Személy (keresés: név/rang/sztsz)</label>
                   <input placeholder="Szűrés..." value={personSearch} onChange={e => setPersonSearch(e.target.value)} className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: '2px' }} />
                   <select value={addPersonId} onChange={e => setAddPersonId(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
-                    <option value="">Válassz...</option>
                     {activePpl.filter(p => !detail.assigned.some(a => a.personId === p.id) && (personSearch === '' || p.name.toLowerCase().includes(personSearch.toLowerCase()) || p.rank.toLowerCase().includes(personSearch.toLowerCase()) || p.sztsz.includes(personSearch))).slice(0, 50).map(p => (
                       <option key={p.id} value={p.id}>{p.name} ({p.rank}) – {p.sztsz}</option>
                     ))}
@@ -344,6 +361,11 @@ export default function TrainingPage() {
             <input value={form.organizer} onChange={e => setForm({ ...form, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
             <input type="number" value={form.maxPersonnel} onChange={e => setForm({ ...form, maxPersonnel: Number(e.target.value) })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
+          <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Képzettség (ha ad)</label>
+            <select value={form.qualificationId} onChange={e => setForm({ ...form, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
+              <option value="">Nincs kapcsolt képzettség</option>
+              {QUALIFICATIONS.map(q => <option key={q.id} value={q.id}>{q.label}</option>)}
+            </select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
             <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Training['status'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
@@ -372,8 +394,13 @@ export default function TrainingPage() {
           })();
         }
       }} />
+
+      <ConfirmDialog
+        open={!!pendingRemoval}
+        onClose={() => setPendingRemoval(null)}
+        onConfirm={() => { void confirmRemoveAssignedPerson(); }}
+        message={pendingRemoval ? `${pendingRemoval.personName} eltávolítása a kiképzésből?` : 'Biztosan törlöd?'}
+      />
     </div>
   );
 }
-
-

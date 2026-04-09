@@ -61,6 +61,7 @@ class PersonModel(Base):
     sztsz: Mapped[str] = mapped_column(String, unique=True, index=True)
     rank: Mapped[str] = mapped_column(String)
     unit: Mapped[str] = mapped_column(String)
+    beosztas: Mapped[str] = mapped_column(String, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     email: Mapped[str] = mapped_column(String, default="")
     phone: Mapped[str] = mapped_column(String, default="")
@@ -68,6 +69,7 @@ class PersonModel(Base):
     address: Mapped[str] = mapped_column(Text, default="")
     join_date: Mapped[str] = mapped_column(String, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+    qualifications: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
 class EventModel(Base):
@@ -114,6 +116,7 @@ class TrainingModel(Base):
     end_date: Mapped[str] = mapped_column(String)
     location: Mapped[str] = mapped_column(String, default="")
     organizer: Mapped[str] = mapped_column(String, default="")
+    qualification_id: Mapped[str] = mapped_column(String, default="")
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
@@ -176,6 +179,7 @@ class DutyModel(Base):
     location: Mapped[str] = mapped_column(String, default="")
     person_id: Mapped[str] = mapped_column(String, index=True)
     person_name: Mapped[str] = mapped_column(String)
+    assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
 
@@ -202,4 +206,6 @@ class ActivityLogModel(Base):
     action: Mapped[str] = mapped_column(String)
     module: Mapped[str] = mapped_column(String)
     record_name: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
 

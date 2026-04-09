@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
 import { exercises, trainings, getErrorMessage } from "@/lib/store";
 import type { Exercise, Training } from "@/lib/types";
@@ -104,11 +104,13 @@ function normalizeTraining(item: Training): OperationItem {
 
 export default function Operations() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { canEdit } = useAuth();
 
   const [data, setData] = useState<OperationItem[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
+  const [sourceFilter, setSourceFilter] = useState<"all" | OperationSource>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [detail, setDetail] = useState<OperationItem | null>(null);
@@ -154,16 +156,22 @@ export default function Operations() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+  useEffect(() => {
+    const sourceParam = new URLSearchParams(location.search).get("source");
+    if (sourceParam === "exercise" || sourceParam === "training") setSourceFilter(sourceParam);
+    else setSourceFilter("all");
+  }, [location.search]);
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
       if (normalized && ![item.name, item.type, item.location, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
       if (filter !== "Összes" && item.status !== filter) return false;
+      if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
       return true;
     });
-  }, [data, search, filter, dateFrom, dateTo]);
+  }, [data, search, filter, sourceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -302,6 +310,11 @@ export default function Operations() {
             style={{ borderRadius: "2px" }}
           />
         </div>
+        {(["all", "exercise", "training"] as const).map((src) => (
+          <button key={src} onClick={() => { setSourceFilter(src); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${sourceFilter === src ? "btn-mil-primary" : "btn-mil-secondary"}`}>
+            {src === "all" ? "Összes forrás" : src === "exercise" ? "Gyakorlat" : "Kiképzés"}
+          </button>
+        ))}
         {["Összes", ...STATUSES].map((s) => (
           <button key={s} onClick={() => { setFilter(s as "Összes" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`}>
             {s}
@@ -487,7 +500,20 @@ export default function Operations() {
               </tbody>
             </table>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end gap-2 pt-2">
+              {canEdit && (
+                <button
+                  onClick={() => {
+                    navigate(`/operations?source=${detail.source}`, {
+                      state: { openOperationId: detail.id, openOperationSource: detail.source },
+                    });
+                    setDetail(null);
+                  }}
+                  className="btn-mil-secondary text-xs"
+                >
+                  Szerkesztés / Hozzárendelés
+                </button>
+              )}
               <button onClick={() => setDetail(null)} className="btn-mil-secondary text-xs">Bezárás</button>
             </div>
           </div>

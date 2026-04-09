@@ -65,3 +65,28 @@ def _enforce_single_god_user(db: Session) -> None:
         user.protected = False
 
     db.commit()
+
+
+def _ensure_extended_schema(db: Session) -> None:
+    personnel_cols = {row[1] for row in db.execute(text("PRAGMA table_info(personnel)")).fetchall()}
+    if "qualifications" not in personnel_cols:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN qualifications JSON"))
+    if "beosztas" not in personnel_cols:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN beosztas TEXT"))
+
+    trainings_cols = {row[1] for row in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
+    if "qualification_id" not in trainings_cols:
+        db.execute(text("ALTER TABLE trainings ADD COLUMN qualification_id TEXT"))
+    duties_cols = {row[1] for row in db.execute(text("PRAGMA table_info(duties)")).fetchall()}
+    if "assigned" not in duties_cols:
+        db.execute(text("ALTER TABLE duties ADD COLUMN assigned JSON"))
+
+    log_cols = {row[1] for row in db.execute(text("PRAGMA table_info(activity_logs)")).fetchall()}
+    if "payload" not in log_cols:
+        db.execute(text("ALTER TABLE activity_logs ADD COLUMN payload JSON"))
+
+    db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
+    db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))
+    db.execute(text("UPDATE trainings SET qualification_id = '' WHERE qualification_id IS NULL"))
+    db.execute(text("UPDATE duties SET assigned = '[]' WHERE assigned IS NULL"))
+    db.commit()

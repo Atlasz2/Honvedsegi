@@ -212,7 +212,7 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
 
 export const personnel = {
   ...createCrud<Person>('/personnel'),
-  getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
+  getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; qualification?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
     const query = new URLSearchParams({
       page: String(params.page),
       page_size: String(params.pageSize),
@@ -220,6 +220,7 @@ export const personnel = {
     if (params.search?.trim()) query.set('q', params.search.trim());
     if (params.unit?.trim() && params.unit !== 'Összes') query.set('unit', params.unit.trim());
     if (params.status?.trim() && params.status !== 'Összes') query.set('status_filter', params.status.trim());
+    if (params.qualification?.trim()) query.set('qualification', params.qualification.trim());
     if (params.sortBy?.trim()) query.set('sort_by', params.sortBy.trim());
     if (params.sortDir) query.set('sort_dir', params.sortDir);
     return request<PersonnelPagedResult>(`/personnel/paged?${query.toString()}`);
@@ -284,10 +285,18 @@ export const users = {
 export const activityLog = {
   getAll: () => request<ActivityLogEntry[]>('/activity-log'),
   add: (payload: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => request<ActivityLogEntry>('/activity-log', { method: 'POST', body: JSON.stringify(payload) }),
+  restore: (id: string) => request<ActivityLogEntry>(`/activity-log/${id}/restore`, { method: 'POST' }),
 };
 
-export function logAction(userName: string, userId: string, action: ActivityLogEntry['action'], module: string, recordName: string) {
-  return activityLog.add({ userId, userName, action, module, recordName });
+export function logAction(
+  userName: string,
+  userId: string,
+  action: ActivityLogEntry['action'],
+  module: string,
+  recordName: string,
+  payload?: Record<string, unknown>,
+) {
+  return activityLog.add({ userId, userName, action, module, recordName, payload });
 }
 
 export function initializeData() {

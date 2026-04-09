@@ -12,7 +12,7 @@ from .constants import BACKEND_ENV, IS_PRODUCTION
 from .db import Base, SessionLocal, engine, get_db
 from .deps import _utc_now
 from .seed import seed_database
-from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema
+from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _ensure_extended_schema
 
 from .routers import (
     activity_log, announcements, auth, duties, equipment,
@@ -92,6 +92,7 @@ def on_startup() -> None:
     with SessionLocal() as db:
         seed_database(db)
         _ensure_personnel_sztsz_schema(db)
+        _ensure_extended_schema(db)
         _enforce_single_god_user(db)
 
 # ── Health ─────────────────────────────────────────────────────────────────

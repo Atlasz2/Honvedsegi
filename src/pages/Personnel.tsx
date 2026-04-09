@@ -6,6 +6,9 @@ import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
+import DatePickerInput from '@/components/DatePickerInput';
+import PersonnelDetailModal from '@/components/PersonnelDetailModal';
+import { QUALIFICATIONS } from '@/lib/qualifications';
 
 const RANKS = ['Közkatona','Tizedes','Szakaszvezető','Őrmester','Törzsőrmester','Főtörzsőrmester','Zászlós','Törzszászlós','Főtörzszászlós','Hadnagy','Főhadnagy','Százados','Őrnagy','Alezredes','Ezredes'];
 const STATUSES = ['Aktív','Tartalékos','Szabadságon','Leszerelt'] as const;
@@ -36,6 +39,7 @@ const emptyPerson: Omit<Person, 'id'> = {
   sztsz: '',
   rank: 'Közkatona',
   unit: '31 TVZ',
+  beosztas: '',
   status: 'Aktív',
   email: '',
   phone: '',
@@ -43,6 +47,7 @@ const emptyPerson: Omit<Person, 'id'> = {
   address: '',
   joinDate: '',
   notes: '',
+  qualifications: [],
 };
 
 type PersonForm = Omit<Person, 'id'>;
@@ -97,6 +102,7 @@ export default function Personnel() {
   const [data, setData] = useState<Person[]>([]);
   const [summaryData, setSummaryData] = useState<Person[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('Összes');
+  const [qualificationFilter, setQualificationFilter] = useState<string>('');
   const [unitFilter, setUnitFilter] = useState<string>('Összes');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -105,6 +111,7 @@ export default function Personnel() {
   const [form, setForm] = useState<PersonForm>(emptyPerson);
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [detailPerson, setDetailPerson] = useState<Person | null>(null);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -122,6 +129,7 @@ export default function Personnel() {
           search,
           unit: unitFilter,
           status: statusFilter,
+          qualification: qualificationFilter,
           sortBy,
           sortDir,
         }),
@@ -135,7 +143,7 @@ export default function Personnel() {
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  }, [page, pageSize, search, unitFilter, statusFilter, sortBy, sortDir]);
+  }, [page, pageSize, search, unitFilter, statusFilter, qualificationFilter, sortBy, sortDir]);
 
   useEffect(() => {
     void refresh();
@@ -216,6 +224,7 @@ export default function Personnel() {
       sztsz: p.sztsz,
       rank: p.rank,
       unit: UNIT_OPTIONS.includes(p.unit as typeof UNIT_OPTIONS[number]) ? p.unit : UNIT_OPTIONS[0],
+      beosztas: p.beosztas || '',
       status: p.status,
       email: p.email,
       phone: p.phone,
@@ -223,6 +232,7 @@ export default function Personnel() {
       address: p.address,
       joinDate: p.joinDate,
       notes: p.notes,
+      qualifications: p.qualifications || [],
     });
     setErrors({});
     setEditing(p);
@@ -250,7 +260,7 @@ export default function Personnel() {
           <input
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
-            placeholder="Keresés név/SZTSz/rf/alegység..."
+            placeholder="Keresés név/SZTSz/rf/alegység/beosztás..."
             className="w-full bg-input border border-border pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary"
             style={{ borderRadius: '2px' }}
           />
@@ -266,6 +276,16 @@ export default function Personnel() {
           {UNIT_OPTIONS.map(unit => <option key={unit} value={unit}>{unit}</option>)}
         </select>
 
+
+        <select
+          value={qualificationFilter}
+          onChange={e => { setQualificationFilter(e.target.value); setPage(1); }}
+          className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
+          style={{ borderRadius: '2px' }}
+        >
+          <option value="">Minden képzettség</option>
+          {QUALIFICATIONS.map(q => <option key={q.id} value={q.id}>{q.label}</option>)}
+        </select>
         {['Összes', ...STATUSES].map(s => (
           <button
             key={s}
@@ -284,6 +304,7 @@ export default function Personnel() {
             <th><button onClick={() => handleSort('name')} className="text-left w-full">Név{sortIndicator('name')}</button></th>
             <th><button onClick={() => handleSort('sztsz')} className="text-left w-full">SZTSz{sortIndicator('sztsz')}</button></th>
             <th><button onClick={() => handleSort('rank')} className="text-left w-full">Rendfokozat{sortIndicator('rank')}</button></th>
+            <th>Beosztás</th>
             <th><button onClick={() => handleSort('unit')} className="text-left w-full">Alakulat{sortIndicator('unit')}</button></th>
             <th><button onClick={() => handleSort('status')} className="text-left w-full">Státusz{sortIndicator('status')}</button></th>
             <th>Email</th><th>Telefon</th>
@@ -291,12 +312,13 @@ export default function Personnel() {
             {canEdit && <th>Műveletek</th>}
           </tr></thead>
           <tbody>
-            {data.length === 0 && <tr><td colSpan={9} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
+            {data.length === 0 && <tr><td colSpan={10} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
             {data.map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} className="cursor-pointer" onClick={() => setDetailPerson(p)}>
                 <td className="font-semibold">{p.name}</td>
                 <td className="font-mono text-primary text-xs">{p.sztsz}</td>
                 <td className="text-brass font-mono text-xs">{p.rank}</td>
+                <td>{p.beosztas || '-'}</td>
                 <td>{p.unit}</td>
                 <td>
                   <span className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[p.status]}`} style={{ borderRadius: '2px' }}>
@@ -308,7 +330,7 @@ export default function Personnel() {
                 <td className="font-mono text-xs">{p.phone}</td>
                 <td className="font-mono text-primary text-xs">{p.joinDate}</td>
                 {canEdit && (
-                  <td>
+                  <td onClick={e => e.stopPropagation()}>
                     <div className="flex gap-1">
                       <button onClick={() => openEdit(p)} className="p-1.5 text-primary hover:bg-primary/10 transition-colors" title="Szerkesztés"><Pencil className="w-3.5 h-3.5" /></button>
                       <button onClick={() => setDeleteTarget(p)} className="p-1.5 text-destructive hover:bg-destructive/10 transition-colors" title="Törlés"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -366,9 +388,16 @@ export default function Personnel() {
           </div>
           <FormField label="Email" field="email" form={form} setForm={setForm} errors={errors} type="email" />
           <FormField label="Telefon" field="phone" form={form} setForm={setForm} errors={errors} maxLength={15} placeholder="+36 30 123 4567" inputMode="tel" />
-          <FormField label="Születési dátum" field="birthDate" form={form} setForm={setForm} errors={errors} type="date" />
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Születési dátum</label>
+            <DatePickerInput value={form.birthDate} onChange={val => setForm(prev => ({ ...prev, birthDate: val }))} />
+          </div>
+          <FormField label="Beosztás" field="beosztas" form={form} setForm={setForm} errors={errors} />
           <FormField label="Lakcím" field="address" form={form} setForm={setForm} errors={errors} />
-          <FormField label="Belépés dátuma" field="joinDate" form={form} setForm={setForm} errors={errors} type="date" />
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belépés dátuma</label>
+            <DatePickerInput value={form.joinDate} onChange={val => setForm(prev => ({ ...prev, joinDate: val }))} />
+          </div>
           <FormField label="Megjegyzés" field="notes" form={form} setForm={setForm} errors={errors} type="textarea" />
           <div className="flex gap-3 justify-end pt-4">
             <button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button>
@@ -377,7 +406,19 @@ export default function Personnel() {
         </div>
       </Modal>
 
+      {detailPerson && !editing && !creating && (
+        <PersonnelDetailModal
+          person={detailPerson}
+          canEdit={canEdit}
+          onClose={() => setDetailPerson(null)}
+          onEdit={() => { openEdit(detailPerson); setDetailPerson(null); }}
+        />
+      )}
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) { void handleDelete(deleteTarget); } }} />
     </div>
   );
 }
+
+
+
+

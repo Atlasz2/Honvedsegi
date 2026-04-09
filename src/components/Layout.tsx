@@ -3,18 +3,19 @@ import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, Calendar, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut
+  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut
 } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
+  { path: '/kozos-naptar', label: 'Közös naptár', icon: CalendarRange },
   { path: '/personnel', label: 'Személyek', icon: Users },
-  { path: '/operations', label: 'M\u0171veletek', icon: Crosshair },
-  { path: '/events', label: 'Esem\u00E9nyek', icon: CalendarDays },
+  { path: '/duties', label: 'Szolgálatok', icon: ShieldAlert },
+  { path: '/operations', label: 'Műveletek', icon: Crosshair },
+  { path: '/events', label: 'Események', icon: CalendarDays },
   { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon },
   { path: '/inventory', label: 'Készletek', icon: Package },
   { path: '/vehicles', label: 'Járművek', icon: Truck },
-  { path: '/duties', label: 'Szolgálatok', icon: Calendar },
   { path: '/announcements', label: 'Hírek', icon: Megaphone },
   { path: '/settings', label: 'Beállítások', icon: Settings, adminOnly: true },
 ];
@@ -83,7 +84,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 py-2 overflow-y-auto">
           {navItems.map(item => {
             if (item.adminOnly && !isAdmin) return null;
-            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
+            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path) || (item.path === '/settings' && location.pathname === '/activity-log');
             return (
               <NavLink
                 key={item.path}
@@ -94,6 +95,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     : 'text-muted-foreground hover:text-foreground hover:bg-secondary border-l-[3px] border-transparent'
                 } ${collapsed ? 'justify-center px-0' : ''}`}
                 style={{ borderRadius: '2px' }}
+                title={collapsed ? item.label : undefined}
               >
                 <item.icon className="w-5 h-5 flex-shrink-0" />
                 {!collapsed && <span className="font-rajdhani font-medium tracking-wide">{item.label}</span>}
@@ -148,6 +150,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+
+
+
 
 
 

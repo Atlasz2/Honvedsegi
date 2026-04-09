@@ -428,7 +428,7 @@ export default function SettingsPage() {
               setImportFile(e.target.files?.[0] || null);
               resetImportState();
             }}
-            className="w-full bg-input border border-border px-3 py-2 text-sm"
+            className="w-full bg-input border border-border px-3 py-2 text-sm file:mr-3 file:rounded-sm file:border file:border-primary/40 file:bg-primary/20 file:px-3 file:py-1.5 file:text-xs file:font-mono file:text-primary hover:file:bg-primary/30"
             style={{ borderRadius: '2px' }}
           />
           <button onClick={() => { void handleImportPreview(); }} disabled={!importFile || importing} className="btn-mil-primary text-xs">

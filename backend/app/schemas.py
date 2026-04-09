@@ -4,7 +4,7 @@ from datetime import datetime
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 Role = Literal["reader", "editor", "admin", "fejleszto"]
@@ -69,6 +69,7 @@ class PersonBase(BaseModel):
     sztsz: str
     rank: str
     unit: str
+    beosztas: str = ""
     status: PersonStatus
     email: str = ""
     phone: str = ""
@@ -76,6 +77,7 @@ class PersonBase(BaseModel):
     address: str = ""
     joinDate: str = ""
     notes: str = ""
+    qualifications: list[str] = Field(default_factory=list)
 
 
 class PersonCreate(PersonBase):
@@ -110,6 +112,10 @@ class ExerciseAssignment(BaseModel):
     personId: str
     personName: str
     role: str
+    attendance: TrainingAttendance | None = None
+    rank: str | None = None
+    rankShort: str | None = None
+    sztsz: str | None = None
 
 
 class ExerciseBase(BaseModel):
@@ -140,6 +146,7 @@ class TrainingAssignment(BaseModel):
     personId: str
     personName: str
     attendance: TrainingAttendance
+    qualificationApproved: bool = False
 
 
 class TrainingBase(BaseModel):
@@ -149,6 +156,7 @@ class TrainingBase(BaseModel):
     endDate: str
     location: str = ""
     organizer: str = ""
+    qualificationId: str = ""
     maxPersonnel: int = 0
     description: str = ""
     status: TrainingStatus
@@ -324,13 +332,22 @@ class VehicleAssignRequest(BaseModel):
     personId: str
 
 
+class DutyAssignment(BaseModel):
+    personId: str
+    personName: str
+    rank: str | None = None
+    rankShort: str | None = None
+    sztsz: str | None = None
+
+
 class DutyBase(BaseModel):
     type: str
     startDate: str
     endDate: str
     location: str = ""
-    personId: str
-    personName: str
+    personId: str = ""
+    personName: str = ""
+    assigned: list[DutyAssignment] = Field(default_factory=list)
     notes: str = ""
     status: DutyStatus
 
@@ -377,6 +394,7 @@ class ActivityLogCreate(BaseModel):
     action: ActivityAction
     module: str
     recordName: str
+    payload: dict | None = None
 
 
 class ActivityLogRead(BaseModel):
@@ -387,6 +405,7 @@ class ActivityLogRead(BaseModel):
     action: ActivityAction
     module: str
     recordName: str
+    payload: dict | None = None
 
 
 
@@ -444,3 +463,5 @@ class ImportConfirmResult(BaseModel):
     created: int
     updated: int
     skipped: int
+
+
