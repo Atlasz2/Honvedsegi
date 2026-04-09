@@ -6,12 +6,9 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT_DIR / "data"
-DB_PATH = DATA_DIR / "guard_guard_duty.db"
-
+DB_PATH = Path(r"C:\Users\matem\Desktop\Projektek\Honvedsegi\data\guard_guard_duty.db")
+DATA_DIR = DB_PATH.parent
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 
 class Base(DeclarativeBase):
     pass
