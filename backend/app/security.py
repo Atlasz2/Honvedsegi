@@ -4,9 +4,6 @@ import hashlib
 import hmac
 import os
 import secrets
-from functools import lru_cache
-
-from cryptography.fernet import Fernet, InvalidToken
 
 
 LEGACY_ITERATIONS = 120_000
@@ -15,7 +12,6 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_DKLEN = 32
 SCRYPT_MAXMEM = int(os.getenv("BACKEND_SCRYPT_MAXMEM", str(128 * 1024 * 1024)))
-ENCRYPTED_PREFIX = "enc::"
 
 
 def _pepper() -> bytes:
@@ -78,7 +74,9 @@ def _verify_legacy_pbkdf2(password: str, stored_hash: str) -> bool:
         salt, digest = stored_hash.split("$", 1)
     except ValueError:
         return False
-    computed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), LEGACY_ITERATIONS)
+    computed = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), LEGACY_ITERATIONS
+    )
     return hmac.compare_digest(computed.hex(), digest)
 
 
@@ -93,68 +91,9 @@ def needs_rehash(stored_hash: str) -> bool:
 
 
 def fingerprint_token(token: str) -> str:
-    return hashlib.sha256((token + "::" + os.getenv("BACKEND_TOKEN_PEPPER", "")).encode("utf-8")).hexdigest()
+    pepper = os.getenv("BACKEND_TOKEN_PEPPER", "")
+    return hashlib.sha256(f"{token}::{pepper}".encode("utf-8")).hexdigest()
 
 
 def issue_token() -> str:
     return secrets.token_urlsafe(32)
-
-
-def _data_key() -> str:
-    return os.getenv("BACKEND_DATA_KEY", "").strip()
-
-
-@lru_cache(maxsize=1)
-def _data_cipher() -> Fernet | None:
-    key = _data_key()
-    if not key:
-        return None
-    try:
-        return Fernet(key.encode("utf-8"))
-    except Exception as exc:  # pragma: no cover - environment-dependent validation
-        raise RuntimeError("A BACKEND_DATA_KEY ervenytelen. Fernet base64 kulcs szukseges.") from exc
-
-
-def assert_data_key_configured(required: bool) -> None:
-    if not required:
-        return
-    if not _data_key():
-        raise RuntimeError("Production modban kotelezo a BACKEND_DATA_KEY beallitasa.")
-    _data_cipher()
-
-
-def is_encrypted_text(value: str) -> bool:
-    return bool(value and value.startswith(ENCRYPTED_PREFIX))
-
-
-def encrypt_text(value: str) -> str:
-    raw = value or ""
-    if not raw:
-        return ""
-    if is_encrypted_text(raw):
-        return raw
-
-    cipher = _data_cipher()
-    if cipher is None:
-        return raw
-
-    token = cipher.encrypt(raw.encode("utf-8")).decode("utf-8")
-    return f"{ENCRYPTED_PREFIX}{token}"
-
-
-def decrypt_text(value: str) -> str:
-    raw = value or ""
-    if not raw:
-        return ""
-    if not is_encrypted_text(raw):
-        return raw
-
-    cipher = _data_cipher()
-    if cipher is None:
-        raise RuntimeError("A BACKEND_DATA_KEY hianyzik, az adat nem visszafejtheto.")
-
-    token = raw[len(ENCRYPTED_PREFIX) :]
-    try:
-        return cipher.decrypt(token.encode("utf-8")).decode("utf-8")
-    except (InvalidToken, ValueError) as exc:
-        raise RuntimeError("Serult vagy idegen kulccsal titkositott adat.") from exc
