@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import os
+
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from .constants import GOD_USERNAME, GOD_ROLE
+from .models import PersonModel, UserModel
+from .security import hash_password
+
+
+def _ensure_personnel_sztsz_schema(db: Session) -> None:
+    columns = {row[1] for row in db.execute(text("PRAGMA table_info(personnel)")).fetchall()}
+    if "sztsz" not in columns:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN sztsz TEXT"))
+
+    rows = db.execute(text("SELECT id, sztsz FROM personnel ORDER BY id")).fetchall()
+    used: set[str] = set()
+    next_value = 10000000
+
+    for person_id, sztsz in rows:
+        normalized = str(sztsz).strip() if sztsz is not None else ""
+        valid = len(normalized) == 8 and normalized.isdigit() and normalized not in used
+        if valid:
+            used.add(normalized)
+            continue
+        while True:
+            candidate = f"{next_value:08d}"
+            next_value += 1
+            if candidate not in used:
+                break
+        used.add(candidate)
+        db.execute(text("UPDATE personnel SET sztsz = :sztsz WHERE id = :id"), {"sztsz": candidate, "id": person_id})
+
+    db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_personnel_sztsz ON personnel(sztsz)"))
+    db.commit()
+
+
+def _enforce_single_god_user(db: Session) -> None:
+    god_user = db.scalar(select(UserModel).where(UserModel.username == GOD_USERNAME))
+    if not god_user:
+        dev_pwd = os.getenv("BACKEND_DEV_MASTER_PASSWORD", "").strip()
+        if not dev_pwd:
+            raise RuntimeError("Hiányzó BACKEND_DEV_MASTER_PASSWORD a dev_master létrehozásához")
+        god_user = UserModel(
+            username=GOD_USERNAME,
+            password_hash=hash_password(dev_pwd),
+            display_name="Fejlesztő Mester",
+            role=GOD_ROLE,
+            active=True,
+            protected=True,
+        )
+        db.add(god_user)
+
+    god_user.role = GOD_ROLE
+    god_user.active = True
+    god_user.protected = True
+
+    other_devs = db.scalars(
+        select(UserModel).where(UserModel.role == GOD_ROLE, UserModel.username != GOD_USERNAME)
+    ).all()
+    for user in other_devs:
+        user.role = "admin"
+        user.protected = False
+
+    db.commit()
