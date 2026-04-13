@@ -55,7 +55,7 @@ def operations_summary(
         select(ExerciseModel).where(ExerciseModel.status.in_(["Tervezett", "Folyamatban"]))
     ).all()
     duties = db.scalars(
-        select(DutyModel).where(DutyModel.status.in_(["Tervezett", "Teljesitett"]))
+        select(DutyModel).where(DutyModel.status.in_(["Tervezett", "Teljesített"]))
     ).all()
 
     shooting_kw = ["lőtér", "loter"]

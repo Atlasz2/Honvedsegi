@@ -456,6 +456,3 @@ def _apply_duty(target: DutyModel, payload: DutyCreate | DutyUpdate) -> None:
     target.status = payload.status
 
 
-
-
-

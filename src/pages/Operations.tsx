@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
 import { exercises, trainings, getErrorMessage } from "@/lib/store";
 import type { Exercise, Training } from "@/lib/types";
@@ -19,6 +19,8 @@ type OperationItem = {
   startDate: string;
   endDate: string;
   location: string;
+  organizer?: string;
+  qualificationId?: string;
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
@@ -95,6 +97,8 @@ function normalizeTraining(item: Training): OperationItem {
     startDate: item.startDate,
     endDate: item.endDate,
     location: item.location,
+    organizer: item.organizer,
+    qualificationId: item.qualificationId,
     maxPersonnel: item.maxPersonnel,
     description: item.description,
     status: item.status as OperationStatus,
@@ -104,7 +108,6 @@ function normalizeTraining(item: Training): OperationItem {
 
 export default function Operations() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { canEdit } = useAuth();
 
   const [data, setData] = useState<OperationItem[]>([]);
@@ -119,6 +122,7 @@ export default function Operations() {
   const [loading, setLoading] = useState(true);
 
   const [creating, setCreating] = useState(false);
+  const [editingItem, setEditingItem] = useState<OperationItem | null>(null);
   const [form, setForm] = useState<CreateForm>(emptyCreateForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -161,6 +165,7 @@ export default function Operations() {
     if (sourceParam === "exercise" || sourceParam === "training") setSourceFilter(sourceParam);
     else setSourceFilter("all");
   }, [location.search]);
+
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
@@ -177,17 +182,11 @@ export default function Operations() {
   const safePage = Math.min(page, totalPages);
   const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const statusCounts: Record<OperationStatus, number> = {
-    Tervezett: 0,
-    Folyamatban: 0,
-    Befejezett: 0,
-    Törölve: 0,
-  };
-  data.forEach((item) => {
-    if (statusCounts[item.status] !== undefined) {
-      statusCounts[item.status] += 1;
-    }
-  });
+  const statusCounts = useMemo<Record<OperationStatus, number>>(() => {
+    const counts: Record<OperationStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Törölve: 0 };
+    data.forEach((item) => { if (counts[item.status] !== undefined) counts[item.status] += 1; });
+    return counts;
+  }, [data]);
 
   const sourceCounts = useMemo(
     () => ({
@@ -201,17 +200,7 @@ export default function Operations() {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  useEffect(() => {
-    const navState = location.state as { openOperationId?: string; openOperationSource?: "exercise" | "training" } | null;
-    if (!navState?.openOperationId || data.length === 0) return;
-    const found = data.find((item) =>
-      item.id === navState.openOperationId &&
-      (!navState.openOperationSource || item.source === navState.openOperationSource),
-    );
-    if (found) setDetail(found);
-  }, [location.state, data]);
-
-  const validateCreate = () => {
+  const validateForm = () => {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = "Kötelező";
     if (!form.startDate) next.startDate = "Kötelező";
@@ -222,8 +211,27 @@ export default function Operations() {
     return Object.keys(next).length === 0;
   };
 
-  const handleCreate = async () => {
-    if (!validateCreate()) return;
+  const openEditModal = (item: OperationItem) => {
+    setEditingItem(item);
+    setForm({
+      source: item.source,
+      name: item.name,
+      type: item.type,
+      startDate: item.startDate,
+      endDate: item.endDate,
+      location: item.location,
+      organizer: item.organizer ?? "",
+      maxPersonnel: item.maxPersonnel,
+      description: item.description,
+      status: item.status,
+    });
+    setErrors({});
+    setDetail(null);
+    setCreating(true);
+  };
+
+  const handleSave = async () => {
+    if (!validateForm()) return;
 
     try {
       const common = {
@@ -236,24 +244,44 @@ export default function Operations() {
         description: form.description.trim(),
       };
 
-      if (form.source === "exercise") {
+      const resolvedTrainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
+
+      if (editingItem) {
+        if (form.source === "exercise") {
+          await exercises.update({
+            id: editingItem.id,
+            ...common,
+            status: form.status,
+            assigned: editingItem.assigned as Exercise["assigned"],
+          });
+        } else {
+          await trainings.update({
+            id: editingItem.id,
+            ...common,
+            organizer: form.organizer.trim(),
+            qualificationId: editingItem.qualificationId ?? "",
+            status: resolvedTrainingStatus,
+            assigned: editingItem.assigned as Training["assigned"],
+          });
+        }
+      } else if (form.source === "exercise") {
         await exercises.add({
           ...common,
           status: form.status,
           assigned: [],
         });
       } else {
-        const trainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
         await trainings.add({
           ...common,
           organizer: form.organizer.trim(),
-          status: trainingStatus,
+          status: resolvedTrainingStatus,
           assigned: [],
         });
       }
 
-      toast.success("Művelet létrehozva");
+      toast.success(editingItem ? "Művelet frissítve" : "Művelet létrehozva");
       setCreating(false);
+      setEditingItem(null);
       setForm(emptyCreateForm);
       setErrors({});
       await refresh();
@@ -262,7 +290,7 @@ export default function Operations() {
     }
   };
 
-  const currentCreateStatuses = form.source === "exercise" ? STATUSES : TRAINING_STATUSES;
+  const availableStatuses = form.source === "exercise" ? STATUSES : TRAINING_STATUSES;
 
   return (
     <div>
@@ -275,6 +303,7 @@ export default function Operations() {
           {canEdit && (
             <button
               onClick={() => {
+                setEditingItem(null);
                 setForm(emptyCreateForm);
                 setErrors({});
                 setCreating(true);
@@ -382,7 +411,14 @@ export default function Operations() {
         </>
       )}
 
-      <Modal open={creating} onClose={() => setCreating(false)} title="Új művelet hozzáadása">
+      <Modal
+        open={creating}
+        onClose={() => {
+          setCreating(false);
+          setEditingItem(null);
+        }}
+        title={editingItem ? "Művelet szerkesztése" : "Új művelet hozzáadása"}
+      >
         <div className="space-y-3">
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus *</label>
@@ -449,7 +485,7 @@ export default function Operations() {
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
             <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as OperationStatus })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
-              {currentCreateStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+              {availableStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
@@ -459,8 +495,18 @@ export default function Operations() {
           </div>
 
           <div className="flex gap-3 justify-end pt-4">
-            <button onClick={() => setCreating(false)} className="btn-mil-secondary text-xs">Mégsem</button>
-            <button onClick={() => { void handleCreate(); }} className="btn-mil-primary text-xs">Mentés</button>
+            <button
+              onClick={() => {
+                setCreating(false);
+                setEditingItem(null);
+              }}
+              className="btn-mil-secondary text-xs"
+            >
+              Mégsem
+            </button>
+            <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">
+              {editingItem ? "Mentés" : "Létrehozás"}
+            </button>
           </div>
         </div>
       </Modal>
@@ -502,15 +548,7 @@ export default function Operations() {
 
             <div className="flex justify-end gap-2 pt-2">
               {canEdit && (
-                <button
-                  onClick={() => {
-                    navigate(`/operations?source=${detail.source}`, {
-                      state: { openOperationId: detail.id, openOperationSource: detail.source },
-                    });
-                    setDetail(null);
-                  }}
-                  className="btn-mil-secondary text-xs"
-                >
+                <button onClick={() => openEditModal(detail)} className="btn-mil-secondary text-xs">
                   Szerkesztés / Hozzárendelés
                 </button>
               )}

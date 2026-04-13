@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import os
 
 from datetime import datetime, timedelta, timezone
@@ -19,6 +19,7 @@ from .models import (
     UserModel,
     VehicleModel,
 )
+from .constants import optional_secret_for_nonprod
 from .security import assert_password_strength, hash_password
 
 
@@ -33,26 +34,14 @@ def _require_secret(name: str) -> str:
     return value
 
 
-def _optional_secret_for_nonprod(name: str, default_value: str) -> str:
-    backend_env = os.getenv("BACKEND_ENV", "development").strip().lower()
-    value = os.getenv(name, "").strip()
-    if value:
-        assert_password_strength(value)
-        return value
-    if backend_env == "production":
-        raise RuntimeError(f"Production módban kötelező megadni: {name}")
-    assert_password_strength(default_value)
-    return default_value
-
-
 def seed_database(db: Session) -> None:
     if db.query(UserModel).first():
         return
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
+    editor_pwd = optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
@@ -129,7 +118,6 @@ def seed_database(db: Session) -> None:
     db.commit()
 
 
-
 def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     import random
 
@@ -154,8 +142,8 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
+    editor_pwd = optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
@@ -533,7 +521,5 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     db.add_all(announcements)
     db.add_all(logs)
     db.commit()
-
-
 
 

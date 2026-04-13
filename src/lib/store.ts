@@ -299,11 +299,6 @@ export function logAction(
   return activityLog.add({ userId, userName, action, module, recordName, payload });
 }
 
-export function initializeData() {
-  // The backend seeds the database on startup.
-}
-
-
 
 export type ReportPreviewListItem = {
   id: string;
@@ -552,12 +547,3 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
     method: 'POST',
   });
 }
-
-
-
-
-
-
-
-
-

@@ -15,7 +15,8 @@ type ExportOption = {
   label: string;
   subtitle: string;
 };
-const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
+
+const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
   { value: "overview", label: "Összesített riport", description: "Gyakorlatok, kiképzések, események és szolgálatok egy PDF-ben." },
   { value: "operations", label: "Műveleti naptár", description: "Csak gyakorlatok és kiképzések az adott időszakra." },
   { value: "duties", label: "Szolgálati kivonat", description: "Szolgálatok időszak szerint szűrve." },
@@ -139,7 +140,6 @@ export default function Dashboard() {
   const ongoingEventsList = eventsData.filter((e) => e.status === "Folyamatban").sort((a, b) => a.startDate.localeCompare(b.startDate));
 
 
-
   const upcomingExs = exs
     .filter((e) => e.status === "Tervezett" || e.status === "Folyamatban")
     .sort((a, b) => a.startDate.localeCompare(b.startDate))
@@ -260,7 +260,6 @@ export default function Dashboard() {
           <div className="stats-label">Folyamatban lévő események</div>
         </button>
       </div>
-
 
 
       {showOnDutyDetails && (
@@ -589,23 +588,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

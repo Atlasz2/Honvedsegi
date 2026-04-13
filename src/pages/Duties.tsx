@@ -412,13 +412,3 @@ export default function DutiesPage() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-

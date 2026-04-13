@@ -45,7 +45,10 @@ def _build_qualification_map(db: Session) -> dict[str, list[str]]:
 
 def _serialize_person_with_qualifications(item: PersonModel, qualification_map: dict[str, list[str]]) -> PersonRead:
     base = _serialize_person(item)
-    return PersonRead(**{**base.model_dump(), "qualifications": qualification_map.get(item.id, [])})
+    computed = qualification_map.get(item.id, [])
+    stored = [q for q in (item.qualifications or []) if isinstance(q, str) and q.strip()]
+    merged = sorted(set(computed) | set(stored))
+    return PersonRead(**{**base.model_dump(), "qualifications": merged})
 
 
 @router.get("", response_model=list[PersonRead])

@@ -141,5 +141,3 @@ def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserMode
     return _serialize_log(restore_log)
 
 
-
-

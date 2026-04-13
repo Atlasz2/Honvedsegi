@@ -91,17 +91,17 @@ def _extract_messages(exc: Exception) -> list[str]:
             label = loc or "sor"
             t = str(e.get("type") or "")
             if t == "missing":
-                msgs.append(f"Hianyzik a kotelezo mezo: {label}")
+                msgs.append(f"Hiányzik a kötelező mező: {label}")
             elif t == "literal_error":
                 expected = str(e.get("ctx", {}).get("expected") or "")
                 val = e.get("input")
-                msgs.append(f"{label}: ervenytelen ertek ({val}). Engedelyezett: {expected}" if expected else f"{label}: ervenytelen ertek ({val})")
+                msgs.append(f"{label}: érvénytelen érték ({val}). Engedélyezett: {expected}" if expected else f"{label}: érvénytelen érték ({val})")
             else:
                 msgs.append(f"{label}: {e.get('msg') or 'Ervenytelen ertek'}")
         seen: set[str] = set()
         return [m for m in msgs if not (m in seen or seen.add(m))]
     text = str(exc).strip()
-    return [text] if text else ["Ervenytelen sor"]
+    return [text] if text else ["Érvénytelen sor"]
 
 
 def _fallback_identity(entity: str, line: int, data: dict, raw: dict) -> tuple[str, str]:
@@ -133,11 +133,11 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         action = "skip"
 
         if not enabled:
-            item_issues.append("Felhasznalo altal kihagyva")
+            item_issues.append("Felhasználó által kihagyva")
         else:
             missing = _ordered_missing(entity, prev_data)
             if missing:
-                item_issues.append(f"Hianyzik: {', '.join(missing)}")
+                item_issues.append(f"Hiányzik: {', '.join(missing)}")
             else:
                 try:
                     if entity == "personnel":
@@ -176,7 +176,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         })
 
     if not rows:
-        issues.append({"line": 0, "message": "Nem sikerult ertelmezheto sort kiolvasni a fajlbol."})
+        issues.append({"line": 0, "message": "Nem sikerült értelmezhető sort kiolvasni a fájlból."})
 
     return {
         "entity": entity, "totalRows": len(rows), "created": created,
@@ -201,11 +201,11 @@ def preview_import(
     db: Session = Depends(get_db), _: UserModel = Depends(_require_editor),
 ) -> ImportPreviewResult:
     if entity not in {"personnel", "exercises"}:
-        raise HTTPException(status_code=400, detail="Nem tamogatott import cel")
+        raise HTTPException(status_code=400, detail="Nem támogatott import cél")
     filename = file.filename or ""
     content = file.file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="Ures fajl")
+        raise HTTPException(status_code=400, detail="Üres fájl")
     try:
         source_rows = parse_import(entity, filename, content)
     except ValueError as exc:
@@ -219,7 +219,7 @@ def preview_import(
             alt_rows = parse_import(alt, filename, content)
             alt_preview = _evaluate_rows(alt, alt_rows, db)
             if alt_preview["created"] + alt_preview["updated"] > 0:
-                alt_preview["issues"].insert(0, {"line": 0, "message": "Automatikus atvaltas a masik import celra."})
+                alt_preview["issues"].insert(0, {"line": 0, "message": "Automatikus átváltás a másik import célra."})
                 preview = alt_preview; entity = alt
         except Exception:
             pass
@@ -235,7 +235,7 @@ def update_import_draft(
     db: Session = Depends(get_db), _: UserModel = Depends(_require_editor),
 ) -> ImportPreviewResult:
     if entity not in {"personnel", "exercises"}:
-        raise HTTPException(status_code=400, detail="Nem tamogatott import cel")
+        raise HTTPException(status_code=400, detail="Nem támogatott import cél")
     draft = _get_draft(entity, draft_id)
     updates = {item.line: item for item in payload.items}
     source_rows: list[dict] = []
@@ -258,7 +258,7 @@ def confirm_import(
     db: Session = Depends(get_db), _: UserModel = Depends(_require_editor),
 ) -> ImportConfirmResult:
     if entity not in {"personnel", "exercises"}:
-        raise HTTPException(status_code=400, detail="Nem tamogatott import cel")
+        raise HTTPException(status_code=400, detail="Nem támogatott import cél")
     draft = _pop_draft(entity, draft_id)
     for op in draft["operations"]:
         p = op["payload"]

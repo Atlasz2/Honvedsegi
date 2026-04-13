@@ -19,7 +19,6 @@ def _pepper() -> bytes:
 
 
 def assert_password_strength(password: str) -> None:
-    return
     if len(password) < 14:
         raise ValueError("A jelszónak legalább 14 karakter hosszúnak kell lennie")
     checks = {
@@ -98,3 +97,4 @@ def fingerprint_token(token: str) -> str:
 
 def issue_token() -> str:
     return secrets.token_urlsafe(32)
+

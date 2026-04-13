@@ -12,7 +12,7 @@ from .constants import BACKEND_ENV, IS_PRODUCTION
 from .db import Base, SessionLocal, engine, get_db
 from .deps import _utc_now
 from .seed import seed_database
-from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _ensure_extended_schema
+from .startup import _enforce_single_god_user, _ensure_default_access_users, _ensure_extended_schema, _ensure_personnel_sztsz_schema
 
 from .routers import (
     activity_log, announcements, auth, duties, equipment,
@@ -94,6 +94,7 @@ def on_startup() -> None:
         _ensure_personnel_sztsz_schema(db)
         _ensure_extended_schema(db)
         _enforce_single_god_user(db)
+        _ensure_default_access_users(db)
 
 # ── Health ─────────────────────────────────────────────────────────────────
 
@@ -104,3 +105,4 @@ def health(db: Session = Depends(get_db)) -> dict[str, str]:
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Adatbázis nem elérhető: {exc}") from exc
     return {"status": "ok", "environment": BACKEND_ENV, "time": _utc_now().isoformat()}
+

@@ -89,8 +89,6 @@ class EventModel(Base):
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
-
-
 class ExerciseModel(Base):
     __tablename__ = "exercises"
 

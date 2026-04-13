@@ -7,6 +7,20 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _normalize_phone(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    digits = re.sub(r"\D", "", raw)
+    if digits.startswith("06"):
+        digits = digits[2:]
+    elif digits.startswith("36"):
+        digits = digits[2:]
+    if len(digits) != 9:
+        raise ValueError("A telefonszám formátuma: +36 XX XXX XXXX")
+    return f"+36 {digits[:2]} {digits[2:5]} {digits[5:]}"
+
+
 Role = Literal["reader", "editor", "admin", "fejleszto"]
 PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
 ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Törölve"]
@@ -84,24 +98,14 @@ class PersonCreate(PersonBase):
     @field_validator("phone")
     @classmethod
     def normalize_phone(cls, value: str) -> str:
-        raw = (value or "").strip()
-        if not raw:
-            return ""
-        digits = re.sub(r"\D", "", raw)
-        if digits.startswith("06"):
-            digits = digits[2:]
-        elif digits.startswith("36"):
-            digits = digits[2:]
-        if len(digits) != 9:
-            raise ValueError("A telefonszám formátuma: +36 XX XXX XXXX")
-        return f"+36 {digits[:2]} {digits[2:5]} {digits[5:]}"
+        return _normalize_phone(value)
 
 
 class PersonUpdate(PersonBase):
     @field_validator("phone")
     @classmethod
     def normalize_phone(cls, value: str) -> str:
-        return PersonCreate.normalize_phone(value)
+        return _normalize_phone(value)
 
 
 class PersonRead(PersonBase):
@@ -213,8 +217,6 @@ class EventUpdate(EventBase):
 
 class EventRead(EventBase):
     id: str
-
-
 
 
 class CheckoutRecord(BaseModel):
@@ -406,7 +408,6 @@ class ActivityLogRead(BaseModel):
     module: str
     recordName: str
     payload: dict | None = None
-
 
 
 class ImportIssue(BaseModel):
