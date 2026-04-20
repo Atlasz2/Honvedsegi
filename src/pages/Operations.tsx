@@ -1,150 +1,261 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
-import { exercises, trainings, getErrorMessage } from "@/lib/store";
-import type { Exercise, Training } from "@/lib/types";
-import { useAuth } from "@/lib/auth";
-import Modal from "@/components/Modal";
-import DatePickerInput from "@/components/DatePickerInput";
+import { Calendar, MapPin, Pencil, Plus, Search, Users } from "lucide-react";
 import { toast } from "sonner";
 
-type OperationStatus = "Tervezett" | "Folyamatban" | "Befejezett" | "Törölve";
-type OperationSource = "exercise" | "training";
+import AttendanceGrid from "@/components/operations/AttendanceGrid";
+import DocumentList from "@/components/operations/DocumentList";
+import RequirementsList from "@/components/operations/RequirementsList";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DatePickerInput from "@/components/DatePickerInput";
+import Modal from "@/components/Modal";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/lib/auth";
+import {
+  createRequirement,
+  deleteDocument,
+  deleteRequirement,
+  downloadDocument,
+  exercises,
+  fetchAttendance,
+  fetchDocuments,
+  fetchRequirements,
+  getErrorMessage,
+  trainings,
+  updateAttendance,
+  updateRequirement,
+  uploadDocument,
+  viewDocument,
+} from "@/lib/store";
+import type {
+  AttendanceEntry,
+  AttendanceEntryUpdate,
+  AttendanceStatus,
+  Exercise,
+  MaterialRequirement,
+  OperationDocument,
+  Training,
+} from "@/lib/types";
 
-type OperationItem = {
+type OperationType = "exercise" | "training";
+
+type CombinedOperation = {
   id: string;
-  source: OperationSource;
-  name: string;
-  type: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  organizer?: string;
-  qualificationId?: string;
-  maxPersonnel: number;
-  description: string;
-  status: OperationStatus;
-  assigned: Array<Record<string, unknown>>;
-};
-
-type CreateForm = {
-  source: OperationSource;
+  operationType: OperationType;
   name: string;
   type: string;
   startDate: string;
   endDate: string;
   location: string;
   organizer: string;
+  qualificationId: string;
   maxPersonnel: number;
   description: string;
-  status: OperationStatus;
+  status: string;
+  assigned: Array<Record<string, unknown>>;
 };
 
-const STATUSES: OperationStatus[] = ["Tervezett", "Folyamatban", "Befejezett", "Törölve"];
-const TRAINING_STATUSES: Array<Exclude<OperationStatus, "Törölve">> = ["Tervezett", "Folyamatban", "Befejezett"];
-
-const emptyCreateForm: CreateForm = {
-  source: "exercise",
-  name: "",
-  type: "",
-  startDate: "",
-  endDate: "",
-  location: "",
-  organizer: "",
-  maxPersonnel: 20,
-  description: "",
-  status: "Tervezett",
+type OperationLocationState = {
+  openOperationId?: string;
+  openOperationType?: OperationType;
+  openOperationName?: string;
 };
 
-const statusClass: Record<OperationStatus, string> = {
+type OperationForm = {
+  operationType: OperationType;
+  name: string;
+  type: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  organizer: string;
+  maxPersonnel: string;
+  description: string;
+};
+
+type SortDirection = "asc" | "desc";
+type ParticipantSortField = "name" | "rank" | "sztsz" | "role" | "attendance";
+
+type PendingDelete =
+  | { kind: "requirement"; id: string }
+  | { kind: "document"; id: string; name: string }
+  | null;
+
+type DocumentPreview = {
+  open: boolean;
+  url: string;
+  mimeType: string;
+  title: string;
+};
+
+const EXERCISE_STATUSES: Exercise["status"][] = ["Tervezett", "Folyamatban", "Befejezett", "Törölve"];
+const TRAINING_STATUSES: Training["status"][] = ["Tervezett", "Folyamatban", "Befejezett"];
+
+const statusClass: Record<string, string> = {
   Tervezett: "badge-planned",
   Folyamatban: "badge-ongoing",
   Befejezett: "badge-completed",
   Törölve: "badge-cancelled",
 };
 
-const typeMap: Record<string, string> = {
-  "combat-training": "Harctéri kiképzés",
-  marksmanship: "Lövészeti gyakorlat",
-  "field-exercise": "Szabadtéri gyakorlat",
-  tactical: "Taktikai",
-  fitness: "Kondicionálás",
-  basic: "Alapképzés",
-};
-
-function normalizeExercise(item: Exercise): OperationItem {
+function toCombinedOperation(item: Exercise | Training, operationType: OperationType): CombinedOperation {
   return {
     id: item.id,
-    source: "exercise",
+    operationType,
     name: item.name,
     type: item.type,
     startDate: item.startDate,
     endDate: item.endDate,
     location: item.location,
+    organizer: operationType === "training" ? item.organizer : "",
+    qualificationId: operationType === "training" ? item.qualificationId : "",
     maxPersonnel: item.maxPersonnel,
     description: item.description,
-    status: item.status as OperationStatus,
-    assigned: item.assigned as Array<Record<string, unknown>>,
+    status: item.status,
+    assigned: item.assigned.map((entry) => ({ ...entry })),
   };
 }
 
-function normalizeTraining(item: Training): OperationItem {
+function getSelectedKey(id: string, operationType: OperationType) {
+  return `${id}::${operationType}`;
+}
+
+function getDateOnly(value: string) {
+  return value.slice(0, 10);
+}
+
+function getTodayDateOnly() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDisplayText(value: unknown, fallback = "-") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function getParticipantRole(item: Record<string, unknown>) {
+  const role = getDisplayText(item.role, "");
+  if (role !== "") return role;
+
+  if (typeof item.qualificationApproved === "boolean") {
+    return item.qualificationApproved ? "Képzettség jóváhagyva" : "Képzettség függőben";
+  }
+
+  return "Kijelölt résztvevő";
+}
+
+function getParticipantAttendance(item: Record<string, unknown>) {
+  return getDisplayText(item.attendance, "Nincs adat");
+}
+
+function getParticipantRank(item: Record<string, unknown>) {
+  return getDisplayText(item.rankShort ?? item.rank, "-");
+}
+
+function getParticipantSztsz(item: Record<string, unknown>) {
+  return getDisplayText(item.sztsz, "-");
+}
+
+function createEmptyForm(operationType: OperationType): OperationForm {
   return {
-    id: item.id,
-    source: "training",
-    name: item.name,
-    type: item.type,
-    startDate: item.startDate,
-    endDate: item.endDate,
-    location: item.location,
-    organizer: item.organizer,
-    qualificationId: item.qualificationId,
-    maxPersonnel: item.maxPersonnel,
-    description: item.description,
-    status: item.status as OperationStatus,
-    assigned: item.assigned as Array<Record<string, unknown>>,
+    operationType,
+    name: "",
+    type: "",
+    status: "Tervezett",
+    startDate: "",
+    endDate: "",
+    location: "",
+    organizer: "",
+    maxPersonnel: "20",
+    description: "",
   };
+}
+
+function getAllowedStatuses(operationType: OperationType): string[] {
+  return operationType === "exercise" ? EXERCISE_STATUSES : TRAINING_STATUSES;
+}
+
+function makeAttendanceSnapshot(entries: AttendanceEntry[]) {
+  return new Map(entries.map((entry) => [entry.personId, { status: entry.status, note: entry.note, personName: entry.personName }]));
+}
+
+function toDefaultAttendanceEntries(assigned: Array<Record<string, unknown>>): AttendanceEntry[] {
+  return assigned.map((item, index) => {
+    const fallbackId = `person-${index}`;
+    return {
+      personId: getDisplayText(item.personId, fallbackId),
+      personName: getDisplayText(item.personName, "Ismeretlen"),
+      status: "Pending",
+      note: "",
+      updatedAt: "",
+      updatedBy: "",
+    };
+  });
+}
+
+function getSortIndicator(active: boolean, direction: SortDirection) {
+  if (!active) return "";
+  return direction === "asc" ? " ↑" : " ↓";
 }
 
 export default function Operations() {
-  const location = useLocation();
   const { canEdit } = useAuth();
+  const location = useLocation();
+  const navState = (location.state as OperationLocationState | null) ?? null;
 
-  const [data, setData] = useState<OperationItem[]>([]);
+  const [operations, setOperations] = useState<CombinedOperation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
-  const [sourceFilter, setSourceFilter] = useState<"all" | OperationSource>("all");
+  const [statusFilter, setStatusFilter] = useState("Összes");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [detail, setDetail] = useState<OperationItem | null>(null);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [loading, setLoading] = useState(true);
+  const [handledNavigation, setHandledNavigation] = useState("");
 
-  const [creating, setCreating] = useState(false);
-  const [editingItem, setEditingItem] = useState<OperationItem | null>(null);
-  const [form, setForm] = useState<CreateForm>(emptyCreateForm);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingOperation, setEditingOperation] = useState<CombinedOperation | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<OperationForm>(createEmptyForm("exercise"));
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  const detailRef = useRef<OperationItem | null>(null);
-  detailRef.current = detail;
+  const [attendanceEntries, setAttendanceEntries] = useState<AttendanceEntry[]>([]);
+  const [attendanceSnapshot, setAttendanceSnapshot] = useState<Map<string, { status: AttendanceStatus; note: string; personName: string }>>(new Map());
+  const [attendanceSaving, setAttendanceSaving] = useState(false);
 
-  const formatDate = (value: string) => {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString("hu-HU");
-  };
+  const [requirements, setRequirements] = useState<MaterialRequirement[]>([]);
+  const [requirementsBusy, setRequirementsBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const [documents, setDocuments] = useState<OperationDocument[]>([]);
+  const [documentsBusy, setDocumentsBusy] = useState(false);
+
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  const [preview, setPreview] = useState<DocumentPreview | null>(null);
+
+  const [participantSortField, setParticipantSortField] = useState<ParticipantSortField>("name");
+  const [participantSortDirection, setParticipantSortDirection] = useState<SortDirection>("asc");
+
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  const refreshOperations = useCallback(async () => {
     try {
-      const [exerciseData, trainingData] = await Promise.all([exercises.getAll(), trainings.getAll()]);
-      const merged = [...exerciseData.map(normalizeExercise), ...trainingData.map(normalizeTraining)]
-        .sort((a, b) => a.startDate.localeCompare(b.startDate));
-      setData(merged);
-      if (detailRef.current) {
-        const updated = merged.find((item) => item.id === detailRef.current!.id && item.source === detailRef.current!.source) ?? null;
-        setDetail(updated);
-      }
+      const [exerciseItems, trainingItems] = await Promise.all([exercises.getAll(), trainings.getAll()]);
+      const normalized = [
+        ...exerciseItems.map((item) => toCombinedOperation(item, "exercise")),
+        ...trainingItems.map((item) => toCombinedOperation(item, "training")),
+      ];
+
+      setOperations(normalized);
+      setSelectedId((current) => {
+        if (current && normalized.some((item) => getSelectedKey(item.id, item.operationType) === current)) {
+          return current;
+        }
+        return normalized[0] ? getSelectedKey(normalized[0].id, normalized[0].operationType) : null;
+      });
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -153,410 +264,1092 @@ export default function Operations() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => {
-      void refresh();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+    void refreshOperations();
+    const timer = setInterval(() => void refreshOperations(), 30000);
+    return () => clearInterval(timer);
+  }, [refreshOperations]);
+
+  const navigationSignature = `${navState?.openOperationId ?? ""}|${navState?.openOperationType ?? ""}|${navState?.openOperationName ?? ""}`;
 
   useEffect(() => {
-    const sourceParam = new URLSearchParams(location.search).get("source");
-    if (sourceParam === "exercise" || sourceParam === "training") setSourceFilter(sourceParam);
-    else setSourceFilter("all");
-  }, [location.search]);
+    if (!operations.length || !navigationSignature || navigationSignature === "||" || handledNavigation === navigationSignature) {
+      return;
+    }
 
-  const filtered = useMemo(() => {
-    const normalized = search.trim().toLowerCase();
-    return data.filter((item) => {
-      if (normalized && ![item.name, item.type, item.location, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
-      if (filter !== "Összes" && item.status !== filter) return false;
-      if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
-      if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
-      if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
-      return true;
-    });
-  }, [data, search, filter, sourceFilter, dateFrom, dateTo]);
+    const normalizedName = navState?.openOperationName?.trim().toLowerCase() ?? "";
+    const foundExact = navState?.openOperationId && navState.openOperationType
+      ? operations.find((item) => item.id === navState.openOperationId && item.operationType === navState.openOperationType)
+      : undefined;
+    const foundById = navState?.openOperationId
+      ? operations.find((item) => item.id === navState.openOperationId)
+      : undefined;
+    const foundByName = normalizedName
+      ? operations.find((item) => item.name.trim().toLowerCase() === normalizedName)
+      : undefined;
+    const found = foundExact ?? foundById ?? foundByName;
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+    if (found) {
+      setSelectedId(getSelectedKey(found.id, found.operationType));
+      setActiveTab("overview");
+    }
 
-  const statusCounts = useMemo<Record<OperationStatus, number>>(() => {
-    const counts: Record<OperationStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Törölve: 0 };
-    data.forEach((item) => { if (counts[item.status] !== undefined) counts[item.status] += 1; });
-    return counts;
-  }, [data]);
+    setHandledNavigation(navigationSignature);
+  }, [handledNavigation, navState?.openOperationId, navState?.openOperationName, navState?.openOperationType, navigationSignature, operations]);
 
-  const sourceCounts = useMemo(
-    () => ({
-      exercise: data.filter((item) => item.source === "exercise").length,
-      training: data.filter((item) => item.source === "training").length,
-    }),
-    [data],
+  const detectedStatuses = useMemo(
+    () => Array.from(new Set(operations.map((item) => item.status))).sort((left, right) => left.localeCompare(right)),
+    [operations],
   );
 
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+  const searchQuery = search.trim().toLowerCase();
 
-  const validateForm = () => {
-    const next: Record<string, string> = {};
-    if (!form.name.trim()) next.name = "Kötelező";
-    if (!form.startDate) next.startDate = "Kötelező";
-    if (!form.endDate) next.endDate = "Kötelező";
-    if (form.startDate && form.endDate && form.endDate < form.startDate) next.endDate = "Vége >= Kezdete";
-    if (form.source === "training" && !form.organizer.trim()) next.organizer = "Kötelező";
-    setErrors(next);
-    return Object.keys(next).length === 0;
+  const { orderedOperations, anchorKey } = useMemo(() => {
+    const filtered = operations.filter((item) => {
+      if (searchQuery) {
+        const searchableFields = [item.name, item.type, item.location, item.organizer, item.description]
+          .map((value) => value.toLowerCase());
+        if (!searchableFields.some((value) => value.includes(searchQuery))) {
+          return false;
+        }
+      }
+
+      if (statusFilter !== "Összes" && item.status !== statusFilter) {
+        return false;
+      }
+
+      const start = getDateOnly(item.startDate);
+      const end = getDateOnly(item.endDate);
+      if (dateFrom && end < dateFrom) {
+        return false;
+      }
+      if (dateTo && start > dateTo) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const today = getTodayDateOnly();
+    const past: CombinedOperation[] = [];
+    const current: CombinedOperation[] = [];
+    const future: CombinedOperation[] = [];
+
+    filtered.forEach((item) => {
+      const start = getDateOnly(item.startDate);
+      const end = getDateOnly(item.endDate);
+
+      if (end < today) {
+        past.push(item);
+      } else if (start > today) {
+        future.push(item);
+      } else {
+        current.push(item);
+      }
+    });
+
+    past.sort((left, right) => {
+      const byEnd = getDateOnly(right.endDate).localeCompare(getDateOnly(left.endDate));
+      if (byEnd !== 0) return byEnd;
+      return left.name.localeCompare(right.name, "hu");
+    });
+
+    current.sort((left, right) => {
+      const byStart = getDateOnly(left.startDate).localeCompare(getDateOnly(right.startDate));
+      if (byStart !== 0) return byStart;
+      const byEnd = getDateOnly(left.endDate).localeCompare(getDateOnly(right.endDate));
+      if (byEnd !== 0) return byEnd;
+      return left.name.localeCompare(right.name, "hu");
+    });
+
+    future.sort((left, right) => {
+      const byStart = getDateOnly(left.startDate).localeCompare(getDateOnly(right.startDate));
+      if (byStart !== 0) return byStart;
+      return left.name.localeCompare(right.name, "hu");
+    });
+
+    const ordered = [...past, ...current, ...future];
+    const anchorItem = current[0] ?? future[0] ?? past[0] ?? null;
+
+    return {
+      orderedOperations: ordered,
+      anchorKey: anchorItem ? getSelectedKey(anchorItem.id, anchorItem.operationType) : null,
+    };
+  }, [operations, searchQuery, statusFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (!orderedOperations.length) {
+      setSelectedId(null);
+      return;
+    }
+
+    if (!selectedId || !orderedOperations.some((item) => getSelectedKey(item.id, item.operationType) === selectedId)) {
+      const fallback = anchorKey ?? getSelectedKey(orderedOperations[0].id, orderedOperations[0].operationType);
+      setSelectedId(fallback);
+      setActiveTab("overview");
+    }
+  }, [anchorKey, orderedOperations, selectedId]);
+
+  useEffect(() => {
+    if (!anchorKey) return;
+
+    const frame = requestAnimationFrame(() => {
+      const row = rowRefs.current[anchorKey];
+      row?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [anchorKey, searchQuery, statusFilter, dateFrom, dateTo]);
+
+  const selectedOperation = useMemo(
+    () => operations.find((item) => getSelectedKey(item.id, item.operationType) === selectedId) ?? null,
+    [operations, selectedId],
+  );
+
+  const participants = selectedOperation?.assigned ?? [];
+  const isExerciseSelected = selectedOperation?.operationType === "exercise";
+
+  useEffect(() => {
+    if (selectedOperation?.operationType === "training" && ["attendance", "requirements", "documents"].includes(activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, selectedOperation?.operationType]);
+
+  useEffect(() => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") {
+      setAttendanceEntries([]);
+      setAttendanceSnapshot(new Map());
+      setRequirements([]);
+      setDocuments([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadExerciseData = async () => {
+      try {
+        const [attendance, reqs, docs] = await Promise.all([
+          fetchAttendance(selectedOperation.id),
+          fetchRequirements(selectedOperation.id),
+          fetchDocuments(selectedOperation.id),
+        ]);
+
+        if (cancelled) return;
+
+        const normalizedAttendance = attendance.length > 0 ? attendance : toDefaultAttendanceEntries(selectedOperation.assigned);
+
+        setAttendanceEntries(normalizedAttendance);
+        setAttendanceSnapshot(makeAttendanceSnapshot(normalizedAttendance));
+        setRequirements(reqs);
+        setDocuments(docs);
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(getErrorMessage(error));
+        }
+      }
+    };
+
+    void loadExerciseData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOperation]);
+
+  const sortedParticipants = useMemo(() => {
+    const list = [...participants];
+    const dir = participantSortDirection === "asc" ? 1 : -1;
+
+    return list.sort((left, right) => {
+      const leftName = getDisplayText(left.personName, "Ismeretlen");
+      const rightName = getDisplayText(right.personName, "Ismeretlen");
+      const leftRank = getParticipantRank(left);
+      const rightRank = getParticipantRank(right);
+      const leftSztsz = getParticipantSztsz(left);
+      const rightSztsz = getParticipantSztsz(right);
+      const leftRole = getParticipantRole(left);
+      const rightRole = getParticipantRole(right);
+      const leftAttendance = getParticipantAttendance(left);
+      const rightAttendance = getParticipantAttendance(right);
+
+      const valueMap: Record<ParticipantSortField, [string, string]> = {
+        name: [leftName, rightName],
+        rank: [leftRank, rightRank],
+        sztsz: [leftSztsz, rightSztsz],
+        role: [leftRole, rightRole],
+        attendance: [leftAttendance, rightAttendance],
+      };
+
+      const [leftValue, rightValue] = valueMap[participantSortField];
+      const primary = leftValue.localeCompare(rightValue, "hu", { numeric: true, sensitivity: "base" });
+      if (primary !== 0) return primary * dir;
+      return leftName.localeCompare(rightName, "hu", { numeric: true, sensitivity: "base" }) * dir;
+    });
+  }, [participantSortDirection, participantSortField, participants]);
+
+  const attendanceDirtyPersonIds = useMemo(() => {
+    const dirty = new Set<string>();
+
+    attendanceEntries.forEach((entry) => {
+      const snapshot = attendanceSnapshot.get(entry.personId);
+      if (!snapshot) {
+        dirty.add(entry.personId);
+        return;
+      }
+
+      if (snapshot.status !== entry.status || snapshot.note !== entry.note) {
+        dirty.add(entry.personId);
+      }
+    });
+
+    return dirty;
+  }, [attendanceEntries, attendanceSnapshot]);
+
+  const closeModal = () => {
+    if (saving) return;
+    setModalOpen(false);
+    setEditingOperation(null);
+    setFormErrors({});
   };
 
-  const openEditModal = (item: OperationItem) => {
-    setEditingItem(item);
+  const openCreateModal = () => {
+    const defaultType: OperationType = selectedOperation?.operationType ?? "exercise";
+    setEditingOperation(null);
+    setForm(createEmptyForm(defaultType));
+    setFormErrors({});
+    setModalOpen(true);
+  };
+
+  const openEditModal = () => {
+    if (!selectedOperation) return;
+    setEditingOperation(selectedOperation);
     setForm({
-      source: item.source,
-      name: item.name,
-      type: item.type,
-      startDate: item.startDate,
-      endDate: item.endDate,
-      location: item.location,
-      organizer: item.organizer ?? "",
-      maxPersonnel: item.maxPersonnel,
-      description: item.description,
-      status: item.status,
+      operationType: selectedOperation.operationType,
+      name: selectedOperation.name,
+      type: selectedOperation.type,
+      status: selectedOperation.status,
+      startDate: getDateOnly(selectedOperation.startDate),
+      endDate: getDateOnly(selectedOperation.endDate),
+      location: selectedOperation.location,
+      organizer: selectedOperation.organizer,
+      maxPersonnel: String(selectedOperation.maxPersonnel || 0),
+      description: selectedOperation.description,
     });
-    setErrors({});
-    setDetail(null);
-    setCreating(true);
+    setFormErrors({});
+    setModalOpen(true);
+  };
+
+  const validateForm = () => {
+    const nextErrors: Record<string, string> = {};
+    const maxPersonnel = Number(form.maxPersonnel);
+
+    if (!form.name.trim()) nextErrors.name = "Kötelező";
+    if (!form.type.trim()) nextErrors.type = "Kötelező";
+    if (!form.status.trim()) nextErrors.status = "Kötelező";
+    if (!form.startDate) nextErrors.startDate = "Kötelező";
+    if (!form.endDate) nextErrors.endDate = "Kötelező";
+    if (!form.location.trim()) nextErrors.location = "Kötelező";
+    if (form.operationType === "training" && !form.organizer.trim()) nextErrors.organizer = "Kötelező";
+    if (!Number.isFinite(maxPersonnel) || maxPersonnel <= 0) nextErrors.maxPersonnel = "Pozitív szám szükséges";
+    if (form.startDate && form.endDate && form.endDate < form.startDate) nextErrors.endDate = "A befejezés nem lehet korábbi a kezdésnél";
+
+    if (!getAllowedStatuses(form.operationType).includes(form.status)) {
+      nextErrors.status = "Érvénytelen státusz";
+    }
+
+    setFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
   const handleSave = async () => {
     if (!validateForm()) return;
 
+    const normalized = {
+      name: form.name.trim(),
+      type: form.type.trim(),
+      status: form.status.trim(),
+      startDate: form.startDate,
+      endDate: form.endDate,
+      location: form.location.trim(),
+      organizer: form.organizer.trim(),
+      maxPersonnel: Number(form.maxPersonnel),
+      description: form.description.trim(),
+    };
+
+    setSaving(true);
+
     try {
-      const common = {
-        name: form.name.trim(),
-        type: form.type.trim(),
-        startDate: form.startDate,
-        endDate: form.endDate,
-        location: form.location.trim(),
-        maxPersonnel: form.maxPersonnel,
-        description: form.description.trim(),
-      };
+      let savedKey: string | null = null;
 
-      const resolvedTrainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
-
-      if (editingItem) {
-        if (form.source === "exercise") {
-          await exercises.update({
-            id: editingItem.id,
-            ...common,
-            status: form.status,
-            assigned: editingItem.assigned as Exercise["assigned"],
-          });
-        } else {
-          await trainings.update({
-            id: editingItem.id,
-            ...common,
-            organizer: form.organizer.trim(),
-            qualificationId: editingItem.qualificationId ?? "",
-            status: resolvedTrainingStatus,
-            assigned: editingItem.assigned as Training["assigned"],
-          });
+      if (editingOperation) {
+        const current = operations.find((item) => getSelectedKey(item.id, item.operationType) === getSelectedKey(editingOperation.id, editingOperation.operationType));
+        if (!current) {
+          throw new Error("A szerkesztett művelet már nem található.");
         }
-      } else if (form.source === "exercise") {
-        await exercises.add({
-          ...common,
-          status: form.status,
+
+        if (editingOperation.operationType === "exercise") {
+          const payload: Exercise = {
+            id: editingOperation.id,
+            name: normalized.name,
+            type: normalized.type,
+            startDate: normalized.startDate,
+            endDate: normalized.endDate,
+            location: normalized.location,
+            maxPersonnel: normalized.maxPersonnel,
+            description: normalized.description,
+            status: normalized.status as Exercise["status"],
+            assigned: current.assigned as Exercise["assigned"],
+          };
+          const updated = await exercises.update(payload);
+          savedKey = getSelectedKey(updated.id, "exercise");
+          toast.success("Gyakorlat sikeresen frissítve");
+        } else {
+          const payload: Training = {
+            id: editingOperation.id,
+            name: normalized.name,
+            type: normalized.type,
+            startDate: normalized.startDate,
+            endDate: normalized.endDate,
+            location: normalized.location,
+            organizer: normalized.organizer,
+            qualificationId: current.qualificationId,
+            maxPersonnel: normalized.maxPersonnel,
+            description: normalized.description,
+            status: normalized.status as Training["status"],
+            assigned: current.assigned as Training["assigned"],
+          };
+          const updated = await trainings.update(payload);
+          savedKey = getSelectedKey(updated.id, "training");
+          toast.success("Kiképzés sikeresen frissítve");
+        }
+      } else if (form.operationType === "exercise") {
+        const payload: Omit<Exercise, "id"> = {
+          name: normalized.name,
+          type: normalized.type,
+          startDate: normalized.startDate,
+          endDate: normalized.endDate,
+          location: normalized.location,
+          maxPersonnel: normalized.maxPersonnel,
+          description: normalized.description,
+          status: normalized.status as Exercise["status"],
           assigned: [],
-        });
+        };
+        const created = await exercises.add(payload);
+        savedKey = getSelectedKey(created.id, "exercise");
+        toast.success("Gyakorlat sikeresen létrehozva");
       } else {
-        await trainings.add({
-          ...common,
-          organizer: form.organizer.trim(),
-          status: resolvedTrainingStatus,
+        const payload: Omit<Training, "id"> = {
+          name: normalized.name,
+          type: normalized.type,
+          startDate: normalized.startDate,
+          endDate: normalized.endDate,
+          location: normalized.location,
+          organizer: normalized.organizer,
+          qualificationId: "",
+          maxPersonnel: normalized.maxPersonnel,
+          description: normalized.description,
+          status: normalized.status as Training["status"],
           assigned: [],
-        });
+        };
+        const created = await trainings.add(payload);
+        savedKey = getSelectedKey(created.id, "training");
+        toast.success("Kiképzés sikeresen létrehozva");
       }
 
-      toast.success(editingItem ? "Művelet frissítve" : "Művelet létrehozva");
-      setCreating(false);
-      setEditingItem(null);
-      setForm(emptyCreateForm);
-      setErrors({});
-      await refresh();
+      await refreshOperations();
+      if (savedKey) {
+        setSelectedId(savedKey);
+        setActiveTab("overview");
+      }
+      closeModal();
     } catch (error) {
       toast.error(getErrorMessage(error));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const availableStatuses = form.source === "exercise" ? STATUSES : TRAINING_STATUSES;
+  const handleParticipantSort = (field: ParticipantSortField) => {
+    setParticipantSortField((currentField) => {
+      if (currentField === field) {
+        setParticipantSortDirection((currentDirection) => (currentDirection === "asc" ? "desc" : "asc"));
+        return currentField;
+      }
+
+      setParticipantSortDirection("asc");
+      return field;
+    });
+  };
+
+  const handleAttendanceChange = (personId: string, field: "status" | "note", value: string) => {
+    setAttendanceEntries((current) => current.map((entry) => {
+      if (entry.personId !== personId) return entry;
+
+      if (field === "status") {
+        return { ...entry, status: value as AttendanceStatus };
+      }
+
+      return { ...entry, note: value };
+    }));
+  };
+
+  const handleAttendanceSave = async () => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+
+    const dirtyEntries = attendanceEntries.filter((entry) => attendanceDirtyPersonIds.has(entry.personId));
+    if (dirtyEntries.length === 0) return;
+
+    const payload: AttendanceEntryUpdate[] = dirtyEntries.map((entry) => ({
+      personId: entry.personId,
+      personName: entry.personName,
+      status: entry.status,
+      note: entry.note,
+    }));
+
+    setAttendanceSaving(true);
+
+    try {
+      const updated = await updateAttendance(selectedOperation.id, payload);
+      const next = updated.length > 0 ? updated : attendanceEntries;
+      setAttendanceEntries(next);
+      setAttendanceSnapshot(makeAttendanceSnapshot(next));
+      toast.success("Jelenléti adatok mentve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setAttendanceSaving(false);
+    }
+  };
+
+  const handleCreateRequirement = async (payload: Omit<MaterialRequirement, "id" | "operationId">) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setRequirementsBusy(true);
+    try {
+      const created = await createRequirement(selectedOperation.id, payload);
+      setRequirements((current) => [...current, created]);
+      toast.success("Anyagigény hozzáadva");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRequirementsBusy(false);
+    }
+  };
+
+  const handleUpdateRequirement = async (id: string, payload: Partial<Omit<MaterialRequirement, "id" | "operationId">>) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setRequirementsBusy(true);
+    try {
+      const updated = await updateRequirement(selectedOperation.id, id, payload);
+      setRequirements((current) => current.map((item) => (item.id === id ? updated : item)));
+      toast.success("Anyagigény frissítve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRequirementsBusy(false);
+    }
+  };
+
+  const executeDeleteRequirement = async (id: string) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setRequirementsBusy(true);
+    try {
+      await deleteRequirement(selectedOperation.id, id);
+      setRequirements((current) => current.filter((item) => item.id !== id));
+      toast.success("Anyagigény törölve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRequirementsBusy(false);
+    }
+  };
+
+  const handleDeleteRequirement = async (id: string) => {
+    setPendingDelete({ kind: "requirement", id });
+  };
+
+  const handleUploadDocument = async (file: File, title: string) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setDocumentsBusy(true);
+    try {
+      const created = await uploadDocument(selectedOperation.id, file, title);
+      setDocuments((current) => [created, ...current]);
+      toast.success("Dokumentum feltöltve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const executeDeleteDocument = async (docId: string) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setDocumentsBusy(true);
+    try {
+      await deleteDocument(selectedOperation.id, docId);
+      setDocuments((current) => current.filter((item) => item.id !== docId));
+      toast.success("Dokumentum törölve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    const item = documents.find((doc) => doc.id === docId);
+    setPendingDelete({ kind: "document", id: docId, name: item?.originalName ?? "ismeretlen fájl" });
+  };
+
+  const handleDownloadDocument = async (docId: string, originalName: string) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setDocumentsBusy(true);
+    try {
+      await downloadDocument(selectedOperation.id, docId, originalName);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const closePreview = () => {
+    setPreview((current) => {
+      if (current?.url) {
+        window.URL.revokeObjectURL(current.url);
+      }
+      return null;
+    });
+  };
+
+  const handleViewDocument = async (docId: string) => {
+    if (!selectedOperation || selectedOperation.operationType !== "exercise") return;
+    setDocumentsBusy(true);
+    try {
+      const response = await viewDocument(selectedOperation.id, docId);
+      const target = documents.find((doc) => doc.id === docId);
+      setPreview((current) => {
+        if (current?.url) {
+          window.URL.revokeObjectURL(current.url);
+        }
+
+        return {
+          open: true,
+          url: response.url,
+          mimeType: response.mimeType,
+          title: target?.title || target?.originalName || "Dokumentum",
+        };
+      });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (preview?.url) {
+        window.URL.revokeObjectURL(preview.url);
+      }
+    };
+  }, [preview?.url]);
+
+  const confirmDeleteMessage = useMemo(() => {
+    if (!pendingDelete) return "Biztosan törlöd?";
+    if (pendingDelete.kind === "requirement") return "Biztosan törlöd az anyagigényt?";
+    return `Biztosan törlöd a dokumentumot: ${pendingDelete.name}?`;
+  }, [pendingDelete]);
+
+  const formStatusOptions = getAllowedStatuses(form.operationType);
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Műveletek</h1>
-          <p className="text-xs text-muted-foreground font-mono mt-1">Gyakorlatok + kiképzések egy nézetben</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {canEdit && (
-            <button
-              onClick={() => {
-                setEditingItem(null);
-                setForm(emptyCreateForm);
-                setErrors({});
-                setCreating(true);
-              }}
-              className="btn-mil-primary flex items-center gap-2 text-xs"
-            >
-              <Plus className="w-4 h-4" />
-              Új hozzáadás
-            </button>
-          )}
-          <div className="hidden md:flex items-center gap-2 text-xs font-mono text-muted-foreground">
-            <span className="mono-chip">GYAKORLAT: {sourceCounts.exercise}</span>
-            <span className="mono-chip">KIKÉPZÉS: {sourceCounts.training}</span>
+      <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military mb-6 text-foreground">Műveletek</h1>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <section className="bg-card border border-border p-4" style={{ borderRadius: "2px" }}>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-sm uppercase tracking-military font-mono text-primary">Kombinált lista</h2>
+              <p className="text-xs text-muted-foreground font-mono">Gyakorlatok és kiképzések egy nézetben.</p>
+            </div>
+            <div className="inline-flex items-center gap-2 text-xs font-mono text-muted-foreground">
+              <Users className="w-4 h-4 text-primary" />
+              <span>{orderedOperations.length} találat</span>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="stats-card"><div className="stats-number">{statusCounts.Tervezett}</div><div className="stats-label">Tervezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Folyamatban}</div><div className="stats-label">Folyamatban</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Befejezett}</div><div className="stats-label">Befejezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Törölve}</div><div className="stats-label">Törölve</div></div>
-      </div>
-
-      <div className="flex gap-2 mb-6 flex-wrap items-end">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Keresés név/típus/helyszín..."
-            className="w-full bg-input border border-border pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-primary"
-            style={{ borderRadius: "2px" }}
-          />
-        </div>
-        {(["all", "exercise", "training"] as const).map((src) => (
-          <button key={src} onClick={() => { setSourceFilter(src); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${sourceFilter === src ? "btn-mil-primary" : "btn-mil-secondary"}`}>
-            {src === "all" ? "Összes forrás" : src === "exercise" ? "Gyakorlat" : "Kiképzés"}
-          </button>
-        ))}
-        {["Összes", ...STATUSES].map((s) => (
-          <button key={s} onClick={() => { setFilter(s as "Összes" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`}>
-            {s}
-          </button>
-        ))}
-        <div>
-          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum eleje</label>
-          <DatePickerInput value={dateFrom} onChange={setDateFrom} className="px-2 py-1.5 text-xs" />
-        </div>
-        <div>
-          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum vége</label>
-          <DatePickerInput value={dateTo} onChange={setDateTo} className="px-2 py-1.5 text-xs" />
-        </div>
-        <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }} className="btn-mil-secondary text-xs">Szűrő törlése</button>
-      </div>
-
-      {loading ? (
-        <div className="text-muted-foreground font-mono py-8">Betöltés...</div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pagedItems.length === 0 && <div className="col-span-3 text-center text-muted-foreground font-mono py-12">Nincs találat a jelenlegi szűrőkre</div>}
-            {pagedItems.map((item) => (
-              <div key={`${item.source}-${item.id}`} className="bg-card border border-border border-l-2 border-l-primary p-4 cursor-pointer hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }} onClick={() => setDetail(item)}>
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="font-bold font-rajdhani text-lg">{item.name}</h3>
-                  <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[item.status]}`} style={{ borderRadius: "2px" }}>
-                    {item.status === "Folyamatban" && <span className="pulse-dot" />}
-                    {item.status}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 mb-2">
-                  {item.source === "exercise" ? <Crosshair className="w-3.5 h-3.5 text-primary" /> : <GraduationCap className="w-3.5 h-3.5 text-primary" />}
-                  <span className="mono-chip text-xs">{typeMap[item.type] || item.type}</span>
-                  <span className="mono-chip text-[10px]">{item.source === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}</span>
-                </div>
-                <div className="space-y-1 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
-                  <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />{item.location || "Nincs megadva"}</div>
-                  <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /><span className="font-mono text-primary">{item.assigned.length}</span>/{item.maxPersonnel} fő</div>
-                </div>
-                <div className="mt-3 w-full bg-border h-1.5" style={{ borderRadius: "2px" }}>
-                  <div className="bg-primary h-1.5 transition-all" style={{ width: `${item.maxPersonnel > 0 ? Math.min(100, (item.assigned.length / item.maxPersonnel) * 100) : 0}%`, borderRadius: "2px" }} />
-                </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 mb-4">
+            <label className="block md:col-span-2 xl:col-span-4">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Keresés</span>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Megnevezés, típus, helyszín..."
+                  className="w-full bg-input border border-border pl-10 pr-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                  style={{ borderRadius: "2px" }}
+                />
               </div>
-            ))}
-          </div>
+            </label>
 
-          <div className="flex items-center justify-between mt-4 text-xs font-mono text-muted-foreground">
-            <div>
-              Találat: {filtered.length}
-              {filtered.length > 0 && <span className="ml-2">({(safePage - 1) * pageSize + 1}-{Math.min(safePage * pageSize, filtered.length)})</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="bg-input border border-border px-2 py-1" style={{ borderRadius: "2px" }}>
-                {[10, 20].map((size) => <option key={size} value={size}>{size}/oldal</option>)}
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Státusz</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              >
+                <option value="Összes">Összes</option>
+                {detectedStatuses.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
               </select>
-              <button onClick={() => setPage((prev) => Math.max(1, prev - 1))} className="btn-mil-secondary text-xs" disabled={safePage <= 1}>Előző</button>
-              <span>{safePage} / {totalPages}</span>
-              <button onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} className="btn-mil-secondary text-xs" disabled={safePage >= totalPages}>Következő</button>
-            </div>
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Kezdettől</span>
+              <DatePickerInput value={dateFrom} onChange={setDateFrom} className="text-sm" />
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Befejezésig</span>
+              <DatePickerInput value={dateTo} onChange={setDateTo} className="text-sm" />
+            </label>
           </div>
 
-          <p className="text-xs text-muted-foreground font-mono mt-4">Frissítve: {new Date().toLocaleTimeString("hu-HU")}</p>
-        </>
-      )}
-
-      <Modal
-        open={creating}
-        onClose={() => {
-          setCreating(false);
-          setEditingItem(null);
-        }}
-        title={editingItem ? "Művelet szerkesztése" : "Új művelet hozzáadása"}
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus *</label>
-            <select
-              value={form.source}
-              onChange={(e) => {
-                const nextSource = e.target.value as OperationSource;
-                setForm((prev) => ({
-                  ...prev,
-                  source: nextSource,
-                  status: nextSource === "training" && prev.status === "Törölve" ? "Tervezett" : prev.status,
-                }));
-              }}
-              className="w-full bg-input border border-border px-3 py-2 text-sm"
-              style={{ borderRadius: "2px" }}
-            >
-              <option value="exercise">Gyakorlat</option>
-              <option value="training">Kiképzés</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megnevezés *</label>
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-            {errors.name && <p className="text-destructive text-xs mt-1">{errors.name}</p>}
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Alkategória</label>
-            <input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label>
-              <DatePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} />
-              {errors.startDate && <p className="text-destructive text-xs mt-1">{errors.startDate}</p>}
-            </div>
-            <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label>
-              <DatePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} />
-              {errors.endDate && <p className="text-destructive text-xs mt-1">{errors.endDate}</p>}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
-            <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-          </div>
-
-          {form.source === "training" && (
-            <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező *</label>
-              <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-              {errors.organizer && <p className="text-destructive text-xs mt-1">{errors.organizer}</p>}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
-            <input type="number" value={form.maxPersonnel} onChange={(e) => setForm({ ...form, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as OperationStatus })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
-              {availableStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>
-            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: "2px" }} />
-          </div>
-
-          <div className="flex gap-3 justify-end pt-4">
-            <button
-              onClick={() => {
-                setCreating(false);
-                setEditingItem(null);
-              }}
-              className="btn-mil-secondary text-xs"
-            >
-              Mégsem
-            </button>
-            <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">
-              {editingItem ? "Mentés" : "Létrehozás"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.name || ""} wide>
-        {detail && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mono-chip mt-1">{typeMap[detail.type] || detail.type}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Forrás</span><p className="mono-chip mt-1">{detail.source === "exercise" ? "Gyakorlat" : "Kiképzés"}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${statusClass[detail.status]}`} style={{ borderRadius: "2px" }}>{detail.status}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Időszak</span><p className="font-mono text-primary text-sm mt-1">{formatDate(detail.startDate)} → {formatDate(detail.endDate)}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Helyszín</span><p className="mt-1">{detail.location || "Nincs megadva"}</p></div>
-            </div>
-            {detail.description && <p className="text-sm text-muted-foreground">{detail.description}</p>}
-
-            <div className="flex items-center gap-3 pt-2">
-              <div className="h-px flex-1 bg-primary/30" />
-              <span className="text-xs uppercase tracking-military text-primary font-mono">Résztvevők ({detail.assigned.length}/{detail.maxPersonnel})</span>
-              <div className="h-px flex-1 bg-primary/30" />
-            </div>
-
+          <div className="border border-border overflow-auto max-h-[70vh]" style={{ borderRadius: "2px" }}>
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Szerep / Jelenlét</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Megnevezés</th>
+                  <th>Típus</th>
+                  <th>Időszak</th>
+                </tr>
+              </thead>
               <tbody>
-                {detail.assigned.length === 0 && <tr><td colSpan={2} className="text-muted-foreground text-xs py-4">Nincs hozzárendelt személy</td></tr>}
-                {detail.assigned.map((a, idx) => {
-                  const name = String(a.personName ?? "Ismeretlen");
-                  const roleOrAttendance = String(a.role ?? a.attendance ?? "-");
+                {loading && operations.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="py-8 text-center text-muted-foreground font-mono">Betöltés...</td>
+                  </tr>
+                )}
+                {!loading && orderedOperations.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="py-8 text-center text-muted-foreground font-mono">Nincs a szűrésnek megfelelő művelet.</td>
+                  </tr>
+                )}
+                {orderedOperations.map((item) => {
+                  const rowKey = getSelectedKey(item.id, item.operationType);
+                  const selected = rowKey === selectedId;
+                  const isAnchor = rowKey === anchorKey;
                   return (
-                    <tr key={`${name}-${idx}`}>
-                      <td>{name}</td>
-                      <td className="text-brass font-mono text-xs">{roleOrAttendance}</td>
+                    <tr
+                      key={rowKey}
+                      ref={(node) => {
+                        rowRefs.current[rowKey] = node;
+                      }}
+                      className={`cursor-pointer transition-colors ${selected ? "bg-secondary/60" : "hover:bg-secondary/30"}`}
+                      onClick={() => {
+                        setSelectedId(rowKey);
+                        setActiveTab("overview");
+                      }}
+                    >
+                      <td>
+                        <div className="font-semibold text-foreground">{item.name}</div>
+                        <div className="text-[11px] text-muted-foreground">{item.location || "Nincs helyszín"}</div>
+                        {isAnchor && (
+                          <div className="text-[10px] uppercase tracking-military text-primary font-mono mt-1">Mai horgony</div>
+                        )}
+                      </td>
+                      <td>
+                        <div className="text-xs uppercase tracking-military font-mono text-primary">
+                          {item.operationType === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{item.type || "Nincs altípus"}</div>
+                      </td>
+                      <td className="text-xs font-mono text-primary">{item.startDate} → {item.endDate}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-
-            <div className="flex justify-end gap-2 pt-2">
-              {canEdit && (
-                <button onClick={() => openEditModal(detail)} className="btn-mil-secondary text-xs">
-                  Szerkesztés / Hozzárendelés
-                </button>
-              )}
-              <button onClick={() => setDetail(null)} className="btn-mil-secondary text-xs">Bezárás</button>
-            </div>
           </div>
-        )}
+        </section>
+
+        <section className="bg-card border border-border p-4" style={{ borderRadius: "2px" }}>
+          {canEdit && (
+            <div className="flex items-center justify-end mb-4">
+              <button
+                type="button"
+                onClick={openCreateModal}
+                className="btn-mil-primary flex items-center gap-2 text-xs"
+              >
+                <Plus className="w-4 h-4" />
+                Új művelet
+              </button>
+            </div>
+          )}
+
+          {!selectedOperation && (
+            <div className="min-h-[320px] flex items-center justify-center text-center">
+              <div>
+                <p className="text-sm font-semibold text-foreground mb-2">Nincs kiválasztott művelet</p>
+                <p className="text-xs text-muted-foreground font-mono">Válassz egy gyakorlatot vagy kiképzést a bal oldali listából.</p>
+              </div>
+            </div>
+          )}
+
+          {selectedOperation && (
+            <>
+              <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono bg-primary/15 text-primary" style={{ borderRadius: "2px" }}>
+                      {selectedOperation.operationType === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}
+                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[selectedOperation.status] ?? "badge-planned"}`} style={{ borderRadius: "2px" }}>
+                      {selectedOperation.status}
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-bold font-rajdhani uppercase tracking-military text-foreground">{selectedOperation.name}</h2>
+                  <p className="text-sm text-muted-foreground mt-2">{selectedOperation.description || "Nincs részletes leírás megadva."}</p>
+                </div>
+
+                <div className="text-right text-xs font-mono text-muted-foreground">
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={openEditModal}
+                      className="btn-mil-secondary flex items-center gap-2 text-xs ml-auto mb-2"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      Szerkesztés
+                    </button>
+                  )}
+                  <div>{selectedOperation.type || "Általános"}</div>
+                  <div>{selectedOperation.id}</div>
+                </div>
+              </div>
+
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="mb-4 flex flex-wrap h-auto">
+                  <TabsTrigger value="overview">Áttekintés</TabsTrigger>
+                  <TabsTrigger value="participants">Jelenlévők</TabsTrigger>
+                  {isExerciseSelected && <TabsTrigger value="attendance">Jelenlét</TabsTrigger>}
+                  {isExerciseSelected && <TabsTrigger value="requirements">Anyagigény</TabsTrigger>}
+                  {isExerciseSelected && <TabsTrigger value="documents">Dokumentumok</TabsTrigger>}
+                </TabsList>
+
+                <TabsContent value="overview" className="space-y-4 mt-0">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Típus</p>
+                      <p className="text-sm font-semibold text-primary">{selectedOperation.type || "Általános"}</p>
+                    </div>
+
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Státusz</p>
+                      <p className="text-sm font-semibold text-foreground">{selectedOperation.status}</p>
+                    </div>
+
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <Users className="w-4 h-4 text-primary" />
+                        <p className="text-[10px] uppercase tracking-military">Létszám</p>
+                      </div>
+                      <p className="text-sm font-semibold text-foreground">{participants.length} / {selectedOperation.maxPersonnel || 0} fő</p>
+                    </div>
+
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <Calendar className="w-4 h-4 text-primary" />
+                        <p className="text-[10px] uppercase tracking-military">Időszak</p>
+                      </div>
+                      <p className="text-sm font-semibold text-foreground">{selectedOperation.startDate} → {selectedOperation.endDate}</p>
+                    </div>
+
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <MapPin className="w-4 h-4 text-primary" />
+                        <p className="text-[10px] uppercase tracking-military">Helyszín</p>
+                      </div>
+                      <p className="text-sm font-semibold text-foreground">{selectedOperation.location || "Nincs megadva"}</p>
+                    </div>
+
+                    <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
+                      <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Szervező</p>
+                      <p className="text-sm font-semibold text-foreground">{selectedOperation.organizer || "Nincs megadva"}</p>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="participants" className="space-y-4 mt-0">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <h3 className="text-sm uppercase tracking-military font-mono text-primary">Jelenlévők</h3>
+                      <p className="text-xs text-muted-foreground font-mono">A forrás rekord assigned adatai alapján.</p>
+                    </div>
+                    <div className="text-xs font-mono text-muted-foreground">Összesen: {participants.length} fő</div>
+                  </div>
+
+                  <div className="border border-border overflow-hidden" style={{ borderRadius: "2px" }}>
+                    <table className="w-full mil-table">
+                      <thead>
+                        <tr>
+                          <th>
+                            <button type="button" className="text-left" onClick={() => handleParticipantSort("name")}>
+                              Név{getSortIndicator(participantSortField === "name", participantSortDirection)}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="text-left" onClick={() => handleParticipantSort("rank")}>
+                              Rendfokozat{getSortIndicator(participantSortField === "rank", participantSortDirection)}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="text-left" onClick={() => handleParticipantSort("sztsz")}>
+                              SZTSZ{getSortIndicator(participantSortField === "sztsz", participantSortDirection)}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="text-left" onClick={() => handleParticipantSort("role")}>
+                              Szerep{getSortIndicator(participantSortField === "role", participantSortDirection)}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="text-left" onClick={() => handleParticipantSort("attendance")}>
+                              Jelenlét{getSortIndicator(participantSortField === "attendance", participantSortDirection)}
+                            </button>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedParticipants.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center text-muted-foreground font-mono">Ehhez a művelethez nincs hozzárendelt résztvevő.</td>
+                          </tr>
+                        )}
+                        {sortedParticipants.map((participant, index) => {
+                          const personId = getDisplayText(participant.personId, `participant-${index}`);
+                          return (
+                            <tr key={`${personId}-${index}`}>
+                              <td className="font-semibold text-foreground">{getDisplayText(participant.personName, "Ismeretlen")}</td>
+                              <td>{getParticipantRank(participant)}</td>
+                              <td className="font-mono text-primary">{getParticipantSztsz(participant)}</td>
+                              <td>{getParticipantRole(participant)}</td>
+                              <td>{getParticipantAttendance(participant)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </TabsContent>
+
+                {isExerciseSelected && (
+                  <TabsContent value="attendance" className="space-y-4 mt-0">
+                    <AttendanceGrid
+                      entries={attendanceEntries}
+                      canEdit={canEdit}
+                      saving={attendanceSaving}
+                      dirtyPersonIds={attendanceDirtyPersonIds}
+                      onChange={handleAttendanceChange}
+                      onSave={() => void handleAttendanceSave()}
+                    />
+                  </TabsContent>
+                )}
+
+                {isExerciseSelected && (
+                  <TabsContent value="requirements" className="space-y-4 mt-0">
+                    <RequirementsList
+                      items={requirements}
+                      canEdit={canEdit}
+                      busy={requirementsBusy}
+                      onCreate={handleCreateRequirement}
+                      onUpdate={handleUpdateRequirement}
+                      onDelete={handleDeleteRequirement}
+                    />
+                  </TabsContent>
+                )}
+
+                {isExerciseSelected && (
+                  <TabsContent value="documents" className="space-y-4 mt-0">
+                    <DocumentList
+                      items={documents}
+                      canEdit={canEdit}
+                      busy={documentsBusy}
+                      onUpload={handleUploadDocument}
+                      onDelete={handleDeleteDocument}
+                      onDownload={handleDownloadDocument}
+                      onView={handleViewDocument}
+                    />
+                  </TabsContent>
+                )}
+              </Tabs>
+            </>
+          )}
+        </section>
+      </div>
+
+      <Modal
+        open={modalOpen}
+        onClose={closeModal}
+        title={editingOperation ? "Művelet szerkesztése" : "Új művelet"}
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block md:col-span-2">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Megnevezés</span>
+              <input
+                value={form.name}
+                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              />
+              {formErrors.name && <p className="text-xs text-destructive mt-1">{formErrors.name}</p>}
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Altípus</span>
+              <input
+                value={form.type}
+                onChange={(event) => setForm((current) => ({ ...current, type: event.target.value }))}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              />
+              {formErrors.type && <p className="text-xs text-destructive mt-1">{formErrors.type}</p>}
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Státusz</span>
+              <select
+                value={form.status}
+                onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              >
+                {formStatusOptions.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
+              {formErrors.status && <p className="text-xs text-destructive mt-1">{formErrors.status}</p>}
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Kezdés</span>
+              <DatePickerInput value={form.startDate} onChange={(nextValue) => setForm((current) => ({ ...current, startDate: nextValue }))} />
+              {formErrors.startDate && <p className="text-xs text-destructive mt-1">{formErrors.startDate}</p>}
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Befejezés</span>
+              <DatePickerInput value={form.endDate} onChange={(nextValue) => setForm((current) => ({ ...current, endDate: nextValue }))} />
+              {formErrors.endDate && <p className="text-xs text-destructive mt-1">{formErrors.endDate}</p>}
+            </label>
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Helyszín</span>
+              <input
+                value={form.location}
+                onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              />
+              {formErrors.location && <p className="text-xs text-destructive mt-1">{formErrors.location}</p>}
+            </label>
+
+            {form.operationType === "training" && (
+              <label className="block">
+                <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Szervező</span>
+                <input
+                  value={form.organizer}
+                  onChange={(event) => setForm((current) => ({ ...current, organizer: event.target.value }))}
+                  className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                  style={{ borderRadius: "2px" }}
+                />
+                {formErrors.organizer && <p className="text-xs text-destructive mt-1">{formErrors.organizer}</p>}
+              </label>
+            )}
+
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Max. létszám</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={form.maxPersonnel}
+                onChange={(event) => setForm((current) => ({ ...current, maxPersonnel: event.target.value }))}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              />
+              {formErrors.maxPersonnel && <p className="text-xs text-destructive mt-1">{formErrors.maxPersonnel}</p>}
+            </label>
+
+            <label className="block md:col-span-2">
+              <span className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Leírás</span>
+              <textarea
+                value={form.description}
+                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                rows={4}
+                className="w-full bg-input border border-border px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                style={{ borderRadius: "2px" }}
+              />
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={closeModal} className="btn-mil-secondary text-xs" disabled={saving}>
+              Mégse
+            </button>
+            <button type="button" onClick={() => void handleSave()} className="btn-mil-primary text-xs" disabled={saving}>
+              {saving ? "Mentés..." : "Mentés"}
+            </button>
+          </div>
+        </div>
       </Modal>
+
+      <Modal
+        open={preview?.open ?? false}
+        onClose={closePreview}
+        title={preview?.title ?? "Dokumentum előnézet"}
+        wide
+      >
+        <div className="space-y-3">
+          {preview && preview.mimeType.startsWith("image/") && (
+            <img src={preview.url} alt={preview.title} className="w-full max-h-[70vh] object-contain border border-border" style={{ borderRadius: "2px" }} />
+          )}
+
+          {preview && preview.mimeType.includes("pdf") && (
+            <iframe title={preview.title} src={preview.url} className="w-full h-[70vh] border border-border" style={{ borderRadius: "2px" }} />
+          )}
+
+          {preview && !preview.mimeType.startsWith("image/") && !preview.mimeType.includes("pdf") && (
+            <div className="border border-border p-4" style={{ borderRadius: "2px" }}>
+              <p className="text-sm text-muted-foreground mb-3">Ehhez a fájltípushoz nincs beépített előnézet.</p>
+              <a href={preview.url} target="_blank" rel="noreferrer" className="btn-mil-primary text-xs inline-flex">
+                Megnyitás új lapon
+              </a>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        message={confirmDeleteMessage}
+        onConfirm={() => {
+          if (!pendingDelete) return;
+
+          if (pendingDelete.kind === "requirement") {
+            void executeDeleteRequirement(pendingDelete.id);
+            return;
+          }
+
+          void executeDeleteDocument(pendingDelete.id);
+        }}
+      />
     </div>
   );
 }

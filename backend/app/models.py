@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -87,6 +87,47 @@ class EventModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    parent_id: Mapped[str | None] = mapped_column(String, ForeignKey("events.id"), nullable=True, index=True)
+
+
+class AttendanceModel(Base):
+    __tablename__ = "attendance"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    sub_operation_id: Mapped[str] = mapped_column(String, ForeignKey("events.id"), index=True)
+    person_id: Mapped[str] = mapped_column(String, index=True)
+    person_name: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, index=True, default="Pending")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    updated_by: Mapped[str] = mapped_column(String, default="")
+
+
+class MaterialRequirementModel(Base):
+    __tablename__ = "operation_requirements"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, ForeignKey("events.id"), index=True)
+    item_name: Mapped[str] = mapped_column(String)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, index=True, default="Requested")
+
+
+class OperationDocumentModel(Base):
+    __tablename__ = "operation_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, ForeignKey("events.id"), index=True)
+    filename: Mapped[str] = mapped_column(String)
+    original_name: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String)
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    storage_path: Mapped[str] = mapped_column(String)
+    uploaded_by: Mapped[str] = mapped_column(String, default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    title: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class ExerciseModel(Base):
@@ -205,5 +246,6 @@ class ActivityLogModel(Base):
     module: Mapped[str] = mapped_column(String)
     record_name: Mapped[str] = mapped_column(String)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
 
 

@@ -24,6 +24,19 @@ const FIELD_LABELS: Record<string, string> = {
   attendance: 'Jelenlét',
   assigned: 'Beosztott személyek',
   qualificationId: 'Kapcsolt képzettség',
+  // Műveletek
+  parentId: 'Szülő elem',
+  maxPersonnel: 'Max. létszám',
+  description: 'Leírás',
+  note: 'Megjegyzés',
+  // Anyagigény
+  itemName: 'Tétel neve',
+  quantity: 'Mennyiség',
+  // Dokumentum
+  originalName: 'Fájlnév',
+  fileSize: 'Fájlméret (byte)',
+  uploadedBy: 'Feltöltő',
+  title: 'Cím',
 };
 
 function formatValue(value: unknown): string {
@@ -73,10 +86,21 @@ function payloadChanges(payload?: Record<string, unknown> | null): string[] {
 }
 
 function actionSummary(action: ActivityLogEntry['action']): string {
-  if (action === 'létrehozva') return 'Rekord letrehozva';
-  if (action === 'módosítva') return 'Rekord modositva';
-  return 'Rekord torolve';
+  if (action === 'létrehozva') return 'Rekord létrehozva';
+  if (action === 'módosítva') return 'Rekord módosítva';
+  return 'Rekord törölve';
 }
+
+type GroupedByModule = {
+  module: string;
+  items: ActivityLogEntry[];
+};
+
+type GroupedByDay = {
+  dayKey: string;
+  dayLabel: string;
+  modules: GroupedByModule[];
+};
 
 export default function ActivityLogPage() {
   const { canEdit } = useAuth();
@@ -127,6 +151,37 @@ export default function ActivityLogPage() {
     });
   }, [data, search, moduleFilter, actionFilter, dateFrom, dateTo]);
 
+  const grouped = useMemo<GroupedByDay[]>(() => {
+    const sorted = [...filtered].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const byDay = new Map<string, { dayLabel: string; modules: Map<string, ActivityLogEntry[]> }>();
+
+    for (const entry of sorted) {
+      const dayKey = entry.timestamp.slice(0, 10);
+      const dayLabel = new Date(entry.timestamp).toLocaleDateString('hu-HU');
+      const currentDay = byDay.get(dayKey);
+
+      if (!currentDay) {
+        byDay.set(dayKey, { dayLabel, modules: new Map([[entry.module, [entry]]]) });
+        continue;
+      }
+
+      const moduleItems = currentDay.modules.get(entry.module);
+      if (moduleItems) {
+        moduleItems.push(entry);
+      } else {
+        currentDay.modules.set(entry.module, [entry]);
+      }
+    }
+
+    return Array.from(byDay.entries()).map(([dayKey, dayGroup]) => ({
+      dayKey,
+      dayLabel: dayGroup.dayLabel,
+      modules: Array.from(dayGroup.modules.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], 'hu'))
+        .map(([module, items]) => ({ module, items })),
+    }));
+  }, [filtered]);
+
   const canRestore = (entry: ActivityLogEntry | null) => {
     if (!entry?.payload) return false;
     const mode = (entry.payload as Record<string, unknown>).mode;
@@ -175,23 +230,55 @@ export default function ActivityLogPage() {
         <button onClick={() => { setSearch(''); setModuleFilter(''); setActionFilter(''); setDateFrom(''); setDateTo(''); }} className="btn-mil-secondary text-xs">Szűrők törlése</button>
       </div>
 
-      <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
-        <table className="w-full mil-table">
-          <thead><tr><th>Időpont</th><th>Felhasználó</th><th>Művelet</th><th>Modul</th><th>Részletek</th></tr></thead>
-          <tbody>
-            {filtered.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
-            {filtered.map((l) => (
-              <tr key={l.id} className="cursor-pointer" onClick={() => setDetail(l)}>
-                <td className="font-mono text-primary text-xs">{new Date(l.timestamp).toLocaleString('hu-HU')}</td>
-                <td className="text-brass">{l.userName}</td>
-                <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${actionClass[l.action]}`} style={{ borderRadius: '2px' }}>{l.action}</span></td>
-                <td className="text-muted-foreground">{l.module}</td>
-                <td>{`${l.userName} ${actionLabel[l.action]}: ${l.recordName}`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <p className="text-xs text-muted-foreground mb-3">Találatok száma: <span className="font-mono text-primary">{filtered.length}</span></p>
+
+      {filtered.length === 0 ? (
+        <div className="bg-card border border-border p-8 text-center text-sm text-muted-foreground" style={{ borderRadius: '2px' }}>
+          Nincs a szűrésnek megfelelő naplóbejegyzés.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {grouped.map((dayGroup) => (
+            <section key={dayGroup.dayKey} className="bg-card border border-border p-3" style={{ borderRadius: '2px' }}>
+              <h2 className="text-sm font-semibold uppercase tracking-military text-primary mb-3">{dayGroup.dayLabel}</h2>
+
+              <div className="space-y-3">
+                {dayGroup.modules.map((moduleGroup) => (
+                  <div key={`${dayGroup.dayKey}-${moduleGroup.module}`} className="border border-border" style={{ borderRadius: '2px' }}>
+                    <div className="px-3 py-2 bg-input border-b border-border flex items-center justify-between">
+                      <span className="text-xs uppercase tracking-military text-muted-foreground">{moduleGroup.module}</span>
+                      <span className="text-[11px] font-mono text-muted-foreground">{moduleGroup.items.length} bejegyzés</span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full mil-table">
+                        <thead>
+                          <tr>
+                            <th>Időpont</th>
+                            <th>Felhasználó</th>
+                            <th>Művelet</th>
+                            <th>Rekord</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {moduleGroup.items.map((l) => (
+                            <tr key={l.id} className="cursor-pointer" onClick={() => setDetail(l)}>
+                              <td className="font-mono text-primary text-xs">{new Date(l.timestamp).toLocaleString('hu-HU')}</td>
+                              <td className="text-brass">{l.userName}</td>
+                              <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${actionClass[l.action]}`} style={{ borderRadius: '2px' }}>{l.action}</span></td>
+                              <td>{`${l.userName} ${actionLabel[l.action]}: ${l.recordName}`}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title="Naplóbejegyzés részletei">
         {detail && (

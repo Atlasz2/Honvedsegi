@@ -253,6 +253,7 @@ def _serialize_event(item: EventModel) -> EventRead:
         description=item.description,
         status=item.status,
         assigned=item.assigned or [],
+        parentId=item.parent_id,
     )
 
 
@@ -397,6 +398,7 @@ def _apply_event(target: EventModel, payload: EventCreate | EventUpdate) -> None
     target.description = payload.description
     target.status = payload.status
     target.assigned = payload.assigned
+    target.parent_id = payload.parentId
 
 
 def _apply_equipment(target: EquipmentModel, payload: EquipmentCreate | EquipmentUpdate) -> None:

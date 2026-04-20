@@ -95,6 +95,7 @@ export interface BasicAssignment {
 export interface AppEvent {
   id: string;
   eventType: 'esemeny';
+  parentId?: string | null;
   name: string;
   type: string;
   startDate: string;
@@ -206,4 +207,49 @@ export interface ActivityLogEntry {
   module: string;
   recordName: string;
   payload?: Record<string, unknown> | null;
+}
+export type AttendanceStatus = 'Present' | 'Excused' | 'Absent' | 'Pending';
+export type RequirementStatus = 'Requested' | 'Approved' | 'Fulfilled';
+
+export interface OperationTreeNode extends AppEvent {
+  parentId?: string | null;
+  children: OperationTreeNode[];
+}
+
+export interface AttendanceEntry {
+  personId: string;
+  personName: string;
+  status: AttendanceStatus;
+  note: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface AttendanceEntryUpdate {
+  personId: string;
+  personName: string;
+  status: AttendanceStatus;
+  note: string;
+}
+
+export interface MaterialRequirement {
+  id: string;
+  operationId: string;
+  itemName: string;
+  quantity: number;
+  unit: string;
+  note: string;
+  status: RequirementStatus;
+}
+
+export interface OperationDocument {
+  id: string;
+  operationId: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  title: string;
 }

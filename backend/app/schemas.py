@@ -32,6 +32,8 @@ DutyStatus = Literal["Tervezett", "Teljesített", "Lemondva"]
 AnnouncementCategory = Literal["Általános", "Fontos", "Sürgős", "Gyakorlat", "Adminisztráció"]
 ActivityAction = Literal["létrehozva", "módosítva", "törölve"]
 SupplyMoveType = Literal["Bevételezés", "Kiadás", "Visszavétel", "Selejtezés", "Korrekció"]
+AttendanceStatus = Literal["Present", "Excused", "Absent", "Pending"]
+RequirementStatus = Literal["Requested", "Approved", "Fulfilled"]
 
 
 class ORMModel(BaseModel):
@@ -205,6 +207,7 @@ class EventBase(BaseModel):
     description: str = ""
     status: ExerciseStatus
     assigned: list[dict] = []
+    parentId: str | None = None
 
 
 class EventCreate(EventBase):
@@ -410,6 +413,78 @@ class ActivityLogRead(BaseModel):
     payload: dict | None = None
 
 
+class OperationTreeNode(BaseModel):
+    id: str
+    eventType: Literal["esemeny"] = "esemeny"
+    parentId: str | None = None
+    name: str
+    type: str
+    startDate: str
+    endDate: str
+    location: str = ""
+    organizer: str = ""
+    maxPersonnel: int = 0
+    description: str = ""
+    status: ExerciseStatus
+    assigned: list[dict] = Field(default_factory=list)
+    children: list["OperationTreeNode"] = Field(default_factory=list)
+
+
+class AttendanceEntryBase(BaseModel):
+    personId: str
+    personName: str
+    status: AttendanceStatus = "Pending"
+    note: str = ""
+
+
+class AttendanceEntryUpdate(BaseModel):
+    personName: str | None = None
+    status: AttendanceStatus | None = None
+    note: str | None = None
+
+
+class AttendanceEntryRead(AttendanceEntryBase):
+    updatedAt: str
+    updatedBy: str
+
+
+class AttendanceBatchUpdateRequest(BaseModel):
+    entries: list[AttendanceEntryBase] = Field(default_factory=list)
+
+
+class MaterialRequirementBase(BaseModel):
+    itemName: str
+    quantity: int = 0
+    unit: str = ""
+    note: str = ""
+    status: RequirementStatus = "Requested"
+
+
+class MaterialRequirementUpdate(BaseModel):
+    itemName: str | None = None
+    quantity: int | None = None
+    unit: str | None = None
+    note: str | None = None
+    status: RequirementStatus | None = None
+
+
+class MaterialRequirementRead(MaterialRequirementBase):
+    id: str
+    operationId: str
+
+
+class OperationDocumentRead(BaseModel):
+    id: str
+    operationId: str
+    filename: str
+    originalName: str
+    mimeType: str
+    fileSize: int
+    uploadedBy: str
+    uploadedAt: str
+    title: str = ""
+
+
 class ImportIssue(BaseModel):
     line: int
     message: str
@@ -465,4 +540,4 @@ class ImportConfirmResult(BaseModel):
     updated: int
     skipped: int
 
-
+OperationTreeNode.model_rebuild()

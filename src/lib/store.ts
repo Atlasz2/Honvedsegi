@@ -9,6 +9,11 @@ import {
   Supply,
   Training,
   AppEvent,
+  AttendanceEntry,
+  AttendanceEntryUpdate,
+  MaterialRequirement,
+  OperationDocument,
+  OperationTreeNode,
   User,
   Vehicle,
 } from './types';
@@ -300,6 +305,146 @@ export function logAction(
 }
 
 
+
+
+export async function fetchOperationTree(): Promise<OperationTreeNode[]> {
+  return request<OperationTreeNode[]>('/operations/tree');
+}
+
+export async function fetchAttendance(id: string): Promise<AttendanceEntry[]> {
+  return request<AttendanceEntry[]>(`/operations/${id}/attendance`);
+}
+
+export async function updateAttendance(id: string, entries: AttendanceEntryUpdate[]): Promise<AttendanceEntry[]> {
+  return request<AttendanceEntry[]>(`/operations/${id}/attendance/batch`, {
+    method: 'POST',
+    body: JSON.stringify({ entries }),
+  });
+}
+
+export async function patchAttendance(id: string, personId: string, entry: Partial<Omit<AttendanceEntryUpdate, 'personId'>>): Promise<AttendanceEntry> {
+  return request<AttendanceEntry>(`/operations/${id}/attendance/${personId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(entry),
+  });
+}
+
+export async function fetchRequirements(id: string): Promise<MaterialRequirement[]> {
+  return request<MaterialRequirement[]>(`/operations/${id}/requirements`);
+}
+
+export async function createRequirement(
+  id: string,
+  payload: Omit<MaterialRequirement, 'id' | 'operationId'>,
+): Promise<MaterialRequirement> {
+  return request<MaterialRequirement>(`/operations/${id}/requirements`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRequirement(
+  id: string,
+  reqId: string,
+  payload: Partial<Omit<MaterialRequirement, 'id' | 'operationId'>>,
+): Promise<MaterialRequirement> {
+  return request<MaterialRequirement>(`/operations/${id}/requirements/${reqId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRequirement(id: string, reqId: string): Promise<void> {
+  return request<void>(`/operations/${id}/requirements/${reqId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function uploadDocument(id: string, file: File, title = ''): Promise<OperationDocument> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (title.trim()) formData.append('title', title.trim());
+  return request<OperationDocument>(`/operations/${id}/documents`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function viewDocument(id: string, docId: string): Promise<{ url: string; mimeType: string }> {
+  const token = getAccessToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE}/operations/${id}/documents/${docId}/view`, {
+    method: 'GET',
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error('Megtekintés sikertelen');
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  return { url, mimeType: blob.type || 'application/octet-stream' };
+}
+
+export async function createOperation(payload: Omit<import('./types').OperationTreeNode, 'id' | 'children'>): Promise<import('./types').AppEvent> {
+  return request<import('./types').AppEvent>('/operations/nodes', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, eventType: 'esemeny' }),
+  });
+}
+
+export async function updateOperation(id: string, payload: Omit<import('./types').OperationTreeNode, 'id' | 'children'>): Promise<import('./types').AppEvent> {
+  return request<import('./types').AppEvent>(`/operations/nodes/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...payload, eventType: 'esemeny' }),
+  });
+}
+
+export async function deleteOperation(id: string): Promise<void> {
+  return request<void>(`/operations/nodes/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchDocuments(id: string): Promise<OperationDocument[]> {
+  return request<OperationDocument[]>(`/operations/${id}/documents`);
+}
+
+export async function deleteDocument(id: string, docId: string): Promise<void> {
+  return request<void>(`/operations/${id}/documents/${docId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function downloadDocument(id: string, docId: string, fallbackName: string): Promise<void> {
+  const token = getAccessToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(`${API_BASE}/operations/${id}/documents/${docId}/download`, {
+    method: 'GET',
+    headers,
+  });
+  if (!response.ok) {
+    const raw = await response.text();
+    try {
+      const parsed = raw ? JSON.parse(raw) : null;
+      throw new Error(parsed?.detail || 'Dokumentum letöltés sikertelen');
+    } catch {
+      throw new Error(raw || 'Dokumentum letöltés sikertelen');
+    }
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fallbackName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
 export type ReportPreviewListItem = {
   id: string;
   itemType: 'exercise' | 'training' | 'event' | 'duty';
@@ -547,3 +692,4 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
     method: 'POST',
   });
 }
+

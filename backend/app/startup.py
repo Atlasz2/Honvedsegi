@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from uuid import uuid4
@@ -146,6 +146,76 @@ def _enforce_single_god_user(db: Session) -> None:
     db.commit()
 
 
+def _ensure_operations_hierarchy_schema(db: Session) -> None:
+    event_cols = {row[1] for row in db.execute(text("PRAGMA table_info(events)")).fetchall()}
+    if "parent_id" not in event_cols:
+        db.execute(text("ALTER TABLE events ADD COLUMN parent_id TEXT REFERENCES events(id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_events_parent_id ON events(parent_id)"))
+
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS attendance (
+                id TEXT PRIMARY KEY,
+                sub_operation_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                person_id TEXT NOT NULL,
+                person_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                note TEXT NOT NULL DEFAULT '',
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+    )
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_attendance_sub_operation_id ON attendance(sub_operation_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_attendance_person_id ON attendance(person_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_attendance_status ON attendance(status)"))
+
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS operation_requirements (
+                id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 0,
+                unit TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'Requested'
+            )
+            """
+        )
+    )
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_operation_requirements_operation_id ON operation_requirements(operation_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_operation_requirements_status ON operation_requirements(status)"))
+
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS operation_documents (
+                id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                storage_path TEXT NOT NULL,
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_operation_documents_operation_id ON operation_documents(operation_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_operation_documents_uploaded_at ON operation_documents(uploaded_at)"))
+
+    doc_cols = {row[1] for row in db.execute(text("PRAGMA table_info(operation_documents)")).fetchall()}
+    if "title" not in doc_cols:
+        db.execute(text("ALTER TABLE operation_documents ADD COLUMN title TEXT"))
+
+    db.commit()
+
 def _ensure_extended_schema(db: Session) -> None:
     personnel_cols = {row[1] for row in db.execute(text("PRAGMA table_info(personnel)")).fetchall()}
     if "qualifications" not in personnel_cols:
@@ -170,3 +240,4 @@ def _ensure_extended_schema(db: Session) -> None:
     db.execute(text("UPDATE trainings SET qualification_id = '' WHERE qualification_id IS NULL"))
     db.execute(text("UPDATE duties SET assigned = '[]' WHERE assigned IS NULL"))
     db.commit()
+

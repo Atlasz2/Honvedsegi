@@ -47,12 +47,13 @@ export default function Dashboard() {
   const [reportTemplate, setReportTemplate] = useState<ReportTemplate>("overview");
   const [reportFocusType, setReportFocusType] = useState<ReportFocusType>("exercise");
   const [reportFocusId, setReportFocusId] = useState("");
+  const [reportFocusQuery, setReportFocusQuery] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState<ReportPreviewResponse | null>(null);
 
   const openDuty = (dutyId: string) => navigate("/duties", { state: { openDutyId: dutyId } });
-  const openOperation = (itemId: string, source: "exercise" | "training") => navigate("/operations", { state: { openOperationId: itemId, openOperationSource: source } });
+  const openOperation = (itemId: string, operationType: "exercise" | "training", itemName?: string) => navigate("/operations", { state: { openOperationId: itemId, openOperationType: operationType, openOperationName: itemName || "" } });
   const openEvent = (eventId: string) => navigate("/events", { state: { openEventId: eventId } });
 
   const refresh = useCallback(async () => {
@@ -118,14 +119,40 @@ export default function Dashboard() {
       }));
   }, [dutiesData, eventsData, exs, reportFocusType, trainingsData]);
 
+  const filteredFocusOptions = useMemo<ExportOption[]>(() => {
+    const query = reportFocusQuery.trim().toLocaleLowerCase();
+    if (!query) return focusOptions;
+    return focusOptions.filter((option) => `${option.label} ${option.subtitle}`.toLocaleLowerCase().includes(query));
+  }, [focusOptions, reportFocusQuery]);
+
+  const selectedFocusOption = useMemo(
+    () => focusOptions.find((option) => option.id === reportFocusId) ?? null,
+    [focusOptions, reportFocusId],
+  );
+
   useEffect(() => {
     if (reportTemplate !== "focus") return;
     if (focusOptions.length === 0) {
       setReportFocusId("");
+      setReportFocusQuery("");
       return;
     }
-    setReportFocusId((current) => (focusOptions.some((option) => option.id === current) ? current : focusOptions[0].id));
+    setReportFocusId((current) => {
+      const selected = focusOptions.find((option) => option.id === current) ?? focusOptions[0];
+      setReportFocusQuery(selected.label);
+      return selected.id;
+    });
   }, [focusOptions, reportTemplate]);
+
+  const handleReportFocusQueryChange = (value: string) => {
+    setReportFocusQuery(value);
+    const trimmed = value.trim();
+    const normalized = trimmed.toLocaleLowerCase();
+    const matchedOption = focusOptions.find(
+      (option) => option.id === trimmed || option.label.toLocaleLowerCase() === normalized,
+    );
+    setReportFocusId(matchedOption?.id ?? "");
+  };
 
   const selectedTemplate = REPORT_TEMPLATES.find((item) => item.value === reportTemplate) ?? REPORT_TEMPLATES[0];
 
@@ -288,7 +315,7 @@ export default function Dashboard() {
           <div className="space-y-2">
             {ongoingExercises.length === 0 && <p className="text-xs text-muted-foreground font-mono">Nincs aktív gyakorlat.</p>}
             {ongoingExercises.map((item) => (
-              <button key={item.id} onClick={() => openOperation(item.id, "exercise")} className="w-full text-left border border-border px-3 py-2 hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }}>
+              <button key={item.id} onClick={() => openOperation(item.id, "exercise", item.name)} className="w-full text-left border border-border px-3 py-2 hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }}>
                 <p className="text-sm font-semibold text-primary">{item.name}</p>
                 <p className="text-xs text-muted-foreground">{item.startDate} → {item.endDate} | {item.location}</p>
                 <p className="text-xs"><span className="text-brass">Résztvevők:</span> {item.assigned.length}/{item.maxPersonnel}</p>
@@ -307,7 +334,7 @@ export default function Dashboard() {
           <div className="space-y-2">
             {ongoingTrainingsList.length === 0 && <p className="text-xs text-muted-foreground font-mono">Nincs aktív kiképzés.</p>}
             {ongoingTrainingsList.map((item) => (
-              <button key={item.id} onClick={() => openOperation(item.id, "training")} className="w-full text-left border border-border px-3 py-2 hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }}>
+              <button key={item.id} onClick={() => openOperation(item.id, "training", item.name)} className="w-full text-left border border-border px-3 py-2 hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }}>
                 <p className="text-sm font-semibold text-primary">{item.name}</p>
                 <p className="text-xs text-muted-foreground">{item.startDate} → {item.endDate} | {item.location}</p>
                 <p className="text-xs"><span className="text-brass">Résztvevők:</span> {item.assigned.length}/{item.maxPersonnel}</p>
@@ -368,10 +395,39 @@ export default function Dashboard() {
           {reportTemplate === "focus" && (
             <div>
               <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Konkrét rekord</label>
-              <select value={reportFocusId} onChange={(e) => setReportFocusId(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-xs" style={{ borderRadius: "2px" }}>
-                {focusOptions.length === 0 && <option value="">Nincs választható elem</option>}
-                {focusOptions.map((item) => <option key={item.id} value={item.id}>{item.label} | {item.subtitle}</option>)}
-              </select>
+              <input
+                value={reportFocusQuery}
+                onChange={(e) => handleReportFocusQueryChange(e.target.value)}
+                placeholder="Keresés név vagy azonosító alapján"
+                className="w-full bg-input border border-border px-3 py-2 text-xs"
+                style={{ borderRadius: "2px" }}
+              />
+              <div className="mt-1 border border-border bg-background/40 max-h-44 overflow-y-auto" style={{ borderRadius: "2px" }}>
+                {filteredFocusOptions.length === 0 && (
+                  <p className="px-2 py-2 text-[10px] text-muted-foreground font-mono">Nincs találat</p>
+                )}
+                {filteredFocusOptions.slice(0, 6).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setReportFocusId(item.id);
+                      setReportFocusQuery(item.label);
+                    }}
+                    className={`w-full text-left px-2 py-1.5 border-b border-border last:border-b-0 hover:bg-secondary transition-colors ${
+                      reportFocusId === item.id ? "bg-secondary" : ""
+                    }`}
+                  >
+                    <p className="text-xs text-foreground">{item.label}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{item.subtitle}</p>
+                  </button>
+                ))}
+              </div>
+              {selectedFocusOption && (
+                <p className="mt-1 text-[10px] text-primary font-mono">
+                  Kiválasztva: {selectedFocusOption.label} | {selectedFocusOption.subtitle}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -398,7 +454,7 @@ export default function Dashboard() {
           <tbody>
             {upcomingExs.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
             {upcomingExs.map((e) => (
-              <tr key={e.id} className="cursor-pointer hover:bg-secondary/40" onClick={() => openOperation(e.id, "exercise")}>
+              <tr key={e.id} className="cursor-pointer hover:bg-secondary/40" onClick={() => openOperation(e.id, "exercise", e.name)}>
                 <td className="font-semibold">{e.name}</td>
                 <td className="font-mono text-primary text-xs">{e.startDate} → {e.endDate}</td>
                 <td>{e.location}</td>
@@ -431,7 +487,7 @@ export default function Dashboard() {
           <tbody>
             {upcomingTrainings.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
             {upcomingTrainings.map((t) => (
-              <tr key={t.id} className="cursor-pointer hover:bg-secondary/40" onClick={() => openOperation(t.id, "training")}>
+              <tr key={t.id} className="cursor-pointer hover:bg-secondary/40" onClick={() => openOperation(t.id, "training", t.name)}>
                 <td className="font-semibold">{t.name}</td>
                 <td className="font-mono text-primary text-xs">{t.startDate} → {t.endDate}</td>
                 <td>{t.location}</td>
@@ -588,3 +644,14 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
