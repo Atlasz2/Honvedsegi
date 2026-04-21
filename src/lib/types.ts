@@ -31,6 +31,13 @@ export interface Person {
   joinDate: string;
   notes: string;
   qualifications: string[];
+  completedOperations?: Array<{
+    operationId: string;
+    operationName: string;
+    success: boolean;
+    qualificationId: string;
+    date: string;
+  }>;
 }
 
 export interface ExerciseAssignment {
@@ -252,4 +259,19 @@ export interface OperationDocument {
   uploadedBy: string;
   uploadedAt: string;
   title: string;
+}
+
+export interface BugReport {
+  id: string;
+  title: string;
+  description: string;
+  page: string;
+  severity: "low" | "normal" | "high" | "critical";
+  status: "open" | "resolved";
+  reportedBy: string;
+  reportedByName: string;
+  createdAt: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  screenshotData?: string | null;
 }

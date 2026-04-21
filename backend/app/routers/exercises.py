@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import _apply_exercise, _get_current_user, _require_editor, _require_model, _serialize_exercise
 from ..models import ExerciseModel, UserModel
+from ..services.lifecycle import sync_temporal_statuses
 from ..schemas import ExerciseCreate, ExerciseRead, ExerciseUpdate
 
 router = APIRouter(prefix="/api/exercises", tags=["exercises"])
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/api/exercises", tags=["exercises"])
 
 @router.get("", response_model=list[ExerciseRead])
 def list_exercises(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+    sync_temporal_statuses(db)
     return [_serialize_exercise(i) for i in db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()]
 
 

@@ -157,6 +157,12 @@ export default function Dashboard() {
   const selectedTemplate = REPORT_TEMPLATES.find((item) => item.value === reportTemplate) ?? REPORT_TEMPLATES[0];
 
   const todayIso = new Date().toISOString().slice(0, 10);
+  const windowEnd = new Date();
+  windowEnd.setDate(windowEnd.getDate() + 14);
+  const windowEndIso = windowEnd.toISOString().slice(0, 10);
+  const intersectsUpcomingWindow = (startDate: string, endDate: string) => (
+    startDate.slice(0, 10) <= windowEndIso && endDate.slice(0, 10) >= todayIso
+  );
   const onDutyToday = dutiesData
     .filter((d) => d.status !== "Lemondva" && d.startDate.slice(0, 10) <= todayIso && d.endDate.slice(0, 10) >= todayIso)
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -168,19 +174,16 @@ export default function Dashboard() {
 
 
   const upcomingExs = exs
-    .filter((e) => e.status === "Tervezett" || e.status === "Folyamatban")
-    .sort((a, b) => a.startDate.localeCompare(b.startDate))
-    .slice(0, 3);
+    .filter((e) => (e.status === "Tervezett" || e.status === "Folyamatban") && intersectsUpcomingWindow(e.startDate, e.endDate))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   const upcomingTrainings = trainingsData
-    .filter((t) => t.status === "Tervezett" || t.status === "Folyamatban")
-    .sort((a, b) => a.startDate.localeCompare(b.startDate))
-    .slice(0, 3);
+    .filter((t) => (t.status === "Tervezett" || t.status === "Folyamatban") && intersectsUpcomingWindow(t.startDate, t.endDate))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   const upcomingEvents = eventsData
-    .filter((e) => e.status === "Tervezett" || e.status === "Folyamatban")
-    .sort((a, b) => a.startDate.localeCompare(b.startDate))
-    .slice(0, 3);
+    .filter((e) => (e.status === "Tervezett" || e.status === "Folyamatban") && intersectsUpcomingWindow(e.startDate, e.endDate))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   const handlePreview = async () => {
     try {

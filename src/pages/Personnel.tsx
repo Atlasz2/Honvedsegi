@@ -360,7 +360,7 @@ export default function Personnel() {
         </div>
       </div>
 
-      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Személy szerkesztése' : 'Új személy'}>
+      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Személy szerkesztése' : 'Új személy'} preventCloseWhenDirty isDirty={form.name !== '' || form.sztsz !== '' || form.email !== '' || form.phone !== '' || form.birthDate !== '' || form.joinDate !== '' || form.notes !== '' || form.address !== '' || form.beosztas !== ''} doubleOutsideClickWhenDirty>
         <div className="space-y-3">
           <FormField label="Név" field="name" form={form} setForm={setForm} errors={errors} required />
           <FormField label="SZTSz" field="sztsz" form={form} setForm={setForm} errors={errors} required maxLength={8} />

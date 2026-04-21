@@ -70,6 +70,7 @@ class PersonModel(Base):
     join_date: Mapped[str] = mapped_column(String, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     qualifications: Mapped[list[str]] = mapped_column(JSON, default=list)
+    completed_operations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class EventModel(Base):
@@ -249,3 +250,20 @@ class ActivityLogModel(Base):
 
 
 
+
+
+class BugReportModel(Base):
+    __tablename__ = "bug_reports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    title: Mapped[str] = mapped_column(String, index=True)
+    description: Mapped[str] = mapped_column(Text)
+    page: Mapped[str] = mapped_column(String, default="")
+    severity: Mapped[str] = mapped_column(String, index=True, default="normal")
+    status: Mapped[str] = mapped_column(String, index=True, default="open")
+    reported_by: Mapped[str] = mapped_column(String, index=True)
+    reported_by_name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    screenshot_data: Mapped[str | None] = mapped_column(Text, nullable=True)

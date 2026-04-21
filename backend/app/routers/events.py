@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import _apply_event, _get_current_user, _require_editor, _require_model, _serialize_event
 from ..models import EventModel, UserModel
+from ..services.lifecycle import sync_temporal_statuses
 from ..schemas import EventCreate, EventRead, EventUpdate
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 
 @router.get("", response_model=list[EventRead])
 def list_events(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+    sync_temporal_statuses(db)
     return [_serialize_event(i) for i in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()]
 
 

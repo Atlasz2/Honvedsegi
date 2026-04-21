@@ -17,7 +17,8 @@ const navItems = [
   { path: '/inventory', label: 'Készletek', icon: Package },
   { path: '/vehicles', label: 'Járművek', icon: Truck },
   { path: '/announcements', label: 'Hírek', icon: Megaphone },
-  { path: '/settings', label: 'Beállítások', icon: Settings, adminOnly: true },
+  { path: '/settings', label: 'Beállítások', icon: Settings },
+  { path: '/settings/rohaminformatikus', label: 'Rohaminformatikus', icon: ShieldAlert, adminOnly: true },
 ];
 
 const roleBadge: Record<string, string> = {
@@ -32,14 +33,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [devTapCount, setDevTapCount] = useState(0);
   const [showEasterEgg, setShowEasterEgg] = useState(false);
+  const [easterEggMessage, setEasterEggMessage] = useState('🍓 Málnás édesség unlocked!');
+  const [shieldTapCount, setShieldTapCount] = useState(0);
+  const [showShieldEgg, setShowShieldEgg] = useState(false);
   const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eggHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shieldResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shieldHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
 
   useEffect(() => {
     return () => {
       if (tapResetRef.current) clearTimeout(tapResetRef.current);
       if (eggHideRef.current) clearTimeout(eggHideRef.current);
+      if (shieldResetRef.current) clearTimeout(shieldResetRef.current);
+      if (shieldHideRef.current) clearTimeout(shieldHideRef.current);
     };
   }, []);
 
@@ -48,13 +56,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       const next = prev + 1;
 
       if (tapResetRef.current) clearTimeout(tapResetRef.current);
-      tapResetRef.current = setTimeout(() => setDevTapCount(0), 3000);
+      tapResetRef.current = setTimeout(() => setDevTapCount(0), 5000);
 
-      if (next >= 5) {
+      if (next >= 10) {
         if (tapResetRef.current) clearTimeout(tapResetRef.current);
+        setEasterEggMessage('🍓 Málnás édesség unlocked!');
         setShowEasterEgg(true);
         if (eggHideRef.current) clearTimeout(eggHideRef.current);
-        eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
+        eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 5000);
+        return 0;
+      }
+
+      return next;
+    });
+  };
+
+  const handleShieldLogoClick = () => {
+    setShieldTapCount(prev => {
+      const next = prev + 1;
+
+      if (shieldResetRef.current) clearTimeout(shieldResetRef.current);
+      shieldResetRef.current = setTimeout(() => setShieldTapCount(0), 5000);
+
+      if (next >= 10) {
+        if (shieldResetRef.current) clearTimeout(shieldResetRef.current);
+        setShowShieldEgg(true);
+        if (shieldHideRef.current) clearTimeout(shieldHideRef.current);
+        shieldHideRef.current = setTimeout(() => setShowShieldEgg(false), 5000);
         return 0;
       }
 
@@ -63,6 +91,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
+
     <div className="flex min-h-screen bg-background">
       {/* Sidebar */}
       <aside
@@ -71,7 +100,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       >
         {/* Logo */}
         <div className={`h-14 flex items-center border-b border-border px-3 ${collapsed ? 'justify-center' : 'gap-2'}`}>
-          <ShieldIcon className="w-6 h-6 text-primary flex-shrink-0" />
+          <button type="button" onClick={handleShieldLogoClick} className="p-0 m-0 bg-transparent cursor-default" title="Logo"><ShieldIcon className="w-6 h-6 text-primary flex-shrink-0" /></button>
           {!collapsed && (
             <div>
               <span className="text-lg font-bold font-rajdhani tracking-military-wide text-primary">HONVÉD</span>
@@ -141,8 +170,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </button>
 
           {showEasterEgg && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md" style={{ borderRadius: '2px' }}>
-              🍓 Málnás édesség unlocked!
+            <button
+              type="button"
+              onClick={() => setEasterEggMessage('szeretünk ricsi bácsi')}
+              className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md"
+              style={{ borderRadius: '2px' }}
+            >
+              {easterEggMessage}
+            </button>
+          )}
+
+          {showShieldEgg && (
+            <div className="fixed top-16 left-6 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md" style={{ borderRadius: '2px' }}>
+              🍌📞 Banántelefon
             </div>
           )}
         </main>

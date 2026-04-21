@@ -377,6 +377,7 @@ export default function Events() {
         title={editing ? 'Esemény szerkesztése' : 'Új esemény'}
         preventCloseWhenDirty
         isDirty={form.name !== '' || form.location !== '' || form.organizer !== '' || form.description !== '' || form.startDate !== '' || form.endDate !== ''}
+        doubleOutsideClickWhenDirty
       >
         <div className="space-y-3">
           <div>

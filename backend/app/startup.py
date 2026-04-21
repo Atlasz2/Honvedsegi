@@ -220,6 +220,8 @@ def _ensure_extended_schema(db: Session) -> None:
     personnel_cols = {row[1] for row in db.execute(text("PRAGMA table_info(personnel)")).fetchall()}
     if "qualifications" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN qualifications JSON"))
+    if "completed_operations" not in personnel_cols:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN completed_operations JSON"))
     if "beosztas" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN beosztas TEXT"))
 
@@ -236,8 +238,39 @@ def _ensure_extended_schema(db: Session) -> None:
         db.execute(text("ALTER TABLE activity_logs ADD COLUMN payload JSON"))
 
     db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
+    db.execute(text("UPDATE personnel SET completed_operations = '[]' WHERE completed_operations IS NULL"))
     db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))
     db.execute(text("UPDATE trainings SET qualification_id = '' WHERE qualification_id IS NULL"))
     db.execute(text("UPDATE duties SET assigned = '[]' WHERE assigned IS NULL"))
+
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS bug_reports (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                page TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'normal',
+                status TEXT NOT NULL DEFAULT 'open',
+                reported_by TEXT NOT NULL,
+                reported_by_name TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME NULL,
+                resolved_by TEXT NULL
+            )
+            """
+        )
+    )
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_bug_reports_severity ON bug_reports(severity)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_bug_reports_status ON bug_reports(status)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_bug_reports_reported_by ON bug_reports(reported_by)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_bug_reports_created_at ON bug_reports(created_at)"))
+    # Add screenshot_data column if table already existed without it
+    try:
+        db.execute(text("ALTER TABLE bug_reports ADD COLUMN screenshot_data TEXT"))
+    except Exception:
+        pass
+
     db.commit()
 

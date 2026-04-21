@@ -16,6 +16,7 @@ import {
   OperationTreeNode,
   User,
   Vehicle,
+  BugReport,
 } from './types';
 
 const defaultApiBase = "/api";
@@ -293,6 +294,19 @@ export const activityLog = {
   restore: (id: string) => request<ActivityLogEntry>(`/activity-log/${id}/restore`, { method: 'POST' }),
 };
 
+
+
+export const bugReports = {
+  getAll: () => request<BugReport[]>('/bug-reports'),
+  getSummary: () => request<{ openCount: number; resolvedCount: number; criticalOpen: number }>('/bug-reports/summary'),
+  create: (payload: { title: string; description: string; page?: string; severity?: BugReport['severity']; screenshotData?: string }) =>
+    request<BugReport>('/bug-reports', { method: 'POST', body: JSON.stringify(payload) }),
+  updateStatus: (id: string, status: BugReport['status']) =>
+    request<BugReport>(`/bug-reports/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  updateAdmin: (id: string, payload: { status?: BugReport['status']; severity?: BugReport['severity'] }) =>
+    request<BugReport>(`/bug-reports/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+};
+
 export function logAction(
   userName: string,
   userId: string,
@@ -381,9 +395,14 @@ export async function viewDocument(id: string, docId: string): Promise<{ url: st
   if (!response.ok) {
     throw new Error('Megtekintés sikertelen');
   }
+  const headerMime = response.headers.get('Content-Type')?.trim() ?? '';
   const blob = await response.blob();
+  const blobMime = blob.type?.trim() ?? '';
+  const mimeType = !blobMime || blobMime === 'application/octet-stream'
+    ? (headerMime || 'application/octet-stream')
+    : blobMime;
   const url = window.URL.createObjectURL(blob);
-  return { url, mimeType: blob.type || 'application/octet-stream' };
+  return { url, mimeType };
 }
 
 export async function createOperation(payload: Omit<import('./types').OperationTreeNode, 'id' | 'children'>): Promise<import('./types').AppEvent> {

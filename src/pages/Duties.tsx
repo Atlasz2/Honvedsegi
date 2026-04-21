@@ -45,6 +45,8 @@ export default function DutiesPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [dutySearch, setDutySearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [personSearch, setPersonSearch] = useState('');
   const [addPersonId, setAddPersonId] = useState('');
   const [addPersonRole, setAddPersonRole] = useState('szolgálattevő');
@@ -92,6 +94,10 @@ export default function DutiesPage() {
     if (dateTo && start > dateTo) return false;
     return true;
   });
+
+  const sortedFiltered = [...filtered].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
+  const pagedRows = sortedFiltered.slice((page - 1) * pageSize, page * pageSize);
 
   const activePpl = personnelData
     .filter(p => p.status === 'Aktív' || p.status === 'Tartalékos')
@@ -227,6 +233,16 @@ export default function DutiesPage() {
     return filtered.filter(d => d.startDate.slice(0, 10) <= dateStr && d.endDate.slice(0, 10) >= dateStr);
   };
 
+  useEffect(() => {
+    setPage(1);
+  }, [dutySearch, filter, dateFrom, dateTo, pageSize, view]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -261,26 +277,59 @@ export default function DutiesPage() {
       </div>
 
       {view === 'table' ? (
-        <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
-          <table className="w-full mil-table">
-            <thead><tr><th>Dátum</th><th>Típus</th><th>Helyszín</th><th>Személyek</th><th>Státusz</th>{canEdit && <th>Műveletek</th>}</tr></thead>
-            <tbody>
-              {filtered.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
-              {filtered.sort((a, b) => a.startDate.localeCompare(b.startDate)).map(d => (
-                <tr key={d.id} className="cursor-pointer" onClick={() => setDetail(d)}>
-                  <td className="font-mono text-primary text-xs">{d.startDate.replace('T', ' ')} → {d.endDate.replace('T', ' ')}</td>
-                  <td><span className="mono-chip">{d.type}</span></td>
-                  <td>{d.location}</td>
-                  <td className="text-brass">{(d.assigned || []).map(a => a.personName).join(', ') || d.personName}</td>
-                  <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[d.status]}`} style={{ borderRadius: '2px' }}>{d.status}</span></td>
-                  {canEdit && <td onClick={e => e.stopPropagation()}><div className="flex gap-1">
-                    <button onClick={() => openEdit(d)} className="p-1.5 text-primary hover:bg-primary/10"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => setDeleteTarget(d)} className="p-1.5 text-destructive hover:bg-destructive/10"><Trash2 className="w-3.5 h-3.5" /></button>
-                  </div></td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
+            <table className="w-full mil-table">
+              <thead><tr><th>Dátum</th><th>Típus</th><th>Helyszín</th><th>Személyek</th><th>Státusz</th>{canEdit && <th>Műveletek</th>}</tr></thead>
+              <tbody>
+                {sortedFiltered.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
+                {pagedRows.map(d => (
+                  <tr key={d.id} className="cursor-pointer" onClick={() => setDetail(d)}>
+                    <td className="font-mono text-primary text-xs">{d.startDate.replace('T', ' ')} → {d.endDate.replace('T', ' ')}</td>
+                    <td><span className="mono-chip">{d.type}</span></td>
+                    <td>{d.location}</td>
+                    <td className="text-brass">{(d.assigned || []).map(a => a.personName).join(', ') || d.personName}</td>
+                    <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[d.status]}`} style={{ borderRadius: '2px' }}>{d.status}</span></td>
+                    {canEdit && <td onClick={e => e.stopPropagation()}><div className="flex gap-1">
+                      <button onClick={() => openEdit(d)} className="p-1.5 text-primary hover:bg-primary/10"><Pencil className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setDeleteTarget(d)} className="p-1.5 text-destructive hover:bg-destructive/10"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div></td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs">
+              <label className="uppercase tracking-military text-muted-foreground">Oldalméret</label>
+              <select
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+                className="bg-input border border-border px-2 py-1.5 text-xs"
+                style={{ borderRadius: '2px' }}
+              >
+                {[10, 20, 50].map(size => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                disabled={page <= 1}
+                className="btn-mil-secondary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Előző
+              </button>
+              <span className="text-xs font-mono text-muted-foreground">{page} / {totalPages}</span>
+              <button
+                onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={page >= totalPages}
+                className="btn-mil-secondary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Következő
+              </button>
+            </div>
+          </div>
         </div>
       ) : (
         <div>
@@ -332,6 +381,7 @@ export default function DutiesPage() {
         title={editing ? 'Szolgálat szerkesztése' : 'Új szolgálat'}
         preventCloseWhenDirty
         isDirty={form.startDate !== '' || form.endDate !== '' || form.location !== '' || form.assigned.length > 0 || form.notes !== ''}
+        doubleOutsideClickWhenDirty
       >
         <div className="space-y-3">
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus</label><select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>

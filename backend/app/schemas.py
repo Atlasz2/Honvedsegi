@@ -34,6 +34,8 @@ ActivityAction = Literal["létrehozva", "módosítva", "törölve"]
 SupplyMoveType = Literal["Bevételezés", "Kiadás", "Visszavétel", "Selejtezés", "Korrekció"]
 AttendanceStatus = Literal["Present", "Excused", "Absent", "Pending"]
 RequirementStatus = Literal["Requested", "Approved", "Fulfilled"]
+BugSeverity = Literal["low", "normal", "high", "critical"]
+BugStatus = Literal["open", "resolved"]
 
 
 class ORMModel(BaseModel):
@@ -94,6 +96,7 @@ class PersonBase(BaseModel):
     joinDate: str = ""
     notes: str = ""
     qualifications: list[str] = Field(default_factory=list)
+    completedOperations: list[dict] = Field(default_factory=list)
 
 
 class PersonCreate(PersonBase):
@@ -411,6 +414,34 @@ class ActivityLogRead(BaseModel):
     module: str
     recordName: str
     payload: dict | None = None
+
+
+class BugReportCreate(BaseModel):
+    title: str
+    description: str
+    page: str = ""
+    severity: BugSeverity = "normal"
+    screenshotData: str | None = None
+
+
+class BugReportUpdate(BaseModel):
+    status: BugStatus | None = None
+    severity: BugSeverity | None = None
+
+
+class BugReportRead(BaseModel):
+    id: str
+    title: str
+    description: str
+    page: str
+    severity: BugSeverity
+    status: BugStatus
+    reportedBy: str
+    reportedByName: str
+    createdAt: str
+    resolvedAt: str | None = None
+    resolvedBy: str | None = None
+    screenshotData: str | None = None
 
 
 class OperationTreeNode(BaseModel):

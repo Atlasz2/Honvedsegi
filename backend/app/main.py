@@ -15,7 +15,7 @@ from .seed import seed_database
 from .startup import _enforce_single_god_user, _ensure_default_access_users, _ensure_extended_schema, _ensure_operations_hierarchy_schema, _ensure_personnel_sztsz_schema
 
 from .routers import (
-    activity_log, announcements, auth, duties, equipment,
+    activity_log, announcements, auth, bug_reports, duties, equipment,
     events, exercises, imports, operations, personnel,
     reports, supplies, trainings, users, vehicles,
 )
@@ -79,7 +79,7 @@ async def security_headers_middleware(request: Request, call_next):
 
 for _router_module in (
     auth, users, personnel, exercises, trainings, events,
-    operations, equipment, supplies, vehicles, duties,
+    operations, bug_reports, equipment, supplies, vehicles, duties,
     announcements, activity_log, reports, imports,
 ):
     app.include_router(_router_module.router)

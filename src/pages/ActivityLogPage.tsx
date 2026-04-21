@@ -82,13 +82,17 @@ function payloadChanges(payload?: Record<string, unknown> | null): string[] {
   const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
   return keys
     .filter((key) => !SKIP_KEYS.includes(key) && JSON.stringify(before[key]) !== JSON.stringify(after[key]))
-    .map((key) => `${FIELD_LABELS[key] || key}: "${formatValue(before[key])}" -> "${formatValue(after[key])}"`);
+    .map((key) => `${FIELD_LABELS[key] || key}: „${formatValue(before[key])}” → „${formatValue(after[key])}”`);
 }
 
-function actionSummary(action: ActivityLogEntry['action']): string {
-  if (action === 'létrehozva') return 'Rekord létrehozva';
-  if (action === 'módosítva') return 'Rekord módosítva';
-  return 'Rekord törölve';
+function buildSummary(entry: ActivityLogEntry): string {
+  const verbMap: Record<ActivityLogEntry['action'], string> = {
+    létrehozva: 'létrehozta',
+    módosítva: 'módosította',
+    törölve: 'törölte',
+  };
+  const time = new Date(entry.timestamp).toLocaleString('hu-HU', { dateStyle: 'long', timeStyle: 'short' });
+  return `${entry.userName} ${time}-kor ${verbMap[entry.action]} a(z) „${entry.recordName}” elemet (${entry.module}).`;
 }
 
 type GroupedByModule = {
@@ -257,7 +261,7 @@ export default function ActivityLogPage() {
                             <th>Időpont</th>
                             <th>Felhasználó</th>
                             <th>Művelet</th>
-                            <th>Rekord</th>
+                            <th>Rekord neve</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -266,7 +270,7 @@ export default function ActivityLogPage() {
                               <td className="font-mono text-primary text-xs">{new Date(l.timestamp).toLocaleString('hu-HU')}</td>
                               <td className="text-brass">{l.userName}</td>
                               <td><span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${actionClass[l.action]}`} style={{ borderRadius: '2px' }}>{l.action}</span></td>
-                              <td>{`${l.userName} ${actionLabel[l.action]}: ${l.recordName}`}</td>
+                              <td className="text-foreground">{l.recordName}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -290,15 +294,15 @@ export default function ActivityLogPage() {
             <div><span className="text-muted-foreground text-xs uppercase tracking-military">Rekord</span><p className="mt-1">{detail.recordName}</p></div>
 
             <div>
-              <span className="text-muted-foreground text-xs uppercase tracking-military">Mi tortent?</span>
+              <span className="text-muted-foreground text-xs uppercase tracking-military">Mi történt?</span>
               <div className="mt-1 p-2 bg-input border border-border text-[12px]" style={{ borderRadius: '2px' }}>
-                <p>{actionSummary(detail.action)}</p>
+                <p className="text-foreground leading-relaxed">{buildSummary(detail)}</p>
               </div>
             </div>
 
             {payloadChanges(detail.payload).length > 0 ? (
               <div>
-                <span className="text-muted-foreground text-xs uppercase tracking-military">Reszletek</span>
+                <span className="text-muted-foreground text-xs uppercase tracking-military">Változások részletei</span>
                 <div className="mt-1 p-2 bg-input border border-border text-[12px] space-y-1" style={{ borderRadius: '2px' }}>
                   {payloadChanges(detail.payload).map((line) => <p key={line}>{line}</p>)}
                 </div>

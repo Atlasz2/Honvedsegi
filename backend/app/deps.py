@@ -11,12 +11,12 @@ from sqlalchemy.orm import Session
 from .constants import GOD_USERNAME, GOD_ROLE, MAX_FAILED_LOGINS, LOCKOUT_MINUTES
 from .db import get_db
 from .models import (
-    ActivityLogModel, AnnouncementModel, DutyModel, EquipmentModel,
+    ActivityLogModel, AnnouncementModel, BugReportModel, DutyModel, EquipmentModel,
     EventModel, ExerciseModel, LoginAttemptModel, PersonModel,
     SessionTokenModel, SupplyModel, TrainingModel, UserModel, VehicleModel,
 )
 from .schemas import (
-    ActivityLogRead, AnnouncementRead, AuthUser,
+    ActivityLogRead, AnnouncementRead, AuthUser, BugReportRead,
     DutyCreate, DutyRead, DutyUpdate,
     EquipmentCreate, EquipmentRead, EquipmentUpdate,
     EventCreate, EventRead, EventUpdate,
@@ -204,6 +204,7 @@ def _serialize_person(item: PersonModel) -> PersonRead:
         joinDate=item.join_date,
         notes=item.notes,
         qualifications=item.qualifications or [],
+        completedOperations=item.completed_operations or [],
     )
 
 
@@ -458,3 +459,20 @@ def _apply_duty(target: DutyModel, payload: DutyCreate | DutyUpdate) -> None:
     target.status = payload.status
 
 
+
+
+def _serialize_bug_report(item: BugReportModel) -> BugReportRead:
+    return BugReportRead(
+        id=item.id,
+        title=item.title,
+        description=item.description,
+        page=item.page or "",
+        severity=item.severity,
+        status=item.status,
+        reportedBy=item.reported_by,
+        reportedByName=item.reported_by_name,
+        createdAt=item.created_at.isoformat(),
+        resolvedAt=item.resolved_at.isoformat() if item.resolved_at else None,
+        resolvedBy=item.resolved_by,
+        screenshotData=item.screenshot_data,
+    )

@@ -17,6 +17,7 @@ import Duties from "@/pages/Duties";
 import Announcements from "@/pages/Announcements";
 import SettingsPage from "@/pages/SettingsPage";
 import ActivityLogPage from "@/pages/ActivityLogPage";
+import RohamInformatikusPage from "@/pages/RohamInformatikusPage";
 
 const queryClient = new QueryClient();
 
@@ -39,7 +40,8 @@ function AppRoutes() {
         <Route path="/vehicles" element={<Vehicles />} />
         <Route path="/duties" element={<Duties />} />
         <Route path="/announcements" element={<Announcements />} />
-        {isAdmin && <Route path="/settings" element={<SettingsPage />} />}
+        <Route path="/settings" element={<SettingsPage />} />
+        {isAdmin && <Route path="/settings/rohaminformatikus" element={<RohamInformatikusPage />} />}
         {isAdmin && <Route path="/activity-log" element={<ActivityLogPage />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
