@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
-import { exercises, trainings, getErrorMessage } from "@/lib/store";
-import type { Exercise, Training } from "@/lib/types";
+import { exercises, trainings, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, type LocationConflict } from "@/lib/store";
+import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DatePickerInput from "@/components/DatePickerInput";
+import DateTimePickerInput from "@/components/DateTimePickerInput";
+import { shortRank, rankWeight } from "@/lib/rank";
 import { toast } from "sonner";
 
 type OperationStatus = "Tervezett" | "Folyamatban" | "Befejezett" | "Törölve";
@@ -38,8 +41,21 @@ type CreateForm = {
   status: OperationStatus;
 };
 
+type EditForm = {
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  organizer: string;
+  maxPersonnel: number;
+  description: string;
+  status: OperationStatus;
+};
+
 const STATUSES: OperationStatus[] = ["Tervezett", "Folyamatban", "Befejezett", "Törölve"];
 const TRAINING_STATUSES: Array<Exclude<OperationStatus, "Törölve">> = ["Tervezett", "Folyamatban", "Befejezett"];
+const ATTENDANCE = ["Tervezett", "Megjelent", "Hiányzott", "Beteg"] as const;
 
 const emptyCreateForm: CreateForm = {
   source: "exercise",
@@ -104,10 +120,12 @@ function normalizeTraining(item: Training): OperationItem {
 
 export default function Operations() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { canEdit } = useAuth();
+  const { canEdit, user } = useAuth();
 
   const [data, setData] = useState<OperationItem[]>([]);
+  const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
+  const [rawTrainings, setRawTrainings] = useState<Training[]>([]);
+  const [personnelData, setPersonnelData] = useState<Person[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
   const [sourceFilter, setSourceFilter] = useState<"all" | OperationSource>("all");
@@ -122,8 +140,42 @@ export default function Operations() {
   const [form, setForm] = useState<CreateForm>(emptyCreateForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const [editing, setEditing] = useState<OperationItem | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett" });
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+
+  const [deleteTarget, setDeleteTarget] = useState<OperationItem | null>(null);
+  const [addPersonId, setAddPersonId] = useState("");
+  const [addPersonRole, setAddPersonRole] = useState("résztvevő");
+  const [personSearch, setPersonSearch] = useState("");
+
+  const [createConflicts, setCreateConflicts] = useState<LocationConflict[]>([]);
+  const [editConflicts, setEditConflicts] = useState<LocationConflict[]>([]);
+
   const detailRef = useRef<OperationItem | null>(null);
   detailRef.current = detail;
+
+  useEffect(() => {
+    if (!creating) { setCreateConflicts([]); return; }
+    if (!form.location.trim() || !form.startDate || !form.endDate) { setCreateConflicts([]); return; }
+    const timer = setTimeout(() => {
+      void checkLocationConflicts(form.location, form.startDate, form.endDate)
+        .then(setCreateConflicts)
+        .catch(() => setCreateConflicts([]));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [creating, form.location, form.startDate, form.endDate]);
+
+  useEffect(() => {
+    if (!editing) { setEditConflicts([]); return; }
+    if (!editForm.location.trim() || !editForm.startDate || !editForm.endDate) { setEditConflicts([]); return; }
+    const timer = setTimeout(() => {
+      void checkLocationConflicts(editForm.location, editForm.startDate, editForm.endDate, editing.source, editing.id)
+        .then(setEditConflicts)
+        .catch(() => setEditConflicts([]));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [editing, editForm.location, editForm.startDate, editForm.endDate]);
 
   const formatDate = (value: string) => {
     const parsed = new Date(value);
@@ -133,7 +185,14 @@ export default function Operations() {
 
   const refresh = useCallback(async () => {
     try {
-      const [exerciseData, trainingData] = await Promise.all([exercises.getAll(), trainings.getAll()]);
+      const [exerciseData, trainingData, pData] = await Promise.all([
+        exercises.getAll(),
+        trainings.getAll(),
+        pStore.getAll(),
+      ]);
+      setRawExercises(exerciseData);
+      setRawTrainings(trainingData);
+      setPersonnelData(pData);
       const merged = [...exerciseData.map(normalizeExercise), ...trainingData.map(normalizeTraining)]
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(merged);
@@ -161,6 +220,7 @@ export default function Operations() {
     if (sourceParam === "exercise" || sourceParam === "training") setSourceFilter(sourceParam);
     else setSourceFilter("all");
   }, [location.search]);
+
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
@@ -211,6 +271,169 @@ export default function Operations() {
     if (found) setDetail(found);
   }, [location.state, data]);
 
+  const activePpl = useMemo(
+    () =>
+      personnelData
+        .filter((p) => p.status === "Aktív" || p.status === "Tartalékos")
+        .sort((a, b) => rankWeight(b.rank) - rankWeight(a.rank) || a.name.localeCompare(b.name, "hu")),
+    [personnelData],
+  );
+
+  // ── Résztvevő-kezelés ──────────────────────────────────────────────────────
+
+  const addPerson = async () => {
+    if (!detail || !addPersonId) return;
+    const p = personnelData.find((x) => x.id === addPersonId);
+    if (!p) return;
+    try {
+      if (detail.source === "exercise") {
+        const raw = rawExercises.find((e) => e.id === detail.id);
+        if (!raw) return;
+        const newAssignment: ExerciseAssignment = {
+          personId: p.id, personName: p.name, role: addPersonRole,
+          attendance: "Tervezett", rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz,
+        };
+        await exercises.update({ ...raw, assigned: [...raw.assigned, newAssignment] });
+      } else {
+        const raw = rawTrainings.find((t) => t.id === detail.id);
+        if (!raw) return;
+        const newAssignment: TrainingAssignment = {
+          personId: p.id, personName: p.name, attendance: "Tervezett",
+          qualificationApproved: false, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz,
+        };
+        await trainings.update({ ...raw, assigned: [...raw.assigned, newAssignment] });
+      }
+      setAddPersonId("");
+      setAddPersonRole("résztvevő");
+      setPersonSearch("");
+      await refresh();
+      toast.success("Személy hozzáadva");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const removePerson = async (personId: string) => {
+    if (!detail) return;
+    try {
+      if (detail.source === "exercise") {
+        const raw = rawExercises.find((e) => e.id === detail.id);
+        if (!raw) return;
+        await exercises.update({ ...raw, assigned: raw.assigned.filter((a) => a.personId !== personId) });
+      } else {
+        const raw = rawTrainings.find((t) => t.id === detail.id);
+        if (!raw) return;
+        await trainings.update({ ...raw, assigned: raw.assigned.filter((a) => a.personId !== personId) });
+      }
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const updateAttendance = async (personId: string, att: string) => {
+    if (!detail) return;
+    const attendanceVal = att as "Tervezett" | "Megjelent" | "Hiányzott" | "Beteg";
+    try {
+      if (detail.source === "exercise") {
+        const raw = rawExercises.find((e) => e.id === detail.id);
+        if (!raw) return;
+        await exercises.update({
+          ...raw,
+          assigned: raw.assigned.map((a) => a.personId === personId ? { ...a, attendance: attendanceVal } : a),
+        });
+      } else {
+        const raw = rawTrainings.find((t) => t.id === detail.id);
+        if (!raw) return;
+        await trainings.update({
+          ...raw,
+          assigned: raw.assigned.map((a) => a.personId === personId ? { ...a, attendance: attendanceVal } : a),
+        });
+      }
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  // ── Szerkesztés ────────────────────────────────────────────────────────────
+
+  const openEdit = (item: OperationItem) => {
+    const organizer = item.source === "training"
+      ? (rawTrainings.find((t) => t.id === item.id)?.organizer ?? "")
+      : "";
+    setEditForm({
+      name: item.name, type: item.type,
+      startDate: item.startDate, endDate: item.endDate,
+      location: item.location, organizer,
+      maxPersonnel: item.maxPersonnel, description: item.description,
+      status: item.status,
+    });
+    setEditErrors({});
+    setEditing(item);
+  };
+
+  const handleEdit = async () => {
+    if (!editing) return;
+    const errs: Record<string, string> = {};
+    if (!editForm.name.trim()) errs.name = "Kötelező";
+    if (!editForm.startDate) errs.startDate = "Kötelező";
+    if (!editForm.endDate) errs.endDate = "Kötelező";
+    if (editForm.startDate && editForm.endDate && editForm.endDate < editForm.startDate) errs.endDate = "Vége >= Kezdete";
+    setEditErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    try {
+      if (editing.source === "exercise") {
+        const raw = rawExercises.find((e) => e.id === editing.id);
+        if (!raw) return;
+        await exercises.update({
+          ...raw, name: editForm.name, type: editForm.type,
+          startDate: editForm.startDate, endDate: editForm.endDate,
+          location: editForm.location, maxPersonnel: editForm.maxPersonnel,
+          description: editForm.description, status: editForm.status as Exercise["status"],
+        });
+        await logAction(user!.displayName, user!.username, "módosítva", "Műveletek", editForm.name);
+      } else {
+        const raw = rawTrainings.find((t) => t.id === editing.id);
+        if (!raw) return;
+        const trainingStatus = editForm.status === "Törölve" ? "Tervezett" : editForm.status;
+        await trainings.update({
+          ...raw, name: editForm.name, type: editForm.type,
+          startDate: editForm.startDate, endDate: editForm.endDate,
+          location: editForm.location, organizer: editForm.organizer,
+          maxPersonnel: editForm.maxPersonnel, description: editForm.description,
+          status: trainingStatus as Training["status"],
+        });
+        await logAction(user!.displayName, user!.username, "módosítva", "Műveletek", editForm.name);
+      }
+      toast.success("Sikeresen mentve");
+      setEditing(null);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      if (deleteTarget.source === "exercise") {
+        await exercises.remove(deleteTarget.id);
+      } else {
+        await trainings.remove(deleteTarget.id);
+      }
+      await logAction(user!.displayName, user!.username, "törölve", "Műveletek", deleteTarget.name);
+      toast.success("Törölve");
+      setDetail(null);
+      setDeleteTarget(null);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  // ── Létrehozás ─────────────────────────────────────────────────────────────
+
   const validateCreate = () => {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = "Kötelező";
@@ -224,34 +447,21 @@ export default function Operations() {
 
   const handleCreate = async () => {
     if (!validateCreate()) return;
-
     try {
       const common = {
-        name: form.name.trim(),
-        type: form.type.trim(),
-        startDate: form.startDate,
-        endDate: form.endDate,
-        location: form.location.trim(),
-        maxPersonnel: form.maxPersonnel,
+        name: form.name.trim(), type: form.type.trim(),
+        startDate: form.startDate, endDate: form.endDate,
+        location: form.location.trim(), maxPersonnel: form.maxPersonnel,
         description: form.description.trim(),
       };
-
       if (form.source === "exercise") {
-        await exercises.add({
-          ...common,
-          status: form.status,
-          assigned: [],
-        });
+        await exercises.add({ ...common, status: form.status, assigned: [] });
+        await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
       } else {
         const trainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
-        await trainings.add({
-          ...common,
-          organizer: form.organizer.trim(),
-          status: trainingStatus,
-          assigned: [],
-        });
+        await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: "" });
+        await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
       }
-
       toast.success("Művelet létrehozva");
       setCreating(false);
       setForm(emptyCreateForm);
@@ -382,6 +592,7 @@ export default function Operations() {
         </>
       )}
 
+      {/* ── Létrehozás modal ──────────────────────────────────────────────── */}
       <Modal open={creating} onClose={() => setCreating(false)} title="Új művelet hozzáadása">
         <div className="space-y-3">
           <div>
@@ -431,6 +642,14 @@ export default function Operations() {
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
             <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            {createConflicts.length > 0 && (
+              <div className="mt-2 p-2 border border-yellow-600/50 bg-yellow-600/10 text-xs font-mono">
+                <p className="text-yellow-500 mb-1">⚠ Helyszínütközés ({createConflicts.length} esemény):</p>
+                {createConflicts.map((c) => (
+                  <p key={c.eventId} className="text-muted-foreground">• {c.eventName} ({c.startDate} → {c.endDate})</p>
+                ))}
+              </div>
+            )}
           </div>
 
           {form.source === "training" && (
@@ -465,7 +684,8 @@ export default function Operations() {
         </div>
       </Modal>
 
-      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.name || ""} wide>
+      {/* ── Részletek + hozzárendelés modal ──────────────────────────────── */}
+      <Modal open={!!detail && !editing} onClose={() => { setDetail(null); setPersonSearch(""); }} title={detail?.name || ""} wide>
         {detail && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -484,41 +704,204 @@ export default function Operations() {
             </div>
 
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Szerep / Jelenlét</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Név</th>
+                  <th>Rendfokozat / SZTSZ</th>
+                  <th>{detail.source === "exercise" ? "Beosztás" : "Jelenlét"}</th>
+                  {canEdit && <th></th>}
+                </tr>
+              </thead>
               <tbody>
-                {detail.assigned.length === 0 && <tr><td colSpan={2} className="text-muted-foreground text-xs py-4">Nincs hozzárendelt személy</td></tr>}
+                {detail.assigned.length === 0 && (
+                  <tr><td colSpan={canEdit ? 4 : 3} className="text-muted-foreground text-xs py-4">Nincs hozzárendelt személy</td></tr>
+                )}
                 {detail.assigned.map((a, idx) => {
+                  const personId = String(a.personId ?? "");
                   const name = String(a.personName ?? "Ismeretlen");
-                  const roleOrAttendance = String(a.role ?? a.attendance ?? "-");
+                  const rankLabel = String(a.rankShort ?? a.rank ?? "-");
+                  const sztszLabel = String(a.sztsz ?? "-");
+                  const att = String(a.attendance ?? "Tervezett");
+                  const role = String(a.role ?? "-");
                   return (
-                    <tr key={`${name}-${idx}`}>
+                    <tr key={`${personId}-${idx}`}>
                       <td>{name}</td>
-                      <td className="text-brass font-mono text-xs">{roleOrAttendance}</td>
+                      <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
+                      <td>
+                        {canEdit ? (
+                          <select
+                            value={att}
+                            onChange={(e) => { void updateAttendance(personId, e.target.value); }}
+                            className="bg-input border border-border px-2 py-1 text-xs"
+                            style={{ borderRadius: "2px" }}
+                          >
+                            {ATTENDANCE.map((at) => <option key={at} value={at}>{at}</option>)}
+                          </select>
+                        ) : (
+                          <span className="text-brass font-mono text-xs">
+                            {detail.source === "exercise" ? role : att}
+                          </span>
+                        )}
+                      </td>
+                      {canEdit && (
+                        <td>
+                          <button onClick={() => { void removePerson(personId); }} className="text-destructive text-xs hover:underline">
+                            Eltávolítás
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
 
-            <div className="flex justify-end gap-2 pt-2">
+            {canEdit && (
+              <div className="flex gap-2 items-end pt-2">
+                <div className="flex-1">
+                  <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Személy hozzáadása</label>
+                  <input
+                    placeholder="Szűrés név/rang/sztsz..."
+                    value={personSearch}
+                    onChange={(e) => setPersonSearch(e.target.value)}
+                    className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1"
+                    style={{ borderRadius: "2px" }}
+                  />
+                  <select
+                    value={addPersonId}
+                    onChange={(e) => setAddPersonId(e.target.value)}
+                    className="w-full bg-input border border-border px-3 py-2 text-sm"
+                    style={{ borderRadius: "2px" }}
+                  >
+                    <option value="">Válassz...</option>
+                    {activePpl
+                      .filter((p) =>
+                        !detail.assigned.some((a) => String(a.personId) === p.id) &&
+                        (personSearch === "" ||
+                          p.name.toLowerCase().includes(personSearch.toLowerCase()) ||
+                          p.rank.toLowerCase().includes(personSearch.toLowerCase()) ||
+                          p.sztsz.includes(personSearch))
+                      )
+                      .slice(0, 50)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.rank}) – {p.sztsz}</option>
+                      ))}
+                  </select>
+                </div>
+                {detail.source === "exercise" && (
+                  <div className="w-40">
+                    <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Beosztás</label>
+                    <input
+                      value={addPersonRole}
+                      onChange={(e) => setAddPersonRole(e.target.value)}
+                      className="w-full bg-input border border-border px-3 py-2 text-sm"
+                      style={{ borderRadius: "2px" }}
+                    />
+                  </div>
+                )}
+                <button onClick={() => { void addPerson(); }} className="btn-mil-primary text-xs">Hozzáadás</button>
+              </div>
+            )}
+
+            <div className="flex justify-between pt-2">
+              <button onClick={() => { setDetail(null); setPersonSearch(""); }} className="btn-mil-secondary text-xs">Bezárás</button>
               {canEdit && (
-                <button
-                  onClick={() => {
-                    navigate(`/operations?source=${detail.source}`, {
-                      state: { openOperationId: detail.id, openOperationSource: detail.source },
-                    });
-                    setDetail(null);
-                  }}
-                  className="btn-mil-secondary text-xs"
-                >
-                  Szerkesztés / Hozzárendelés
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => openEdit(detail)} className="btn-mil-secondary text-xs">Szerkesztés</button>
+                  <button onClick={() => setDeleteTarget(detail)} className="btn-mil-danger text-xs">Törlés</button>
+                </div>
               )}
-              <button onClick={() => setDetail(null)} className="btn-mil-secondary text-xs">Bezárás</button>
             </div>
           </div>
         )}
       </Modal>
+
+      {/* ── Szerkesztés modal ──────────────────────────────────────────────── */}
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="Művelet szerkesztése">
+        {editing && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megnevezés *</label>
+              <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              {editErrors.name && <p className="text-destructive text-xs mt-1">{editErrors.name}</p>}
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Alkategória</label>
+              <input value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label>
+                <DateTimePickerInput value={editForm.startDate} onChange={(value) => setEditForm({ ...editForm, startDate: value })} />
+                {editErrors.startDate && <p className="text-destructive text-xs mt-1">{editErrors.startDate}</p>}
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label>
+                <DateTimePickerInput value={editForm.endDate} onChange={(value) => setEditForm({ ...editForm, endDate: value })} />
+                {editErrors.endDate && <p className="text-destructive text-xs mt-1">{editErrors.endDate}</p>}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
+              <input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              {editConflicts.length > 0 && (
+                <div className="mt-2 p-2 border border-yellow-600/50 bg-yellow-600/10 text-xs font-mono">
+                  <p className="text-yellow-500 mb-1">⚠ Helyszínütközés ({editConflicts.length} esemény):</p>
+                  {editConflicts.map((c) => (
+                    <p key={c.eventId} className="text-muted-foreground">• {c.eventName} ({c.startDate} → {c.endDate})</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {editing.source === "training" && (
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
+                <input value={editForm.organizer} onChange={(e) => setEditForm({ ...editForm, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
+              <input type="number" value={editForm.maxPersonnel} onChange={(e) => setEditForm({ ...editForm, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
+              <select
+                value={editForm.status}
+                onChange={(e) => setEditForm({ ...editForm, status: e.target.value as OperationStatus })}
+                className="w-full bg-input border border-border px-3 py-2 text-sm"
+                style={{ borderRadius: "2px" }}
+              >
+                {(editing.source === "exercise" ? STATUSES : TRAINING_STATUSES).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>
+              <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: "2px" }} />
+            </div>
+
+            <div className="flex gap-3 justify-end pt-4">
+              <button onClick={() => setEditing(null)} className="btn-mil-secondary text-xs">Mégsem</button>
+              <button onClick={() => { void handleEdit(); }} className="btn-mil-primary text-xs">Mentés</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => { void handleDelete(); }}
+        message={`Biztosan törli a következőt: „${deleteTarget?.name}"? Ez a művelet nem visszavonható.`}
+      />
     </div>
   );
 }

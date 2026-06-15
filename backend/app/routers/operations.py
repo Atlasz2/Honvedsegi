@@ -1,11 +1,11 @@
 from __future__ import annotations
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import _get_current_user, _parse_iso_date, _utc_now
-from ..models import DutyModel, ExerciseModel, TrainingModel, UserModel
+from ..deps import _get_current_user, _parse_iso_date, _serialize_exercise, _serialize_training, _utc_now
+from ..models import DutyModel, ExerciseModel, ParticipantModel, TrainingModel, UserModel
 from ..schemas import OperationRead
 
 router = APIRouter(prefix="/api/operations", tags=["operations"])
@@ -17,18 +17,20 @@ def list_operations(db: Session = Depends(get_db), _: UserModel = Depends(_get_c
     trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
     ops = []
     for ex in exercises:
+        ser = _serialize_exercise(db, ex)
         ops.append(OperationRead(
             id=ex.id, name=ex.name, type=ex.type, operationType="exercise",
             startDate=ex.start_date, endDate=ex.end_date, location=ex.location,
             organizer=None, maxPersonnel=ex.max_personnel, description=ex.description,
-            status=ex.status, assigned=ex.assigned or [],
+            status=ex.status, assigned=ser.assigned,
         ))
     for tr in trainings:
+        ser = _serialize_training(db, tr)
         ops.append(OperationRead(
             id=tr.id, name=tr.name, type=tr.type, operationType="training",
             startDate=tr.start_date, endDate=tr.end_date, location=tr.location,
             organizer=tr.organizer or "", maxPersonnel=tr.max_personnel,
-            description=tr.description, status=tr.status, assigned=tr.assigned or [],
+            description=tr.description, status=tr.status, assigned=ser.assigned,
         ))
     ops.sort(key=lambda x: x.startDate)
     return ops
@@ -67,10 +69,16 @@ def operations_summary(
             continue
         if not any(kw in (item.location or "").lower() for kw in shooting_kw):
             continue
+        participant_count = db.execute(
+            select(func.count()).select_from(ParticipantModel).where(
+                ParticipantModel.event_type == "exercise",
+                ParticipantModel.event_id == item.id,
+            )
+        ).scalar() or 0
         next_week_shooting.append({
             "id": item.id, "name": item.name, "startDate": item.start_date,
             "endDate": item.end_date, "location": item.location, "status": item.status,
-            "assignedCount": len(item.assigned or []), "maxPersonnel": item.max_personnel,
+            "assignedCount": participant_count, "maxPersonnel": item.max_personnel,
         })
 
     plus14_duties = []

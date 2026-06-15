@@ -1,0 +1,354 @@
+"""
+Adatmodell-migráció: JSON tömbök → relációs táblák.
+
+Futtatás: automatikusan, az alkalmazás indulásakor (startup.py hívja).
+Idempotens – biztonságos többször is futtatni.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from datetime import date, timedelta
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from .models import (
+    ParticipantModel,
+    PersonnelQualificationModel,
+    QualificationTypeModel,
+    new_id,
+)
+
+log = logging.getLogger(__name__)
+
+# ── segédfüggvények ────────────────────────────────────────────────────────────
+
+def _table_exists(db: Session, name: str) -> bool:
+    row = db.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:n"),
+        {"n": name},
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(db: Session, table: str, column: str) -> bool:
+    rows = db.execute(text(f"PRAGMA table_info({table})")).fetchall()
+    return any(r[1] == column for r in rows)
+
+
+def _migration_done(db: Session, key: str) -> bool:
+    if not _table_exists(db, "db_migrations"):
+        return False
+    row = db.execute(
+        text("SELECT 1 FROM db_migrations WHERE key=:k"), {"k": key}
+    ).fetchone()
+    return row is not None
+
+
+def _mark_done(db: Session, key: str) -> None:
+    db.execute(
+        text("INSERT OR IGNORE INTO db_migrations (key) VALUES (:k)"), {"k": key}
+    )
+    db.commit()
+
+
+# ── migration 0: meta tábla ────────────────────────────────────────────────────
+
+def _ensure_migrations_table(db: Session) -> None:
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS db_migrations "
+        "(key TEXT PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))"
+    ))
+    db.commit()
+
+
+# ── migration 1: participants tábla feltöltése ─────────────────────────────────
+
+def _migrate_participants(db: Session) -> None:
+    key = "v1_participants_from_json"
+    if _migration_done(db, key):
+        return
+
+    log.info("Migráció: JSON assigned → participants tábla")
+    count = 0
+
+    for event_type, table in [("exercise", "exercises"), ("training", "trainings"), ("event", "events")]:
+        if not _table_exists(db, table):
+            continue
+        if not _column_exists(db, table, "assigned"):
+            continue
+
+        rows = db.execute(text(f"SELECT id, assigned FROM {table}")).fetchall()
+        for row in rows:
+            event_id, assigned_json = row[0], row[1]
+            if not assigned_json:
+                continue
+            try:
+                assigned = json.loads(assigned_json) if isinstance(assigned_json, str) else assigned_json
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(assigned, list):
+                continue
+
+            for item in assigned:
+                if not isinstance(item, dict):
+                    continue
+                personnel_id = item.get("personId") or item.get("personnel_id", "")
+                if not personnel_id:
+                    continue
+                # Már létezik-e?
+                existing = db.execute(
+                    text("SELECT id FROM participants WHERE event_type=:et AND event_id=:eid AND personnel_id=:pid"),
+                    {"et": event_type, "eid": event_id, "pid": personnel_id},
+                ).fetchone()
+                if existing:
+                    continue
+                db.execute(text(
+                    "INSERT INTO participants "
+                    "(id, event_type, event_id, personnel_id, person_name, rank, rank_short, sztsz, role, status, qualification_approved, notes) "
+                    "VALUES (:id,:et,:eid,:pid,:pn,:rk,:rks,:sz,:rl,:st,:qa,:no)"
+                ), {
+                    "id": new_id(),
+                    "et": event_type,
+                    "eid": event_id,
+                    "pid": personnel_id,
+                    "pn": item.get("personName") or item.get("person_name", ""),
+                    "rk": item.get("rank", ""),
+                    "rks": item.get("rankShort", ""),
+                    "sz": item.get("sztsz", ""),
+                    "rl": item.get("role", ""),
+                    "st": item.get("attendance") or item.get("status", "Tervezett"),
+                    "qa": 1 if item.get("qualificationApproved") else 0,
+                    "no": item.get("notes", ""),
+                })
+                count += 1
+
+    # duties
+    if _table_exists(db, "duties") and _column_exists(db, "duties", "assigned"):
+        rows = db.execute(text("SELECT id, assigned FROM duties")).fetchall()
+        for row in rows:
+            event_id, assigned_json = row[0], row[1]
+            if not assigned_json:
+                continue
+            try:
+                assigned = json.loads(assigned_json) if isinstance(assigned_json, str) else assigned_json
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(assigned, list):
+                continue
+            for item in assigned:
+                if not isinstance(item, dict):
+                    continue
+                personnel_id = item.get("personId", "")
+                if not personnel_id:
+                    continue
+                existing = db.execute(
+                    text("SELECT id FROM participants WHERE event_type='duty' AND event_id=:eid AND personnel_id=:pid"),
+                    {"eid": event_id, "pid": personnel_id},
+                ).fetchone()
+                if existing:
+                    continue
+                db.execute(text(
+                    "INSERT INTO participants "
+                    "(id, event_type, event_id, personnel_id, person_name, rank, rank_short, sztsz, role, status, qualification_approved, notes) "
+                    "VALUES (:id,'duty',:eid,:pid,:pn,:rk,:rks,:sz,'',:st,0,'')"
+                ), {
+                    "id": new_id(),
+                    "eid": event_id,
+                    "pid": personnel_id,
+                    "pn": item.get("personName", ""),
+                    "rk": item.get("rank", ""),
+                    "rks": item.get("rankShort", ""),
+                    "sz": item.get("sztsz", ""),
+                    "st": item.get("status", "Tervezett"),
+                })
+                count += 1
+
+    db.commit()
+    _mark_done(db, key)
+    log.info("Participants migráció kész: %d bejegyzés", count)
+
+
+# ── migration 2: personnel képesítések ────────────────────────────────────────
+
+def _migrate_qualifications(db: Session) -> None:
+    key = "v1_qualifications_from_json"
+    if _migration_done(db, key):
+        return
+
+    if not _table_exists(db, "personnel") or not _column_exists(db, "personnel", "qualifications"):
+        _mark_done(db, key)
+        return
+
+    log.info("Migráció: JSON qualifications → qualification_types + personnel_qualifications")
+
+    rows = db.execute(text("SELECT id, qualifications FROM personnel")).fetchall()
+    count = 0
+
+    for person_id, qual_json in rows:
+        if not qual_json:
+            continue
+        try:
+            quals = json.loads(qual_json) if isinstance(qual_json, str) else qual_json
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(quals, list):
+            continue
+
+        for q in quals:
+            name = str(q).strip() if q else ""
+            if not name:
+                continue
+
+            # Típus létezik már?
+            existing_type = db.execute(
+                text("SELECT id FROM qualification_types WHERE name=:n"), {"n": name}
+            ).fetchone()
+            if existing_type:
+                type_id = existing_type[0]
+            else:
+                type_id = new_id()
+                db.execute(text(
+                    "INSERT INTO qualification_types (id, name, category, validity_days, description) "
+                    "VALUES (:id,:name,'Általános',NULL,'')"
+                ), {"id": type_id, "name": name})
+
+            # Személynek már megvan?
+            existing_pq = db.execute(
+                text("SELECT id FROM personnel_qualifications WHERE personnel_id=:pid AND qual_type_id=:qid"),
+                {"pid": person_id, "qid": type_id},
+            ).fetchone()
+            if existing_pq:
+                continue
+
+            db.execute(text(
+                "INSERT INTO personnel_qualifications "
+                "(id, personnel_id, qual_type_id, earned_date, expiry_date, source_event_id, source_event_type, notes) "
+                "VALUES (:id,:pid,:qid,:ed,NULL,NULL,NULL,'Migrált adat – kérjük ellenőrizd a dátumot')"
+            ), {
+                "id": new_id(),
+                "pid": person_id,
+                "qid": type_id,
+                "ed": date.today().isoformat(),
+            })
+            count += 1
+
+    db.commit()
+    _mark_done(db, key)
+    log.info("Qualifications migráció kész: %d bejegyzés (dátumok ellenőrzést igényelnek)", count)
+
+
+# ── migration 3: alap képesítés-típusok ───────────────────────────────────────
+
+_DEFAULT_QUAL_TYPES = [
+    {"id": "alapkikepzes",  "name": "Alapkiképzés",           "category": "Kiképzés",     "validity_days": None},
+    {"id": "elsosegely",    "name": "Elsősegély",              "category": "Egészségügyi", "validity_days": 3 * 365},
+    {"id": "loveszeti",     "name": "Lövészeti",               "category": "Harcászati",   "validity_days": 365},
+    {"id": "szakmai",       "name": "Szakmai kiképzés",        "category": "Kiképzés",     "validity_days": None},
+    {"id": "parancsnoki",   "name": "Parancsnoki tanfolyam",   "category": "Parancsnoki",  "validity_days": None},
+    {"id": "loter_bm",      "name": "Békeműveleti lőgyakorlat","category": "Harcászati",   "validity_days": 90},
+    {"id": "nbc",           "name": "NBC védelmi kiképzés",    "category": "Különleges",   "validity_days": 2 * 365},
+    {"id": "jarmuvezeto",   "name": "Katonai gépjárjogosítvány","category": "Logisztika",  "validity_days": None},
+]
+
+
+def _seed_default_qual_types(db: Session) -> None:
+    key = "v1_seed_default_qual_types"
+    if _migration_done(db, key):
+        return
+    for qt in _DEFAULT_QUAL_TYPES:
+        existing = db.execute(
+            text("SELECT id FROM qualification_types WHERE id=:i"), {"i": qt["id"]}
+        ).fetchone()
+        if existing:
+            continue
+        db.execute(text(
+            "INSERT INTO qualification_types (id, name, category, validity_days, description) "
+            "VALUES (:id,:name,:cat,:vd,'')"
+        ), {"id": qt["id"], "name": qt["name"], "cat": qt["category"], "vd": qt["validity_days"]})
+    db.commit()
+    _mark_done(db, key)
+
+
+# ── migration 4: képesítések a befejezett kiképzésekből ────────────────────────
+
+def _migrate_qualifications_from_trainings(db: Session) -> None:
+    key = "v1_qualifications_from_trainings"
+    if _migration_done(db, key):
+        return
+    if not _table_exists(db, "trainings") or not _column_exists(db, "trainings", "assigned"):
+        _mark_done(db, key)
+        return
+
+    log.info("Migráció: befejezett kiképzések → personnel_qualifications")
+    count = 0
+
+    rows = db.execute(
+        text("SELECT id, qualification_id, end_date, assigned FROM trainings WHERE status='Befejezett'")
+    ).fetchall()
+
+    for training_id, qual_id, end_date, assigned_json in rows:
+        if not qual_id or not qual_id.strip():
+            continue
+        qt_row = db.execute(
+            text("SELECT id, validity_days FROM qualification_types WHERE id=:i"), {"i": qual_id}
+        ).fetchone()
+        if not qt_row:
+            continue
+        qt_id, validity_days = qt_row
+        earned = end_date or date.today().isoformat()
+        try:
+            earned_date = date.fromisoformat(earned[:10])
+        except ValueError:
+            earned_date = date.today()
+        expiry: str | None = None
+        if validity_days:
+            expiry = (earned_date + timedelta(days=validity_days)).isoformat()
+
+        try:
+            assigned = json.loads(assigned_json) if isinstance(assigned_json, str) else assigned_json
+        except (json.JSONDecodeError, TypeError):
+            assigned = []
+        if not isinstance(assigned, list):
+            continue
+
+        for item in assigned:
+            if not isinstance(item, dict):
+                continue
+            if item.get("attendance") != "Megjelent":
+                continue
+            if not item.get("qualificationApproved"):
+                continue
+            person_id = item.get("personId", "")
+            if not person_id:
+                continue
+            existing = db.execute(
+                text("SELECT id FROM personnel_qualifications WHERE personnel_id=:pid AND qual_type_id=:qid AND source_event_id=:eid"),
+                {"pid": person_id, "qid": qt_id, "eid": training_id},
+            ).fetchone()
+            if existing:
+                continue
+            db.execute(text(
+                "INSERT INTO personnel_qualifications "
+                "(id, personnel_id, qual_type_id, earned_date, expiry_date, source_event_id, source_event_type, notes) "
+                "VALUES (:id,:pid,:qid,:ed,:exp,:eid,'training','')"
+            ), {
+                "id": new_id(), "pid": person_id, "qid": qt_id,
+                "ed": earned_date.isoformat(), "exp": expiry, "eid": training_id,
+            })
+            count += 1
+
+    db.commit()
+    _mark_done(db, key)
+    log.info("Képesítés-migráció kiképzésekből: %d bejegyzés", count)
+
+
+# ── belépési pont ──────────────────────────────────────────────────────────────
+
+def run_all(db: Session) -> None:
+    _ensure_migrations_table(db)
+    _seed_default_qual_types(db)
+    _migrate_participants(db)
+    _migrate_qualifications(db)
+    _migrate_qualifications_from_trainings(db)

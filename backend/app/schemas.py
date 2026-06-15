@@ -409,6 +409,118 @@ class ActivityLogRead(BaseModel):
 
 
 
+# ── Képesítés-típusok ──────────────────────────────────────────────────────────
+
+class QualificationTypeBase(BaseModel):
+    name: str
+    category: str
+    validityDays: int | None = None
+    description: str = ""
+
+
+class QualificationTypeCreate(QualificationTypeBase):
+    pass
+
+
+class QualificationTypeUpdate(QualificationTypeBase):
+    pass
+
+
+class QualificationTypeRead(QualificationTypeBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+
+
+# ── Személyi képesítések ───────────────────────────────────────────────────────
+
+class PersonnelQualificationBase(BaseModel):
+    personnelId: str
+    qualTypeId: str
+    earnedDate: str
+    expiryDate: str | None = None
+    sourceEventId: str | None = None
+    sourceEventType: str | None = None
+    notes: str = ""
+
+
+class PersonnelQualificationCreate(PersonnelQualificationBase):
+    pass
+
+
+class PersonnelQualificationUpdate(BaseModel):
+    earnedDate: str
+    expiryDate: str | None = None
+    sourceEventId: str | None = None
+    sourceEventType: str | None = None
+    notes: str = ""
+
+
+class PersonnelQualificationRead(ORMModel):
+    id: str
+    personnelId: str
+    qualTypeId: str
+    qualTypeName: str
+    qualTypeCategory: str
+    validityDays: int | None = None
+    earnedDate: str
+    expiryDate: str | None = None
+    sourceEventId: str | None = None
+    sourceEventType: str | None = None
+    notes: str = ""
+    isExpired: bool = False
+    daysUntilExpiry: int | None = None
+
+
+# ── Résztvevők ─────────────────────────────────────────────────────────────────
+
+ParticipantStatus = Literal[
+    "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva"
+]
+
+
+class ParticipantBase(BaseModel):
+    personnelId: str
+    personName: str
+    rank: str = ""
+    rankShort: str = ""
+    sztsz: str = ""
+    role: str = ""
+    status: ParticipantStatus = "Tervezett"
+    qualificationApproved: bool = False
+    notes: str = ""
+
+
+class ParticipantCreate(ParticipantBase):
+    pass
+
+
+class ParticipantUpdate(BaseModel):
+    status: ParticipantStatus
+    role: str = ""
+    qualificationApproved: bool = False
+    notes: str = ""
+
+
+class ParticipantRead(ParticipantBase):
+    id: str
+
+
+# ── Figyelmeztetések ──────────────────────────────────────────────────────────
+
+class QualificationAlert(BaseModel):
+    personnelId: str
+    personnelName: str
+    rank: str
+    unit: str
+    qualificationId: str
+    qualTypeName: str
+    qualTypeCategory: str
+    earnedDate: str
+    expiryDate: str
+    daysUntilExpiry: int
+    isExpired: bool
+
+
 class ImportIssue(BaseModel):
     line: int
     message: str

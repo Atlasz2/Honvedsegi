@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
-import { exercises, duties, trainings, events, reports, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
-import type { Exercise, Duty, Training, AppEvent } from "@/lib/types";
-import { Users, Crosshair, FileText, BookOpen, Calendar } from "lucide-react";
+import { exercises, duties, trainings, events, reports, qualificationAlerts, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
+import type { Exercise, Duty, Training, AppEvent, QualificationAlert } from "@/lib/types";
+import { Users, Crosshair, FileText, BookOpen, Calendar, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 type ReportTemplate = "overview" | "operations" | "duties" | "events" | "focus";
@@ -37,6 +37,7 @@ export default function Dashboard() {
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
   const [dutiesData, setDutiesData] = useState<Duty[]>([]);
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
+  const [alertsData, setAlertsData] = useState<QualificationAlert[]>([]);
   const [showOnDutyDetails, setShowOnDutyDetails] = useState(false);
   const [showOngoingExercises, setShowOngoingExercises] = useState(false);
   const [showOngoingTrainings, setShowOngoingTrainings] = useState(false);
@@ -56,16 +57,18 @@ export default function Dashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextExs, nextEvents, nextDuties, nextTrainings] = await Promise.all([
+      const [nextExs, nextEvents, nextDuties, nextTrainings, nextAlerts] = await Promise.all([
         exercises.getAll(),
         events.getAll(),
         duties.getAll(),
         trainings.getAll(),
+        qualificationAlerts.getAlerts(30),
       ]);
       setExs(nextExs);
       setEventsData(nextEvents);
       setDutiesData(nextDuties);
       setTrainingsData(nextTrainings);
+      setAlertsData(nextAlerts);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -333,6 +336,46 @@ export default function Dashboard() {
                 <p className="text-xs"><span className="text-brass">Szervező:</span> {item.organizer || "-"}</p>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {alertsData.length > 0 && (
+        <div className="bg-card border border-destructive/50 mb-6 p-4" style={{ borderRadius: "2px" }}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive" />
+              <h2 className="text-sm uppercase tracking-military font-mono text-destructive">
+                Képesítési figyelmeztetések ({alertsData.length})
+              </h2>
+            </div>
+            <button onClick={() => navigate("/figyelmeztetesek")} className="btn-mil-secondary text-xs">
+              Összes megtekintése
+            </button>
+          </div>
+          <div className="space-y-1">
+            {alertsData
+              .sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry)
+              .slice(0, 5)
+              .map((a) => (
+                <div
+                  key={`${a.personnelId}-${a.qualificationId}`}
+                  className="flex items-center justify-between border border-border/50 px-3 py-2 text-xs cursor-pointer hover:bg-secondary transition-colors"
+                  style={{ borderRadius: "2px" }}
+                  onClick={() => navigate("/figyelmeztetesek")}
+                >
+                  <span className="font-medium">{a.personnelName}</span>
+                  <span className="text-muted-foreground mx-2">{a.qualTypeName}</span>
+                  <span className={`font-mono px-2 py-0.5 ${a.isExpired ? "badge-cancelled" : a.daysUntilExpiry <= 14 ? "badge-ongoing" : "badge-planned"}`} style={{ borderRadius: "2px" }}>
+                    {a.isExpired ? `Lejárt ${Math.abs(a.daysUntilExpiry)} napja` : `${a.daysUntilExpiry} nap`}
+                  </span>
+                </div>
+              ))}
+            {alertsData.length > 5 && (
+              <p className="text-xs text-muted-foreground font-mono pt-1">
+                + {alertsData.length - 5} további figyelmeztetés
+              </p>
+            )}
           </div>
         </div>
       )}

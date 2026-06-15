@@ -17,6 +17,7 @@ import Duties from "@/pages/Duties";
 import Announcements from "@/pages/Announcements";
 import SettingsPage from "@/pages/SettingsPage";
 import ActivityLogPage from "@/pages/ActivityLogPage";
+import Alerts from "@/pages/Alerts";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +40,7 @@ function AppRoutes() {
         <Route path="/vehicles" element={<Vehicles />} />
         <Route path="/duties" element={<Duties />} />
         <Route path="/announcements" element={<Announcements />} />
+        <Route path="/figyelmeztetesek" element={<Alerts />} />
         {isAdmin && <Route path="/settings" element={<SettingsPage />} />}
         {isAdmin && <Route path="/activity-log" element={<ActivityLogPage />} />}
         <Route path="*" element={<Navigate to="/" replace />} />

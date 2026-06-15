@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { exercises as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
+import { exercises as store, personnel as pStore, checkLocationConflicts, logAction, getErrorMessage, type LocationConflict } from '@/lib/store';
 import { Exercise, ExerciseAssignment, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { rankWeight, shortRank } from '@/lib/rank';
@@ -41,6 +41,7 @@ export default function Exercises() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [personSearch, setPersonSearch] = useState('');
+  const [formConflicts, setFormConflicts] = useState<LocationConflict[]>([]);
 
   const detailRef = useRef<Exercise | null>(null);
   detailRef.current = detail;
@@ -72,6 +73,17 @@ export default function Exercises() {
     const found = data.find(item => item.id === navState.openExerciseId);
     if (found) setDetail(found);
   }, [location.state, data]);
+
+  useEffect(() => {
+    if (!creating && !editing) { setFormConflicts([]); return; }
+    if (!form.location.trim() || !form.startDate || !form.endDate) { setFormConflicts([]); return; }
+    const timer = setTimeout(() => {
+      void checkLocationConflicts(form.location, form.startDate, form.endDate, 'exercise', editing?.id)
+        .then(setFormConflicts)
+        .catch(() => setFormConflicts([]));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [creating, editing, form.location, form.startDate, form.endDate]);
   const filtered = data.filter(e => {
     const normalizedSearch = search.trim().toLowerCase();
     if (normalizedSearch && ![e.name, e.type, e.location, e.description].some(value => value?.toLowerCase().includes(normalizedSearch))) return false;
@@ -367,6 +379,14 @@ export default function Exercises() {
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
             <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} />
+            {formConflicts.length > 0 && (
+              <div className="mt-2 p-2 border border-yellow-600/50 bg-yellow-600/10 text-xs font-mono">
+                <p className="text-yellow-500 mb-1">⚠ Helyszínütközés ({formConflicts.length} esemény):</p>
+                {formConflicts.map(c => (
+                  <p key={c.eventId} className="text-muted-foreground">• {c.eventName} ({c.startDate} → {c.endDate})</p>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tervezett létszám</label>

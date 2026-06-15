@@ -3,8 +3,9 @@ import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut
+  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing,
 } from 'lucide-react';
+import { qualificationAlerts } from '@/lib/store';
 
 const navItems = [
   { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
@@ -17,6 +18,7 @@ const navItems = [
   { path: '/inventory', label: 'Készletek', icon: Package },
   { path: '/vehicles', label: 'Járművek', icon: Truck },
   { path: '/announcements', label: 'Hírek', icon: Megaphone },
+  { path: '/figyelmeztetesek', label: 'Figyelmeztetések', icon: BellRing, alertBadge: true },
   { path: '/settings', label: 'Beállítások', icon: Settings, adminOnly: true },
 ];
 
@@ -30,6 +32,21 @@ const roleBadge: Record<string, string> = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAdmin } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    const fetchAlertCount = async () => {
+      try {
+        const data = await qualificationAlerts.getAlerts(60);
+        setAlertCount(data.length);
+      } catch {
+        // silently ignore — badge simply shows 0
+      }
+    };
+    void fetchAlertCount();
+    const iv = setInterval(() => { void fetchAlertCount(); }, 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, []);
   const [devTapCount, setDevTapCount] = useState(0);
   const [showEasterEgg, setShowEasterEgg] = useState(false);
   const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,6 +102,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {navItems.map(item => {
             if (item.adminOnly && !isAdmin) return null;
             const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path) || (item.path === '/settings' && location.pathname === '/activity-log');
+            const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;
             return (
               <NavLink
                 key={item.path}
@@ -97,8 +115,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 style={{ borderRadius: '2px' }}
                 title={collapsed ? item.label : undefined}
               >
-                <item.icon className="w-5 h-5 flex-shrink-0" />
-                {!collapsed && <span className="font-rajdhani font-medium tracking-wide">{item.label}</span>}
+                <span className="relative flex-shrink-0">
+                  <item.icon className="w-5 h-5" />
+                  {collapsed && badge > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 bg-destructive text-[10px] text-white font-mono flex items-center justify-center" style={{ borderRadius: '2px' }}>
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
+                </span>
+                {!collapsed && <span className="font-rajdhani font-medium tracking-wide flex-1">{item.label}</span>}
+                {!collapsed && badge > 0 && (
+                  <span className="px-1.5 py-0.5 bg-destructive text-[10px] text-white font-mono" style={{ borderRadius: '2px' }}>
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
               </NavLink>
             );
           })}

@@ -6,6 +6,11 @@ import {
   Equipment,
   Exercise,
   Person,
+  PersonHistoryEntry,
+  PersonnelQualification,
+  QualificationAlert,
+  QualificationStat,
+  QualificationType,
   Supply,
   Training,
   AppEvent,
@@ -225,7 +230,65 @@ export const personnel = {
     if (params.sortDir) query.set('sort_dir', params.sortDir);
     return request<PersonnelPagedResult>(`/personnel/paged?${query.toString()}`);
   },
+  getHistory: (id: string) => request<PersonHistoryEntry[]>(`/personnel/${id}/history`),
 };
+
+export const qualificationTypes = {
+  getAll: () => request<QualificationType[]>('/qualifications/types'),
+  create: (payload: Omit<QualificationType, 'id'>) =>
+    request<QualificationType>('/qualifications/types', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (id: string, payload: Omit<QualificationType, 'id'>) =>
+    request<QualificationType>(`/qualifications/types/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (id: string) => request<void>(`/qualifications/types/${id}`, { method: 'DELETE' }),
+};
+
+export const personnelQualifications = {
+  getForPerson: (personId: string) =>
+    request<PersonnelQualification[]>(`/qualifications/personnel/${personId}`),
+  add: (personId: string, payload: {
+    personnelId: string; qualTypeId: string; earnedDate: string;
+    expiryDate?: string | null; sourceEventId?: string | null;
+    sourceEventType?: string | null; notes?: string;
+  }) => request<PersonnelQualification>(`/qualifications/personnel/${personId}`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  update: (personId: string, qualId: string, payload: {
+    earnedDate: string; expiryDate?: string | null;
+    sourceEventId?: string | null; sourceEventType?: string | null; notes?: string;
+  }) => request<PersonnelQualification>(`/qualifications/personnel/${personId}/${qualId}`, {
+    method: 'PUT', body: JSON.stringify(payload),
+  }),
+  remove: (personId: string, qualId: string) =>
+    request<void>(`/qualifications/personnel/${personId}/${qualId}`, { method: 'DELETE' }),
+};
+
+export const qualificationAlerts = {
+  getAlerts: (daysAhead = 60) =>
+    request<QualificationAlert[]>(`/qualifications/alerts?days_ahead=${daysAhead}`),
+  getStats: () => request<QualificationStat[]>('/qualifications/stats'),
+};
+
+export type LocationConflict = {
+  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventId: string;
+  eventName: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+};
+
+export function checkLocationConflicts(
+  location: string,
+  startDate: string,
+  endDate: string,
+  excludeType?: string,
+  excludeId?: string,
+): Promise<LocationConflict[]> {
+  const params = new URLSearchParams({ location, start_date: startDate, end_date: endDate });
+  if (excludeType) params.set('exclude_type', excludeType);
+  if (excludeId) params.set('exclude_id', excludeId);
+  return request<LocationConflict[]>(`/conflicts?${params.toString()}`);
+}
 export const exercises = createCrud<Exercise>('/exercises');
 export const trainings = createCrud<Training>('/trainings');
 export const events = createCrud<AppEvent>('/events');

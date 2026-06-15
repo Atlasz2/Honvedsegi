@@ -1,0 +1,6 @@
+# Fejlesztői/teszt függőségek (éles telepítéshez NEM kellenek).
+# Telepítés:  pip install -r requirements-dev.txt
+-r requirements.txt
+
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0   # a FastAPI TestClient ezt használja

@@ -19,7 +19,6 @@ def _pepper() -> bytes:
 
 
 def assert_password_strength(password: str) -> None:
-    return
     if len(password) < 14:
         raise ValueError("A jelszónak legalább 14 karakter hosszúnak kell lennie")
     checks = {

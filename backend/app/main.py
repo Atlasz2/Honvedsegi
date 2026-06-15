@@ -12,12 +12,14 @@ from .constants import BACKEND_ENV, IS_PRODUCTION
 from .db import Base, SessionLocal, engine, get_db
 from .deps import _utc_now
 from .seed import seed_database
+from .migrate import run_all as run_migrations
 from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _ensure_extended_schema
+from .static_serving import mount_frontend
 
 from .routers import (
-    activity_log, announcements, auth, duties, equipment,
+    activity_log, announcements, auth, conflicts, duties, equipment,
     events, exercises, imports, operations, personnel,
-    reports, supplies, trainings, users, vehicles,
+    qualifications, reports, supplies, trainings, users, vehicles,
 )
 
 
@@ -70,7 +72,10 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Cache-Control"] = "no-store"
+    # API responses carry sensitive data and must never be cached. Static frontend
+    # assets manage their own caching policy in SPAStaticFiles (see static_serving).
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
@@ -80,7 +85,7 @@ async def security_headers_middleware(request: Request, call_next):
 for _router_module in (
     auth, users, personnel, exercises, trainings, events,
     operations, equipment, supplies, vehicles, duties,
-    announcements, activity_log, reports, imports,
+    announcements, activity_log, qualifications, reports, imports, conflicts,
 ):
     app.include_router(_router_module.router)
 
@@ -94,6 +99,7 @@ def on_startup() -> None:
         _ensure_personnel_sztsz_schema(db)
         _ensure_extended_schema(db)
         _enforce_single_god_user(db)
+        run_migrations(db)
 
 # ── Health ─────────────────────────────────────────────────────────────────
 
@@ -104,3 +110,8 @@ def health(db: Session = Depends(get_db)) -> dict[str, str]:
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Adatbázis nem elérhető: {exc}") from exc
     return {"status": "ok", "environment": BACKEND_ENV, "time": _utc_now().isoformat()}
+
+# ── Frontend ───────────────────────────────────────────────────────────────
+# Mounted last so the API routes above take precedence over the SPA catch-all.
+
+mount_frontend(app)

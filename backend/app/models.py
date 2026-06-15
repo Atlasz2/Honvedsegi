@@ -184,6 +184,49 @@ class DutyModel(Base):
     status: Mapped[str] = mapped_column(String, index=True)
 
 
+class QualificationTypeModel(Base):
+    """Képesítés-típus katalógus (pl. 'Alapkiképzés', 'Békeműveleti lőgyakorlat')."""
+    __tablename__ = "qualification_types"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    category: Mapped[str] = mapped_column(String, index=True)
+    validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+
+
+class PersonnelQualificationModel(Base):
+    """Egy személy által megszerzett képesítés, lejárattal és forrásesemény-hivatkozással."""
+    __tablename__ = "personnel_qualifications"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    qual_type_id: Mapped[str] = mapped_column(String, index=True)
+    earned_date: Mapped[str] = mapped_column(String, index=True)
+    expiry_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_event_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class ParticipantModel(Base):
+    """Egy személy részvétele egy eseményen (gyakorlat/kiképzés/esemény/ügyelet)."""
+    __tablename__ = "participants"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    event_type: Mapped[str] = mapped_column(String, index=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    person_name: Mapped[str] = mapped_column(String)
+    rank: Mapped[str] = mapped_column(String, default="")
+    rank_short: Mapped[str] = mapped_column(String, default="")
+    sztsz: Mapped[str] = mapped_column(String, default="")
+    role: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="Tervezett")
+    qualification_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
 class AnnouncementModel(Base):
     __tablename__ = "announcements"
 

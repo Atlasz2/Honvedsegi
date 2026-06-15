@@ -1,13 +1,13 @@
 @echo off
 
-:: 1. Ablak: Backend indítása PowerShell-ben
-start "FastAPI Backend" powershell -NoExit -Command "cd backend; $env:BACKEND_DEV_MASTER_PASSWORD='123'; uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+:: 1. Ablak: Backend ind?t?sa PowerShell-ben
+start "FastAPI Backend" powershell -NoExit -Command "$ErrorActionPreference='Stop'; Set-Location \"%~dp0backend\"; $env:BACKEND_ADMIN_PASSWORD='AdminTeszt_2026!'; $env:BACKEND_DEV_MASTER_PASSWORD='DevMaster_2026!'; & \"%~dp0.venv\Scripts\python.exe\" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
-:: 2. Ablak: Frontend indítása
+:: 2. Ablak: Frontend ind?t?sa
 start "NPM Frontend" cmd /k "npm run dev"
 
-:: 3. Alapértelmezett böngésző megnyitása
-:: Várjunk egy kicsit (opcionális), hogy a szerverek elinduljanak
+:: 3. Alap?rtelmezett b?ng?sz? megnyit?sa
+:: V?rjunk egy kicsit (opcion?lis), hogy a szerverek elinduljanak
 timeout /t 3 /nobreak >nul
 start http://localhost:8080
 

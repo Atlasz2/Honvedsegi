@@ -207,3 +207,82 @@ export interface ActivityLogEntry {
   recordName: string;
   payload?: Record<string, unknown> | null;
 }
+
+// ── Képesítés-típusok ──────────────────────────────────────────────────────────
+
+export interface QualificationType {
+  id: string;
+  name: string;
+  category: string;
+  validityDays: number | null;
+  description: string;
+}
+
+export interface PersonnelQualification {
+  id: string;
+  personnelId: string;
+  qualTypeId: string;
+  qualTypeName: string;
+  qualTypeCategory: string;
+  validityDays: number | null;
+  earnedDate: string;
+  expiryDate: string | null;
+  sourceEventId: string | null;
+  sourceEventType: string | null;
+  notes: string;
+  isExpired: boolean;
+  daysUntilExpiry: number | null;
+}
+
+export interface QualificationAlert {
+  personnelId: string;
+  personnelName: string;
+  rank: string;
+  unit: string;
+  qualificationId: string;
+  qualTypeName: string;
+  qualTypeCategory: string;
+  earnedDate: string;
+  expiryDate: string;
+  daysUntilExpiry: number;
+  isExpired: boolean;
+}
+
+export interface QualificationStat {
+  id: string;
+  name: string;
+  category: string;
+  validityDays: number | null;
+  totalPersonnel: number;
+  holdersAll: number;
+  holdersValid: number;
+}
+
+// ── Résztvevők ─────────────────────────────────────────────────────────────────
+
+export type ParticipantStatus =
+  | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva';
+
+export interface Participant {
+  id: string;
+  personnelId: string;
+  personName: string;
+  rank: string;
+  rankShort: string;
+  sztsz: string;
+  role: string;
+  status: ParticipantStatus;
+  qualificationApproved: boolean;
+  notes: string;
+}
+
+// ── Személytörténet ────────────────────────────────────────────────────────────
+
+export interface PersonHistoryEntry {
+  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventId: string;
+  status: string;
+  role: string;
+  qualificationApproved: boolean;
+  notes: string;
+}
