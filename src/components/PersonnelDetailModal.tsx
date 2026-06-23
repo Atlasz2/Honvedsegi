@@ -94,7 +94,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
 
   // Képesítés hozzáadás form
   const [addingQual, setAddingQual] = useState(false);
-  const [newQualTypeId, setNewQualTypeId] = useState('');
+  const [newQualName, setNewQualName] = useState('');
   const [newQualEarned, setNewQualEarned] = useState('');
   const [newQualExpiry, setNewQualExpiry] = useState('');
   const [newQualNotes, setNewQualNotes] = useState('');
@@ -129,23 +129,33 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
   }, [person.id]);
 
   async function handleAddQual() {
-    if (!newQualTypeId || !newQualEarned) {
-      toast.error('A képesítés típusa és a megszerzés dátuma kötelező');
+    const name = newQualName.trim();
+    if (!name) {
+      toast.error('Add meg a képesítés nevét');
       return;
     }
     setSavingQual(true);
     try {
+      // Csak meglévő képzettség adható ki — új típust a Műveletek résznél hoznak létre.
+      const type = qualTypes.find(t => t.name.toLowerCase() === name.toLowerCase());
+      if (!type) {
+        toast.error('Nincs ilyen képzettség — hozd létre a Műveletek → Képzettségek résznél.');
+        setSavingQual(false);
+        return;
+      }
+      const now = new Date();
+      const earned = newQualEarned || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const created = await pqStore.add(person.id, {
         personnelId: person.id,
-        qualTypeId: newQualTypeId,
-        earnedDate: newQualEarned,
+        qualTypeId: type.id,
+        earnedDate: earned,
         expiryDate: newQualExpiry || null,
         notes: newQualNotes,
       });
       setQualifications(prev => [created, ...prev]);
       setAddingQual(false);
-      setNewQualTypeId(''); setNewQualEarned(''); setNewQualExpiry(''); setNewQualNotes('');
-      toast.success('Képesítés hozzáadva');
+      setNewQualName(''); setNewQualEarned(''); setNewQualExpiry(''); setNewQualNotes('');
+      toast.success('Képesítés kiadva');
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
@@ -294,16 +304,23 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                         <p className="text-xs uppercase tracking-military text-primary font-mono">Új képesítés</p>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs text-muted-foreground mb-1">Típus *</label>
-                            <select value={newQualTypeId} onChange={e => setNewQualTypeId(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }}>
-                              <option value="">Válassz...</option>
-                              {qualTypes.map(qt => (
-                                <option key={qt.id} value={qt.id}>{qt.name} ({qt.category})</option>
-                              ))}
-                            </select>
+                            <label className="block text-xs text-muted-foreground mb-1">Képesítés neve *</label>
+                            <input
+                              type="text"
+                              list="qual-type-names"
+                              value={newQualName}
+                              onChange={e => setNewQualName(e.target.value)}
+                              placeholder="Írd be vagy válaszd ki…"
+                              className="w-full bg-input border border-border px-2 py-1.5 text-sm"
+                              style={{ borderRadius: '2px' }}
+                            />
+                            <datalist id="qual-type-names">
+                              {qualTypes.map(qt => <option key={qt.id} value={qt.name} />)}
+                            </datalist>
+                            <p className="text-[11px] text-muted-foreground mt-1">Csak meglévő képzettség adható ki (újat a Műveleteknél hozz létre).</p>
                           </div>
                           <div>
-                            <label className="block text-xs text-muted-foreground mb-1">Megszerzés dátuma *</label>
+                            <label className="block text-xs text-muted-foreground mb-1">Megszerzés dátuma (alapból ma)</label>
                             <input type="date" value={newQualEarned} onChange={e => setNewQualEarned(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
                           </div>
                           <div>
@@ -317,7 +334,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                         </div>
                         <div className="flex gap-2">
                           <button onClick={handleAddQual} disabled={savingQual} className="btn-mil-primary text-xs">
-                            {savingQual ? 'Mentés...' : 'Mentés'}
+                            {savingQual ? 'Kiadás...' : 'Kiad'}
                           </button>
                           <button onClick={() => setAddingQual(false)} className="btn-mil-secondary text-xs">Mégse</button>
                         </div>

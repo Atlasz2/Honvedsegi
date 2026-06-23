@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_exercise, _get_current_user, _require_editor,
-    _require_model, _serialize_exercise, _sync_participants,
+    _apply_exercise, _get_current_user, _grant_event_qualifications, _load_participants_by_event,
+    _require_editor, _require_model, _serialize_exercise, _sync_participants,
 )
 from ..models import ExerciseModel, ParticipantModel, UserModel, new_id
 from ..schemas import (
@@ -23,7 +23,8 @@ router = APIRouter(prefix="/api/exercises", tags=["exercises"])
 @router.get("", response_model=list[ExerciseRead])
 def list_exercises(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
     items = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-    return [_serialize_exercise(db, i) for i in items]
+    participants_by_event = _load_participants_by_event(db, "exercise")
+    return [_serialize_exercise(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=ExerciseRead, status_code=status.HTTP_201_CREATED)
@@ -33,6 +34,8 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db), _: U
     db.add(item)
     db.flush()
     _sync_participants(db, "exercise", item.id, payload.assigned)
+    if item.status == "Befejezett":
+        _grant_event_qualifications(db, "exercise", item.id, item.qualification_id)
     db.commit()
     db.refresh(item)
     return _serialize_exercise(db, item)
@@ -43,6 +46,8 @@ def update_exercise(item_id: str, payload: ExerciseUpdate, db: Session = Depends
     item = _require_model(db, ExerciseModel, item_id)
     _apply_exercise(item, payload)
     _sync_participants(db, "exercise", item_id, payload.assigned)
+    if item.status == "Befejezett":
+        _grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
     db.commit()
     db.refresh(item)
     return _serialize_exercise(db, item)

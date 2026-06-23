@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -72,6 +72,60 @@ class PersonModel(Base):
     qualifications: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
+class AttendanceModel(Base):
+    """Egy katona napi létszám-állapota (jelenléti ív / létszámjelentés).
+
+    Naponta és személyenként legfeljebb egy rekord; a rögzítetlen katonák
+    alapból 'Jelen'-nek számítanak a napi összesítőben."""
+    __tablename__ = "attendance"
+    __table_args__ = (UniqueConstraint("date", "personnel_id", name="uq_attendance_date_person"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    date: Mapped[str] = mapped_column(String, index=True)  # ISO nap: ÉÉÉÉ-HH-NN
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String)
+    note: Mapped[str] = mapped_column(Text, default="")
+    recorded_by: Mapped[str] = mapped_column(String, default="")
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class LeaveRequestModel(Base):
+    """Szabadság / távollét kérelem, jóváhagyási folyamattal.
+
+    A dátumok ISO 'ÉÉÉÉ-HH-NN' formátumúak, így a sztring-összehasonlítás
+    kronologikus (pl. lefedettség-vizsgálathoz a napi létszámban)."""
+    __tablename__ = "leave_requests"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    type: Mapped[str] = mapped_column(String)
+    start_date: Mapped[str] = mapped_column(String, index=True)
+    end_date: Mapped[str] = mapped_column(String, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, index=True, default="Beadva")
+    requested_by: Mapped[str] = mapped_column(String, default="")
+    decided_by: Mapped[str] = mapped_column(String, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class EventPrerequisiteModel(Base):
+    """Egy eseményhez (gyakorlat/kiképzés/esemény/ügyelet) tartozó belépési
+    követelmény: a részvételhez/jelentkezéshez szükséges képesítés-típus.
+
+    Ezzel modellezhető a progresszió (alap → haladó → emelt): a haladó szintű
+    kiképzés követelménye az alapszint képesítése, és így tovább."""
+    __tablename__ = "event_prerequisites"
+    __table_args__ = (
+        UniqueConstraint("event_type", "event_id", "qual_type_id", name="uq_event_prereq"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    event_type: Mapped[str] = mapped_column(String, index=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    qual_type_id: Mapped[str] = mapped_column(String, index=True)
+
+
 class EventModel(Base):
     __tablename__ = "events"
 
@@ -104,6 +158,20 @@ class ExerciseModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    qualification_id: Mapped[str | None] = mapped_column(String, nullable=True, default="")  # teljesítéskor ezt adja
+    series_id: Mapped[str] = mapped_column(String, default="", index=True)  # szülő felkészítés-sorozat
+    level: Mapped[str] = mapped_column(String, default="")  # Alap/Haladó/Emelt
+
+
+class SeriesModel(Base):
+    """Felkészítés-sorozat (szülő „kártya"), pl. „7×20 Tartalékos szakfelkészítés".
+    A gyakorlatok/kiképzések a series_id mezővel hivatkoznak rá."""
+    __tablename__ = "operation_series"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class TrainingModel(Base):
@@ -121,6 +189,8 @@ class TrainingModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    series_id: Mapped[str] = mapped_column(String, default="", index=True)  # szülő felkészítés-sorozat
+    level: Mapped[str] = mapped_column(String, default="")  # Alap/Haladó/Emelt
 
 class EquipmentModel(Base):
     __tablename__ = "equipment"
@@ -246,6 +316,7 @@ class ActivityLogModel(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
     user_name: Mapped[str] = mapped_column(String)
+    user_role: Mapped[str] = mapped_column(String, default="", index=True)  # szerepkör-szintű láthatósághoz
     action: Mapped[str] = mapped_column(String)
     module: Mapped[str] = mapped_column(String)
     record_name: Mapped[str] = mapped_column(String)

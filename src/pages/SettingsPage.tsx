@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   users as uStore,
   getErrorMessage,
+  logAction,
   previewImport,
   updateImportDraft,
   confirmImport,
@@ -12,8 +13,9 @@ import {
 import { User, Role } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
-import { Plus, Pencil, ShieldCheck, ShieldOff } from 'lucide-react';
+import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
 
 type ImportFieldConfig = {
@@ -87,10 +89,11 @@ function countOriginalValues(item: ImportPreviewItem) {
 }
 
 export default function SettingsPage() {
-  const { user: authUser, isDev } = useAuth();
+  const { user: authUser, isDev, isAdmin } = useAuth();
   const [data, setData] = useState<User[]>([]);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true });
   const [importEntity, setImportEntity] = useState<ImportEntity>('personnel');
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -106,12 +109,13 @@ export default function SettingsPage() {
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
+    if (!isAdmin) return;  // a felhasználólistát csak admin töltheti/láthatja
     try {
       setData(await uStore.getAll());
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     void refresh();
@@ -161,6 +165,7 @@ export default function SettingsPage() {
           active: form.active,
           password: form.password || undefined,
         });
+        await logAction(authUser!.displayName, authUser!.username, 'módosítva', 'Felhasználók', form.username);
         toast.success('Sikeresen mentve');
       } else {
         if (!form.password) {
@@ -174,6 +179,7 @@ export default function SettingsPage() {
           role: form.role,
           active: form.active,
         });
+        await logAction(authUser!.displayName, authUser!.username, 'létrehozva', 'Felhasználók', form.username);
         toast.success('Felhasználó létrehozva');
       }
       setEditing(null);
@@ -306,18 +312,21 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Beállítások</h1>
         <div className="flex gap-2">
           <button onClick={() => navigate('/activity-log')} className="btn-mil-secondary text-xs">Tevékenységnapló</button>
-          <button
-            onClick={() => {
-              setForm({ username: '', password: '', displayName: '', role: 'reader', active: true });
-              setCreating(true);
-            }}
-            className="btn-mil-primary flex items-center gap-2 text-xs"
-          >
-            <Plus className="w-4 h-4" />Új felhasználó
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => {
+                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true });
+                setCreating(true);
+              }}
+              className="btn-mil-primary flex items-center gap-2 text-xs"
+            >
+              <Plus className="w-4 h-4" />Új felhasználó
+            </button>
+          )}
         </div>
       </div>
 
+      {isAdmin && (<>
       <div className="flex items-center gap-3 mb-4">
         <div className="h-px flex-1 bg-primary/30" />
         <span className="text-xs uppercase tracking-military text-primary font-mono">Felhasználók</span>
@@ -384,6 +393,13 @@ export default function SettingsPage() {
                       >
                         {u.active ? <ShieldOff className="w-3.5 h-3.5 text-warning" /> : <ShieldCheck className="w-3.5 h-3.5 text-primary" />}
                       </button>
+                      <button
+                        onClick={() => setDeleteTarget(u)}
+                        className="p-1.5 text-destructive hover:bg-destructive/10"
+                        title="Törlés"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   ) : <span className="text-xs text-muted-foreground">—</span>}
                 </td>
@@ -392,6 +408,7 @@ export default function SettingsPage() {
           </tbody>
         </table>
       </div>
+      </>)}
 
       <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -745,6 +762,25 @@ export default function SettingsPage() {
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        message={deleteTarget ? `Biztosan törlöd a(z) „${deleteTarget.username}" felhasználót? Ez nem visszavonható.` : ''}
+        onConfirm={() => {
+          void (async () => {
+            if (!deleteTarget) return;
+            try {
+              await uStore.remove(deleteTarget.username);
+              await logAction(authUser!.displayName, authUser!.username, 'törölve', 'Felhasználók', deleteTarget.username);
+              await refresh();
+              toast.success('Felhasználó törölve');
+            } catch (error) {
+              toast.error(getErrorMessage(error));
+            }
+          })();
+        }}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Felhasználó szerkesztése' : 'Új felhasználó'}>
         <div className="space-y-3">

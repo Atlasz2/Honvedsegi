@@ -9,6 +9,10 @@ import { toast } from 'sonner';
 
 const ACTIONS: ActivityLogEntry['action'][] = ['létrehozva', 'módosítva', 'törölve'];
 
+const ROLE_LABEL: Record<string, string> = {
+  reader: 'Olvasó', editor: 'Szerkesztő', admin: 'Admin', fejleszto: 'Fejlesztő',
+};
+
 const FIELD_LABELS: Record<string, string> = {
   name: 'Név',
   personName: 'Személy neve',
@@ -24,6 +28,13 @@ const FIELD_LABELS: Record<string, string> = {
   attendance: 'Jelenlét',
   assigned: 'Beosztott személyek',
   qualificationId: 'Kapcsolt képzettség',
+  sztsz: 'SZTSz',
+  email: 'E-mail',
+  phone: 'Telefon',
+  birthDate: 'Születési dátum',
+  address: 'Lakcím',
+  joinDate: 'Bevonulás',
+  notes: 'Megjegyzés',
 };
 
 function formatValue(value: unknown): string {
@@ -197,7 +208,7 @@ export default function ActivityLogPage() {
         {detail && (
           <div className="space-y-3 text-sm">
             <div><span className="text-muted-foreground text-xs uppercase tracking-military">Időpont</span><p className="font-mono mt-1">{new Date(detail.timestamp).toLocaleString('hu-HU')}</p></div>
-            <div><span className="text-muted-foreground text-xs uppercase tracking-military">Felhasználó</span><p className="mt-1">{detail.userName}</p></div>
+            <div><span className="text-muted-foreground text-xs uppercase tracking-military">Felhasználó</span><p className="mt-1">{detail.userName}{detail.userRole ? ` · ${ROLE_LABEL[detail.userRole] ?? detail.userRole}` : ''}</p></div>
             <div><span className="text-muted-foreground text-xs uppercase tracking-military">Művelet</span><p className="mt-1">{detail.action}</p></div>
             <div><span className="text-muted-foreground text-xs uppercase tracking-military">Modul</span><p className="mt-1">{detail.module}</p></div>
             <div><span className="text-muted-foreground text-xs uppercase tracking-military">Rekord</span><p className="mt-1">{detail.recordName}</p></div>

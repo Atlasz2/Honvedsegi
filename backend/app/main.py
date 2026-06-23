@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,8 +18,8 @@ from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _
 from .static_serving import mount_frontend
 
 from .routers import (
-    activity_log, announcements, auth, conflicts, duties, equipment,
-    events, exercises, imports, operations, personnel,
+    activity_log, announcements, attendance, auth, availability, conflicts, duties, equipment,
+    events, exercises, imports, leave, operations, personnel, prerequisites,
     qualifications, reports, supplies, trainings, users, vehicles,
 )
 
@@ -33,12 +34,26 @@ def _required_env_csv(name: str) -> list[str]:
     return items
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Startup: create tables, seed initial data, then ensure schema + migrations.
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        seed_database(db)
+        _ensure_personnel_sztsz_schema(db)
+        _ensure_extended_schema(db)
+        _enforce_single_god_user(db)
+        run_migrations(db)
+    yield
+
+
 app = FastAPI(
     title="Guard Guard Duty API",
     version="1.0.0",
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
     openapi_url=None if IS_PRODUCTION else "/openapi.json",
+    lifespan=lifespan,
 )
 
 # ── Middleware ─────────────────────────────────────────────────────────────
@@ -83,23 +98,11 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Routers ────────────────────────────────────────────────────────────────
 
 for _router_module in (
-    auth, users, personnel, exercises, trainings, events,
+    auth, users, personnel, attendance, leave, exercises, trainings, events,
     operations, equipment, supplies, vehicles, duties,
-    announcements, activity_log, qualifications, reports, imports, conflicts,
+    announcements, activity_log, qualifications, prerequisites, reports, imports, conflicts, availability,
 ):
     app.include_router(_router_module.router)
-
-# ── Startup ────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-def on_startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        seed_database(db)
-        _ensure_personnel_sztsz_schema(db)
-        _ensure_extended_schema(db)
-        _enforce_single_god_user(db)
-        run_migrations(db)
 
 # ── Health ─────────────────────────────────────────────────────────────────
 

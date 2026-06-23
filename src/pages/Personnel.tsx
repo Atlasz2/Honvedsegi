@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { personnel as store, logAction, getErrorMessage } from '@/lib/store';
-import { Person } from '@/lib/types';
+import { personnel as store, qualificationTypes as qtStore, getErrorMessage } from '@/lib/store';
+import { Person, QualificationType } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -8,7 +8,6 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import DatePickerInput from '@/components/DatePickerInput';
 import PersonnelDetailModal from '@/components/PersonnelDetailModal';
-import { QUALIFICATIONS } from '@/lib/qualifications';
 
 const RANKS = ['Közkatona','Tizedes','Szakaszvezető','Őrmester','Törzsőrmester','Főtörzsőrmester','Zászlós','Törzszászlós','Főtörzszászlós','Hadnagy','Főhadnagy','Százados','Őrnagy','Alezredes','Ezredes'];
 const STATUSES = ['Aktív','Tartalékos','Szabadságon','Leszerelt'] as const;
@@ -98,11 +97,12 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
 }
 
 export default function Personnel() {
-  const { canEdit, user } = useAuth();
+  const { canEdit } = useAuth();
   const [data, setData] = useState<Person[]>([]);
   const [summaryData, setSummaryData] = useState<Person[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('Összes');
   const [qualificationFilter, setQualificationFilter] = useState<string>('');
+  const [qualTypeOptions, setQualTypeOptions] = useState<QualificationType[]>([]);
   const [unitFilter, setUnitFilter] = useState<string>('Összes');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -150,6 +150,10 @@ export default function Personnel() {
   }, [refresh]);
 
   useEffect(() => {
+    qtStore.getAll().then(setQualTypeOptions).catch(() => setQualTypeOptions([]));
+  }, []);
+
+  useEffect(() => {
     const id = setTimeout(() => {
       setPage(1);
       setSearch(searchInput);
@@ -174,10 +178,8 @@ export default function Personnel() {
       const normalizedForm = { ...form, sztsz: form.sztsz.trim(), phone: normalizeHungarianPhone(form.phone).trim() };
       if (editing) {
         await store.update({ ...editing, ...normalizedForm });
-        await logAction(user!.displayName, user!.username, 'módosítva', 'Személyek', normalizedForm.name);
       } else {
         await store.add(normalizedForm);
-        await logAction(user!.displayName, user!.username, 'létrehozva', 'Személyek', normalizedForm.name);
       }
       toast.success('Sikeresen mentve');
       setEditing(null);
@@ -192,7 +194,6 @@ export default function Personnel() {
   const handleDelete = async (p: Person) => {
     try {
       await store.remove(p.id);
-      await logAction(user!.displayName, user!.username, 'törölve', 'Személyek', p.name);
       toast.success('Törölve');
       setDeleteTarget(null);
       await refresh();
@@ -284,7 +285,7 @@ export default function Personnel() {
           style={{ borderRadius: '2px' }}
         >
           <option value="">Minden képzettség</option>
-          {QUALIFICATIONS.map(q => <option key={q.id} value={q.id}>{q.label}</option>)}
+          {qualTypeOptions.map(qt => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
         </select>
         {['Összes', ...STATUSES].map(s => (
           <button

@@ -43,6 +43,7 @@ export default function DatePickerInput({ value, onChange, placeholder = 'Dátum
         <Calendar
           mode="single"
           selected={selected}
+          defaultMonth={selected}
           onSelect={(date) => {
             if (date) onChange(formatDateOnly(date));
           }}

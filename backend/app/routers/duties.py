@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_duty, _get_current_user, _require_editor,
+    _apply_duty, _get_current_user, _load_participants_by_event, _require_editor,
     _require_model, _serialize_duty, _sync_participants,
 )
 from ..models import DutyModel, ParticipantModel, UserModel, new_id
@@ -18,7 +18,8 @@ router = APIRouter(prefix="/api/duties", tags=["duties"])
 @router.get("", response_model=list[DutyRead])
 def list_duties(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
     items = db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
-    return [_serialize_duty(db, i) for i in items]
+    participants_by_event = _load_participants_by_event(db, "duty")
+    return [_serialize_duty(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=DutyRead, status_code=status.HTTP_201_CREATED)

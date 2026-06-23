@@ -3,14 +3,18 @@ import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing,
+  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, Activity, CalendarSearch, History,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
 
 const navItems = [
   { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
+  { path: '/helyzetkep', label: 'Helyzetkép', icon: Activity },
   { path: '/kozos-naptar', label: 'Közös naptár', icon: CalendarRange },
+  { path: '/foglaltsag', label: 'Foglaltság', icon: CalendarSearch },
   { path: '/personnel', label: 'Személyek', icon: Users },
+  { path: '/letszam', label: 'Létszám', icon: ClipboardCheck },
+  { path: '/szabadsag', label: 'Szabadság', icon: Palmtree },
   { path: '/duties', label: 'Szolgálatok', icon: ShieldAlert },
   { path: '/operations', label: 'Műveletek', icon: Crosshair },
   { path: '/events', label: 'Események', icon: CalendarDays },
@@ -19,7 +23,8 @@ const navItems = [
   { path: '/vehicles', label: 'Járművek', icon: Truck },
   { path: '/announcements', label: 'Hírek', icon: Megaphone },
   { path: '/figyelmeztetesek', label: 'Figyelmeztetések', icon: BellRing, alertBadge: true },
-  { path: '/settings', label: 'Beállítások', icon: Settings, adminOnly: true },
+  { path: '/activity-log', label: 'Napló', icon: History },
+  { path: '/settings', label: 'Beállítások', icon: Settings, editorOnly: true },
 ];
 
 const roleBadge: Record<string, string> = {
@@ -30,7 +35,7 @@ const roleBadge: Record<string, string> = {
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, canEdit } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
 
@@ -101,7 +106,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 py-2 overflow-y-auto">
           {navItems.map(item => {
             if (item.adminOnly && !isAdmin) return null;
-            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path) || (item.path === '/settings' && location.pathname === '/activity-log');
+            if (item.editorOnly && !canEdit) return null;
+            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
             const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;
             return (
               <NavLink

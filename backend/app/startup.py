@@ -77,6 +77,14 @@ def _ensure_extended_schema(db: Session) -> None:
     trainings_cols = {row[1] for row in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
     if "qualification_id" not in trainings_cols:
         db.execute(text("ALTER TABLE trainings ADD COLUMN qualification_id TEXT"))
+    exercises_cols = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
+    if "qualification_id" not in exercises_cols:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN qualification_id TEXT"))
+    for col in ("series", "level"):
+        if col not in trainings_cols:
+            db.execute(text(f"ALTER TABLE trainings ADD COLUMN {col} TEXT DEFAULT ''"))
+        if col not in exercises_cols:
+            db.execute(text(f"ALTER TABLE exercises ADD COLUMN {col} TEXT DEFAULT ''"))
     duties_cols = {row[1] for row in db.execute(text("PRAGMA table_info(duties)")).fetchall()}
     if "assigned" not in duties_cols:
         db.execute(text("ALTER TABLE duties ADD COLUMN assigned JSON"))
@@ -84,6 +92,8 @@ def _ensure_extended_schema(db: Session) -> None:
     log_cols = {row[1] for row in db.execute(text("PRAGMA table_info(activity_logs)")).fetchall()}
     if "payload" not in log_cols:
         db.execute(text("ALTER TABLE activity_logs ADD COLUMN payload JSON"))
+    if "user_role" not in log_cols:
+        db.execute(text("ALTER TABLE activity_logs ADD COLUMN user_role TEXT DEFAULT ''"))
 
     db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
     db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))

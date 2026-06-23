@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_training, _get_current_user, _require_editor,
+    _apply_training, _get_current_user, _load_participants_by_event, _require_editor,
     _require_model, _serialize_training, _sync_participants,
 )
 from ..models import (
@@ -33,6 +33,7 @@ def _auto_grant_qualifications(db: Session, item: TrainingModel) -> None:
     qt = db.get(QualificationTypeModel, item.qualification_id)
     if not qt:
         return
+    db.flush()  # a frissen szinkronizált résztvevők látszódjanak (autoflush=False)
     earned = item.end_date or date.today().isoformat()
     expiry: str | None = None
     if qt.validity_days:
@@ -72,7 +73,8 @@ def _auto_grant_qualifications(db: Session, item: TrainingModel) -> None:
 @router.get("", response_model=list[TrainingRead])
 def list_trainings(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
     items = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
-    return [_serialize_training(db, i) for i in items]
+    participants_by_event = _load_participants_by_event(db, "training")
+    return [_serialize_training(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=TrainingRead, status_code=status.HTTP_201_CREATED)

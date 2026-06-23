@@ -29,6 +29,11 @@ from ..schemas import (
 
 router = APIRouter(prefix="/api/activity-log", tags=["activity-log"])
 
+# Szerepkör-szintek: mindenki a sajátját és az AZ ALATTI szinteket látja
+# (admin látja az olvasó/szerkesztő tetteit, fordítva nem). A régi, szerepkör
+# nélküli bejegyzések a legalacsonyabb szintre esnek, így mindenki látja őket.
+_ROLE_LEVEL = {"reader": 1, "editor": 2, "admin": 3, "fejleszto": 4}
+
 
 def _entity_model(entity: str):
     mapping = {
@@ -60,15 +65,19 @@ def _apply_entity_payload(entity: str, item, data: dict) -> None:
 
 
 @router.get("", response_model=list[ActivityLogRead])
-def list_activity_logs(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
-    return [_serialize_log(i) for i in db.scalars(select(ActivityLogModel).order_by(ActivityLogModel.timestamp.desc())).all()]
+def list_activity_logs(db: Session = Depends(get_db), current_user: UserModel = Depends(_get_current_user)):
+    viewer_level = _ROLE_LEVEL.get(current_user.role, 1)
+    entries = db.scalars(select(ActivityLogModel).order_by(ActivityLogModel.timestamp.desc())).all()
+    visible = [e for e in entries if _ROLE_LEVEL.get(e.user_role or "reader", 1) <= viewer_level]
+    return [_serialize_log(i) for i in visible]
 
 
 @router.post("", response_model=ActivityLogRead)
-def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db), current_user: UserModel = Depends(_get_current_user)):
     item = ActivityLogModel(
         user_id=payload.userId,
         user_name=payload.userName,
+        user_role=current_user.role,
         action=payload.action,
         module=payload.module,
         record_name=payload.recordName,
@@ -130,6 +139,7 @@ def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserMode
     restore_log = ActivityLogModel(
         user_id=user.username,
         user_name=user.display_name,
+        user_role=user.role,
         action="módosítva",
         module="Tevékenységnapló",
         record_name=f"Visszaállítás: {log_item.record_name}",

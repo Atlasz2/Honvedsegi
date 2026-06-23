@@ -18,6 +18,12 @@ DutyStatus = Literal["Tervezett", "Teljesített", "Lemondva"]
 AnnouncementCategory = Literal["Általános", "Fontos", "Sürgős", "Gyakorlat", "Adminisztráció"]
 ActivityAction = Literal["létrehozva", "módosítva", "törölve"]
 SupplyMoveType = Literal["Bevételezés", "Kiadás", "Visszavétel", "Selejtezés", "Korrekció"]
+AttendanceStatus = Literal[
+    "Jelen", "Szabadság", "Betegállomány", "Vezényelve",
+    "Szolgálatban", "Kiküldetés", "Igazolt távollét", "Igazolatlan távollét",
+]
+LeaveType = Literal["Szabadság", "Betegszabadság", "Kiküldetés", "Egyéb"]
+LeaveStatus = Literal["Beadva", "Jóváhagyva", "Elutasítva"]
 
 
 class ORMModel(BaseModel):
@@ -62,6 +68,97 @@ class AuthUser(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     user: AuthUser
+
+
+# ── Napi létszám / jelenléti ív ────────────────────────────────────────────
+
+class AttendanceEntry(BaseModel):
+    personnelId: str
+    name: str
+    rank: str
+    unit: str
+    status: AttendanceStatus
+    note: str = ""
+
+
+class AttendanceDayRead(BaseModel):
+    date: str
+    total: int
+    summary: dict[str, int]
+    items: list[AttendanceEntry]
+
+
+class AttendanceMark(BaseModel):
+    personnelId: str
+    status: AttendanceStatus
+    note: str = ""
+
+
+class AttendanceUpdate(BaseModel):
+    date: str
+    items: list[AttendanceMark]
+
+
+class AttendanceFill(BaseModel):
+    date: str
+    eventType: str
+    eventId: str
+    status: AttendanceStatus
+
+
+# ── Képzési követelmény / jogosultság ───────────────────────────────────────
+
+class QualTypeRef(BaseModel):
+    id: str
+    name: str
+
+
+class PrerequisiteRead(BaseModel):
+    qualTypeIds: list[str]
+    qualTypes: list[QualTypeRef]
+
+
+class PrerequisiteSet(BaseModel):
+    qualTypeIds: list[str]
+
+
+class EligibilityPerson(BaseModel):
+    personnelId: str
+    name: str
+    rank: str
+    unit: str
+    eligible: bool
+    missing: list[str]
+
+
+# ── Szabadság / távollét ────────────────────────────────────────────────────
+
+class LeaveRequestCreate(BaseModel):
+    personnelId: str
+    type: LeaveType
+    startDate: str
+    endDate: str
+    reason: str = ""
+
+
+class LeaveDecision(BaseModel):
+    approve: bool
+
+
+class LeaveRequestRead(BaseModel):
+    id: str
+    personnelId: str
+    personName: str
+    type: LeaveType
+    startDate: str
+    endDate: str
+    days: int
+    reason: str
+    status: LeaveStatus
+    requestedBy: str
+    decidedBy: str
+    decidedAt: datetime | None
+    createdAt: datetime
 
 
 class PersonBase(BaseModel):
@@ -127,6 +224,9 @@ class ExerciseBase(BaseModel):
     maxPersonnel: int = 0
     description: str = ""
     status: ExerciseStatus
+    qualificationId: str = ""
+    seriesId: str = ""
+    level: str = ""
     assigned: list[ExerciseAssignment] = []
 
 
@@ -160,6 +260,8 @@ class TrainingBase(BaseModel):
     maxPersonnel: int = 0
     description: str = ""
     status: TrainingStatus
+    seriesId: str = ""
+    level: str = ""
     assigned: list[TrainingAssignment] = []
 
 
@@ -169,6 +271,24 @@ class TrainingCreate(TrainingBase):
 
 class TrainingUpdate(TrainingBase):
     pass
+
+
+class SeriesBase(BaseModel):
+    name: str
+    description: str = ""
+
+
+class SeriesCreate(SeriesBase):
+    pass
+
+
+class SeriesUpdate(SeriesBase):
+    pass
+
+
+class SeriesRead(SeriesBase):
+    id: str
+    itemCount: int = 0
 
 
 class TrainingRead(TrainingBase):
@@ -402,6 +522,7 @@ class ActivityLogRead(BaseModel):
     timestamp: str
     userId: str
     userName: str
+    userRole: str = ""
     action: ActivityAction
     module: str
     recordName: str

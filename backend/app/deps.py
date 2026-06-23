@@ -204,6 +204,22 @@ def _get_participants(db: Session, event_type: str, event_id: str) -> list[Parti
     ).all()
 
 
+def _load_participants_by_event(db: Session, event_type: str) -> dict[str, list[ParticipantModel]]:
+    """All participants of one event type, grouped by event id, in a single query.
+
+    Pass the per-event list into the _serialize_* functions from list endpoints
+    to avoid one participant query per event (N+1)."""
+    rows = db.scalars(
+        select(ParticipantModel)
+        .where(ParticipantModel.event_type == event_type)
+        .order_by(ParticipantModel.person_name)
+    ).all()
+    by_event: dict[str, list[ParticipantModel]] = {}
+    for participant in rows:
+        by_event.setdefault(participant.event_id, []).append(participant)
+    return by_event
+
+
 def _sync_participants(db: Session, event_type: str, event_id: str, assignments: list[Any]) -> None:
     db.execute(
         delete(ParticipantModel).where(
@@ -313,8 +329,9 @@ def _serialize_person_with_qual_table(db: Session, item: PersonModel) -> PersonR
     return _serialize_person_with_quals(item, qual_ids)
 
 
-def _serialize_exercise(db: Session, item: ExerciseModel) -> ExerciseRead:
-    participants = _get_participants(db, "exercise", item.id)
+def _serialize_exercise(db: Session, item: ExerciseModel, participants: list[ParticipantModel] | None = None) -> ExerciseRead:
+    if participants is None:
+        participants = _get_participants(db, "exercise", item.id)
     assigned = [
         {"personId": p.personnel_id, "personName": p.person_name, "role": p.role,
          "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
@@ -324,12 +341,14 @@ def _serialize_exercise(db: Session, item: ExerciseModel) -> ExerciseRead:
         id=item.id, name=item.name, type=item.type,
         startDate=item.start_date, endDate=item.end_date, location=item.location,
         maxPersonnel=item.max_personnel, description=item.description,
-        status=item.status, assigned=assigned,
+        status=item.status, qualificationId=item.qualification_id or "",
+        seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
     )
 
 
-def _serialize_training(db: Session, item: TrainingModel) -> TrainingRead:
-    participants = _get_participants(db, "training", item.id)
+def _serialize_training(db: Session, item: TrainingModel, participants: list[ParticipantModel] | None = None) -> TrainingRead:
+    if participants is None:
+        participants = _get_participants(db, "training", item.id)
     assigned = [
         {"personId": p.personnel_id, "personName": p.person_name,
          "attendance": p.status, "qualificationApproved": p.qualification_approved,
@@ -341,12 +360,13 @@ def _serialize_training(db: Session, item: TrainingModel) -> TrainingRead:
         startDate=item.start_date, endDate=item.end_date, location=item.location,
         organizer=item.organizer or "", qualificationId=item.qualification_id or "",
         maxPersonnel=item.max_personnel, description=item.description,
-        status=item.status, assigned=assigned,
+        status=item.status, seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
     )
 
 
-def _serialize_event(db: Session, item: EventModel) -> EventRead:
-    participants = _get_participants(db, "event", item.id)
+def _serialize_event(db: Session, item: EventModel, participants: list[ParticipantModel] | None = None) -> EventRead:
+    if participants is None:
+        participants = _get_participants(db, "event", item.id)
     assigned = [
         {"personId": p.personnel_id, "personName": p.person_name, "role": p.role,
          "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
@@ -407,8 +427,9 @@ def _serialize_vehicle(item: VehicleModel) -> VehicleRead:
     )
 
 
-def _serialize_duty(db: Session, item: DutyModel) -> DutyRead:
-    participants = _get_participants(db, "duty", item.id)
+def _serialize_duty(db: Session, item: DutyModel, participants: list[ParticipantModel] | None = None) -> DutyRead:
+    if participants is None:
+        participants = _get_participants(db, "duty", item.id)
     if participants:
         assigned = [{"personId": p.personnel_id, "personName": p.person_name,
                      "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
@@ -444,6 +465,7 @@ def _serialize_log(item: ActivityLogModel) -> ActivityLogRead:
         timestamp=item.timestamp.isoformat(),
         userId=item.user_id,
         userName=item.user_name,
+        userRole=item.user_role or "",
         action=item.action,
         module=item.module,
         recordName=item.record_name,
@@ -476,7 +498,49 @@ def _apply_exercise(target: ExerciseModel, payload: ExerciseCreate | ExerciseUpd
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     target.status = payload.status
+    target.qualification_id = payload.qualificationId
+    target.series_id = payload.seriesId
+    target.level = payload.level
     # assigned is managed via participants table; caller must call _sync_participants
+
+
+def _grant_event_qualifications(db: Session, event_type: str, event_id: str, qual_type_id: str | None) -> int:
+    """A 'Megjelent' résztvevőknek jóváírja az esemény által adott képesítést (H2).
+    Idempotens: forrásesemény szerint dedupál, így ismételt mentésnél nem duplikál."""
+    if not qual_type_id:
+        return 0
+    qual_type = db.get(QualificationTypeModel, qual_type_id)
+    if not qual_type:
+        return 0
+    db.flush()  # a frissen szinkronizált résztvevők látszódjanak (autoflush=False)
+    earned = date.today()
+    expiry = (earned + timedelta(days=qual_type.validity_days)).isoformat() if qual_type.validity_days else None
+    granted = 0
+    participants = db.scalars(
+        select(ParticipantModel).where(
+            ParticipantModel.event_type == event_type,
+            ParticipantModel.event_id == event_id,
+            ParticipantModel.status == "Megjelent",
+        )
+    ).all()
+    for participant in participants:
+        already = db.scalar(
+            select(PersonnelQualificationModel).where(
+                PersonnelQualificationModel.personnel_id == participant.personnel_id,
+                PersonnelQualificationModel.qual_type_id == qual_type_id,
+                PersonnelQualificationModel.source_event_id == event_id,
+            )
+        )
+        if already:
+            continue
+        db.add(PersonnelQualificationModel(
+            id=new_id(), personnel_id=participant.personnel_id, qual_type_id=qual_type_id,
+            earned_date=earned.isoformat(), expiry_date=expiry,
+            source_event_id=event_id, source_event_type=event_type,
+            notes="Automatikus jóváírás (teljesített képzés)",
+        ))
+        granted += 1
+    return granted
 
 
 def _apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpdate) -> None:
@@ -490,6 +554,8 @@ def _apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpd
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     target.status = payload.status
+    target.series_id = payload.seriesId
+    target.level = payload.level
     # assigned is managed via participants table; caller must call _sync_participants
 
 

@@ -18,11 +18,16 @@ import Announcements from "@/pages/Announcements";
 import SettingsPage from "@/pages/SettingsPage";
 import ActivityLogPage from "@/pages/ActivityLogPage";
 import Alerts from "@/pages/Alerts";
+import Attendance from "@/pages/Attendance";
+import Leave from "@/pages/Leave";
+import Helyzetkep from "@/pages/Helyzetkep";
+import Availability from "@/pages/Availability";
+import Kovetelmenyek from "@/pages/Kovetelmenyek";
 
 const queryClient = new QueryClient();
 
 function AppRoutes() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, canEdit } = useAuth();
   if (!user) return <LoginPage />;
   return (
     <Layout>
@@ -33,6 +38,11 @@ function AppRoutes() {
         <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />
         <Route path="/calendar/*" element={<Navigate to="/kozos-naptar" replace />} />
         <Route path="/personnel" element={<Personnel />} />
+        <Route path="/letszam" element={<Attendance />} />
+        <Route path="/szabadsag" element={<Leave />} />
+        <Route path="/helyzetkep" element={<Helyzetkep />} />
+        <Route path="/foglaltsag" element={<Availability />} />
+        <Route path="/kovetelmenyek" element={<Kovetelmenyek />} />
         <Route path="/operations" element={<Operations />} />
         <Route path="/events" element={<Events />} />
         <Route path="/equipment" element={<Equipment />} />
@@ -41,8 +51,8 @@ function AppRoutes() {
         <Route path="/duties" element={<Duties />} />
         <Route path="/announcements" element={<Announcements />} />
         <Route path="/figyelmeztetesek" element={<Alerts />} />
-        {isAdmin && <Route path="/settings" element={<SettingsPage />} />}
-        {isAdmin && <Route path="/activity-log" element={<ActivityLogPage />} />}
+        {canEdit && <Route path="/settings" element={<SettingsPage />} />}
+        <Route path="/activity-log" element={<ActivityLogPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

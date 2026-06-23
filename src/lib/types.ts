@@ -53,6 +53,9 @@ export interface Exercise {
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  qualificationId?: string;
+  series?: string;
+  level?: string;
   assigned: ExerciseAssignment[];
 }
 
@@ -78,6 +81,8 @@ export interface Training {
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
+  series?: string;
+  level?: string;
   assigned: TrainingAssignment[];
 }
 
@@ -202,6 +207,7 @@ export interface ActivityLogEntry {
   timestamp: string;
   userId: string;
   userName: string;
+  userRole?: string;
   action: 'létrehozva' | 'módosítva' | 'törölve';
   module: string;
   recordName: string;

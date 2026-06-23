@@ -343,6 +343,7 @@ export const users = {
     });
     return toUser(result);
   },
+  remove: (username: string) => request<void>(`/users/${username}`, { method: 'DELETE' }),
 };
 
 export const activityLog = {
@@ -615,6 +616,167 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
     method: 'POST',
   });
 }
+
+export type AttendanceStatus =
+  | 'Jelen' | 'Szabadság' | 'Betegállomány' | 'Vezényelve'
+  | 'Szolgálatban' | 'Kiküldetés' | 'Igazolt távollét' | 'Igazolatlan távollét';
+
+export type AttendanceEntry = {
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  status: AttendanceStatus;
+  note: string;
+};
+
+export type AttendanceDay = {
+  date: string;
+  total: number;
+  summary: Record<string, number>;
+  items: AttendanceEntry[];
+};
+
+export type AttendanceMark = {
+  personnelId: string;
+  status: AttendanceStatus;
+  note?: string;
+};
+
+function attendanceQuery(date: string, unit?: string, includeReserve?: boolean): string {
+  const query = new URLSearchParams({ date });
+  if (unit?.trim() && unit !== 'Összes') query.set('unit', unit.trim());
+  if (includeReserve) query.set('include_reserve', 'true');
+  return query.toString();
+}
+
+async function downloadBlob(path: string, filename: string): Promise<void> {
+  const token = getAccessToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    throw new Error((await response.text()) || 'A letöltés sikertelen');
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
+export type AttendanceEventOption = {
+  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventId: string;
+  name: string;
+  participantCount: number;
+};
+
+export const attendance = {
+  getDay: (date: string, unit?: string, includeReserve?: boolean) =>
+    request<AttendanceDay>(`/attendance?${attendanceQuery(date, unit, includeReserve)}`),
+  setDay: (date: string, items: AttendanceMark[]) =>
+    request<AttendanceDay>('/attendance', { method: 'PUT', body: JSON.stringify({ date, items }) }),
+  eventsOnDay: (date: string) =>
+    request<AttendanceEventOption[]>(`/attendance/events?date=${encodeURIComponent(date)}`),
+  fillFromEvent: (date: string, eventType: string, eventId: string, status: AttendanceStatus) =>
+    request<AttendanceDay>('/attendance/fill', { method: 'POST', body: JSON.stringify({ date, eventType, eventId, status }) }),
+  exportXlsx: (date: string, unit?: string, includeReserve?: boolean) =>
+    downloadBlob(`/attendance/export.xlsx?${attendanceQuery(date, unit, includeReserve)}`, `letszamjelentes-${date}.xlsx`),
+  exportPdf: (date: string, unit?: string, includeReserve?: boolean) =>
+    downloadBlob(`/attendance/export.pdf?${attendanceQuery(date, unit, includeReserve)}`, `letszamjelentes-${date}.pdf`),
+};
+
+export type LeaveType = 'Szabadság' | 'Betegszabadság' | 'Kiküldetés' | 'Egyéb';
+export type LeaveStatus = 'Beadva' | 'Jóváhagyva' | 'Elutasítva';
+
+export type LeaveRequest = {
+  id: string;
+  personnelId: string;
+  personName: string;
+  type: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string;
+  status: LeaveStatus;
+  requestedBy: string;
+  decidedBy: string;
+  decidedAt: string | null;
+  createdAt: string;
+};
+
+export const leave = {
+  list: (status?: string, personnelId?: string) => {
+    const query = new URLSearchParams();
+    if (status?.trim() && status !== 'Összes') query.set('status', status.trim());
+    if (personnelId?.trim()) query.set('personnel_id', personnelId.trim());
+    const qs = query.toString();
+    return request<LeaveRequest[]>(`/leave${qs ? `?${qs}` : ''}`);
+  },
+  create: (payload: { personnelId: string; type: LeaveType; startDate: string; endDate: string; reason?: string }) =>
+    request<LeaveRequest>('/leave', { method: 'POST', body: JSON.stringify(payload) }),
+  decide: (id: string, approve: boolean) =>
+    request<LeaveRequest>(`/leave/${id}/decision`, { method: 'POST', body: JSON.stringify({ approve }) }),
+  remove: (id: string) => request<void>(`/leave/${id}`, { method: 'DELETE' }),
+};
+
+export type Booking = {
+  location: string;
+  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventId: string;
+  eventName: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+};
+
+export const availability = {
+  locations: () => request<string[]>('/availability/locations'),
+  check: (startDate: string, endDate?: string, q?: string) => {
+    const query = new URLSearchParams({ start_date: startDate });
+    if (endDate?.trim()) query.set('end_date', endDate.trim());
+    if (q?.trim()) query.set('q', q.trim());
+    return request<Booking[]>(`/availability?${query.toString()}`);
+  },
+};
+
+export type PrerequisiteInfo = {
+  qualTypeIds: string[];
+  qualTypes: { id: string; name: string }[];
+};
+
+export type EligibilityPerson = {
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  eligible: boolean;
+  missing: string[];
+};
+
+export const prerequisites = {
+  get: (eventType: string, eventId: string) =>
+    request<PrerequisiteInfo>(`/prerequisites/${eventType}/${eventId}`),
+  set: (eventType: string, eventId: string, qualTypeIds: string[]) =>
+    request<PrerequisiteInfo>(`/prerequisites/${eventType}/${eventId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ qualTypeIds }),
+    }),
+  eligibility: (eventType: string, eventId: string, unit?: string, includeReserve?: boolean) => {
+    const query = new URLSearchParams();
+    if (unit?.trim() && unit !== 'Összes') query.set('unit', unit.trim());
+    if (includeReserve) query.set('include_reserve', 'true');
+    const qs = query.toString();
+    return request<EligibilityPerson[]>(`/prerequisites/${eventType}/${eventId}/eligibility${qs ? `?${qs}` : ''}`);
+  },
+};
 
 
 

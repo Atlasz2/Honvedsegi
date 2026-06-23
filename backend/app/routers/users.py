@@ -87,6 +87,8 @@ def delete_user(
     user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not user:
         raise HTTPException(status_code=404, detail="Felhasználó nem található")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=403, detail="A saját fiók nem törölhető")
     if user.protected or user.username == GOD_USERNAME or user.role == GOD_ROLE:
         raise HTTPException(status_code=403, detail="A dev_master felhasználó nem törölhető")
     if current_user.role == "admin" and user.role == GOD_ROLE:

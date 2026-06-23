@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_event, _get_current_user, _require_editor,
+    _apply_event, _get_current_user, _load_participants_by_event, _require_editor,
     _require_model, _serialize_event, _sync_participants,
 )
 from ..models import EventModel, ParticipantModel, UserModel, new_id
@@ -21,7 +21,8 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 @router.get("", response_model=list[EventRead])
 def list_events(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
     items = db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
-    return [_serialize_event(db, i) for i in items]
+    participants_by_event = _load_participants_by_event(db, "event")
+    return [_serialize_event(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=EventRead, status_code=status.HTTP_201_CREATED)

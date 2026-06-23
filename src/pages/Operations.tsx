@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
-import { exercises, trainings, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, type LocationConflict } from "@/lib/store";
-import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person } from "@/lib/types";
+import { exercises, trainings, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict } from "@/lib/store";
+import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person, QualificationType } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -25,6 +25,8 @@ type OperationItem = {
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
+  series: string;
+  level: string;
   assigned: Array<Record<string, unknown>>;
 };
 
@@ -39,6 +41,10 @@ type CreateForm = {
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
+  qualificationId: string;       // mit ad teljesítéskor
+  prerequisiteIds: string[];     // belépési követelmények
+  series: string;                // felkészítés-sorozat (pl. 7×20)
+  level: string;                 // Alap/Haladó/Emelt
 };
 
 type EditForm = {
@@ -68,6 +74,10 @@ const emptyCreateForm: CreateForm = {
   maxPersonnel: 20,
   description: "",
   status: "Tervezett",
+  qualificationId: "",
+  prerequisiteIds: [],
+  series: "",
+  level: "",
 };
 
 const statusClass: Record<OperationStatus, string> = {
@@ -98,6 +108,8 @@ function normalizeExercise(item: Exercise): OperationItem {
     maxPersonnel: item.maxPersonnel,
     description: item.description,
     status: item.status as OperationStatus,
+    series: item.series ?? "",
+    level: item.level ?? "",
     assigned: item.assigned as Array<Record<string, unknown>>,
   };
 }
@@ -114,6 +126,8 @@ function normalizeTraining(item: Training): OperationItem {
     maxPersonnel: item.maxPersonnel,
     description: item.description,
     status: item.status as OperationStatus,
+    series: item.series ?? "",
+    level: item.level ?? "",
     assigned: item.assigned as Array<Record<string, unknown>>,
   };
 }
@@ -123,6 +137,7 @@ export default function Operations() {
   const { canEdit, user } = useAuth();
 
   const [data, setData] = useState<OperationItem[]>([]);
+  const [seriesFilter, setSeriesFilter] = useState("Összes");
   const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
   const [rawTrainings, setRawTrainings] = useState<Training[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
@@ -137,6 +152,12 @@ export default function Operations() {
   const [loading, setLoading] = useState(true);
 
   const [creating, setCreating] = useState(false);
+  const [qualTypeOptions, setQualTypeOptions] = useState<QualificationType[]>([]);
+  const [prereqSearch, setPrereqSearch] = useState("");
+  const [qualMgrOpen, setQualMgrOpen] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
+  const [newTypeCategory, setNewTypeCategory] = useState("");
+  const [savingType, setSavingType] = useState(false);
   const [form, setForm] = useState<CreateForm>(emptyCreateForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -147,6 +168,7 @@ export default function Operations() {
   const [deleteTarget, setDeleteTarget] = useState<OperationItem | null>(null);
   const [addPersonId, setAddPersonId] = useState("");
   const [addPersonRole, setAddPersonRole] = useState("résztvevő");
+  const [eligibilityMap, setEligibilityMap] = useState<Record<string, { eligible: boolean; missing: string[] }>>({});
   const [personSearch, setPersonSearch] = useState("");
 
   const [createConflicts, setCreateConflicts] = useState<LocationConflict[]>([]);
@@ -229,9 +251,16 @@ export default function Operations() {
       if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
+      if (seriesFilter === "__standalone__") { if (item.series) return false; }
+      else if (seriesFilter !== "Összes" && item.series !== seriesFilter) return false;
       return true;
     });
-  }, [data, search, filter, sourceFilter, dateFrom, dateTo]);
+  }, [data, search, filter, sourceFilter, dateFrom, dateTo, seriesFilter]);
+
+  const seriesOptions = useMemo(
+    () => Array.from(new Set(data.map((i) => i.series).filter(Boolean))).sort((a, b) => a.localeCompare(b, "hu")),
+    [data],
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -281,6 +310,25 @@ export default function Operations() {
 
   // ── Résztvevő-kezelés ──────────────────────────────────────────────────────
 
+  useEffect(() => {
+    qualificationTypes.getAll().then(setQualTypeOptions).catch(() => setQualTypeOptions([]));
+  }, []);
+
+  // A megnyitott művelet követelmény-jogosultsága (figyelmeztetéshez a beosztásnál).
+  useEffect(() => {
+    if (!detail) { setEligibilityMap({}); return; }
+    let active = true;
+    prerequisites.eligibility(detail.source, detail.id, undefined, true)
+      .then(list => {
+        if (!active) return;
+        const map: Record<string, { eligible: boolean; missing: string[] }> = {};
+        for (const e of list) map[e.personnelId] = { eligible: e.eligible, missing: e.missing };
+        setEligibilityMap(map);
+      })
+      .catch(() => { if (active) setEligibilityMap({}); });
+    return () => { active = false; };
+  }, [detail]);
+
   const addPerson = async () => {
     if (!detail || !addPersonId) return;
     const p = personnelData.find((x) => x.id === addPersonId);
@@ -307,7 +355,12 @@ export default function Operations() {
       setAddPersonRole("résztvevő");
       setPersonSearch("");
       await refresh();
-      toast.success("Személy hozzáadva");
+      const elig = eligibilityMap[p.id];
+      if (elig && !elig.eligible) {
+        toast.warning(`Figyelem: ${p.name} nem teljesíti a követelményt (${elig.missing.join(", ")}). Beosztva — ellenőrizd.`);
+      } else {
+        toast.success("Személy hozzáadva");
+      }
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -432,6 +485,29 @@ export default function Operations() {
     }
   };
 
+  // ── Képzettség-típusok ─────────────────────────────────────────────────────
+
+  const handleCreateType = async () => {
+    const name = newTypeName.trim();
+    if (!name) { toast.error("Add meg a képzettség nevét"); return; }
+    if (qualTypeOptions.some(qt => qt.name.toLowerCase() === name.toLowerCase())) {
+      toast.error("Már van ilyen képzettség");
+      return;
+    }
+    setSavingType(true);
+    try {
+      const created = await qualificationTypes.create({ name, category: newTypeCategory.trim() || "Általános", validityDays: null, description: "" });
+      setQualTypeOptions(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, "hu")));
+      setNewTypeName(""); setNewTypeCategory("");
+      await logAction(user!.displayName, user!.username, "létrehozva", "Képzettségek", created.name);
+      toast.success("Képzettség létrehozva");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSavingType(false);
+    }
+  };
+
   // ── Létrehozás ─────────────────────────────────────────────────────────────
 
   const validateCreate = () => {
@@ -455,11 +531,13 @@ export default function Operations() {
         description: form.description.trim(),
       };
       if (form.source === "exercise") {
-        await exercises.add({ ...common, status: form.status, assigned: [] });
+        const created = await exercises.add({ ...common, status: form.status, qualificationId: form.qualificationId, series: form.series.trim(), level: form.level, assigned: [] });
+        await prerequisites.set("exercise", created.id, form.prerequisiteIds);
         await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
       } else {
         const trainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
-        await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: "" });
+        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: form.qualificationId, series: form.series.trim(), level: form.level });
+        await prerequisites.set("training", created.id, form.prerequisiteIds);
         await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
       }
       toast.success("Művelet létrehozva");
@@ -482,6 +560,11 @@ export default function Operations() {
           <p className="text-xs text-muted-foreground font-mono mt-1">Gyakorlatok + kiképzések egy nézetben</p>
         </div>
         <div className="flex items-center gap-2">
+          {canEdit && (
+            <button onClick={() => setQualMgrOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
+              <GraduationCap className="w-4 h-4" /> Képzettségek
+            </button>
+          )}
           {canEdit && (
             <button
               onClick={() => {
@@ -530,6 +613,19 @@ export default function Operations() {
             {s}
           </button>
         ))}
+        {seriesOptions.length > 0 && (
+          <select
+            value={seriesFilter}
+            onChange={(e) => { setSeriesFilter(e.target.value); setPage(1); }}
+            className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
+            style={{ borderRadius: "2px" }}
+            title="Felkészítés-sorozat"
+          >
+            <option value="Összes">Minden sorozat</option>
+            {seriesOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+            <option value="__standalone__">Önálló (sorozat nélkül)</option>
+          </select>
+        )}
         <div>
           <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum eleje</label>
           <DatePickerInput value={dateFrom} onChange={setDateFrom} className="px-2 py-1.5 text-xs" />
@@ -560,6 +656,11 @@ export default function Operations() {
                   {item.source === "exercise" ? <Crosshair className="w-3.5 h-3.5 text-primary" /> : <GraduationCap className="w-3.5 h-3.5 text-primary" />}
                   <span className="mono-chip text-xs">{typeMap[item.type] || item.type}</span>
                   <span className="mono-chip text-[10px]">{item.source === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}</span>
+                  {item.series && (
+                    <span className="mono-chip text-[10px] bg-primary/15 text-primary" title="Felkészítés-sorozat">
+                      {item.series}{item.level ? ` · ${item.level}` : ""}
+                    </span>
+                  )}
                 </div>
                 <div className="space-y-1 text-sm text-muted-foreground">
                   <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
@@ -593,6 +694,45 @@ export default function Operations() {
       )}
 
       {/* ── Létrehozás modal ──────────────────────────────────────────────── */}
+      <Modal open={qualMgrOpen} onClose={() => setQualMgrOpen(false)} title="Képzettségek">
+        <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be.</p>
+          {canEdit && (
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Új képzettség neve</label>
+                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              </div>
+              <div className="w-40">
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label>
+                <input value={newTypeCategory} onChange={(e) => setNewTypeCategory(e.target.value)} placeholder="Általános" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              </div>
+              <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs">Létrehoz</button>
+            </div>
+          )}
+          <div className="border border-border max-h-80 overflow-auto" style={{ borderRadius: "2px" }}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
+                  <th className="px-3 py-2">Név</th>
+                  <th className="px-3 py-2">Kategória</th>
+                </tr>
+              </thead>
+              <tbody>
+                {qualTypeOptions.length === 0 ? (
+                  <tr><td colSpan={2} className="px-3 py-4 text-center text-muted-foreground">Nincs képzettség.</td></tr>
+                ) : qualTypeOptions.map((qt) => (
+                  <tr key={qt.id} className="border-b border-border/50">
+                    <td className="px-3 py-1.5 text-foreground font-rajdhani">{qt.name}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{qt.category}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Modal>
+
       <Modal open={creating} onClose={() => setCreating(false)} title="Új művelet hozzáadása">
         <div className="space-y-3">
           <div>
@@ -624,6 +764,35 @@ export default function Operations() {
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Alkategória</label>
             <input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felkészítés-sorozat</label>
+              <input
+                list="operation-series"
+                value={form.series}
+                onChange={(e) => setForm({ ...form, series: e.target.value })}
+                placeholder="pl. 7×20 (üres = önálló)"
+                className="w-full bg-input border border-border px-3 py-2 text-sm"
+                style={{ borderRadius: "2px" }}
+              />
+              <datalist id="operation-series">{seriesOptions.map((s) => <option key={s} value={s} />)}</datalist>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szint</label>
+              <select
+                value={form.level}
+                onChange={(e) => setForm({ ...form, level: e.target.value })}
+                className="w-full bg-input border border-border px-3 py-2 text-sm"
+                style={{ borderRadius: "2px" }}
+              >
+                <option value="">—</option>
+                <option value="Alap">Alap</option>
+                <option value="Haladó">Haladó</option>
+                <option value="Emelt">Emelt</option>
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -670,6 +839,44 @@ export default function Operations() {
             <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as OperationStatus })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
               {currentCreateStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mit ad teljesítéskor (képesítés)</label>
+            <select value={form.qualificationId} onChange={(e) => setForm({ ...form, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+              <option value="">— nem ad képesítést —</option>
+              {qualTypeOptions.map((qt) => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">A megjelent résztvevők „Befejezett" státusznál automatikusan megkapják.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belépési követelmény(ek)</label>
+            <input value={prereqSearch} onChange={(e) => setPrereqSearch(e.target.value)} placeholder="Képesítés keresése…" className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: "2px" }} />
+            <div className="border border-border max-h-40 overflow-auto" style={{ borderRadius: "2px" }}>
+              {qualTypeOptions.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">Nincs képesítés-típus.</p>}
+              {qualTypeOptions
+                .filter((qt) => !prereqSearch.trim() || qt.name.toLowerCase().includes(prereqSearch.trim().toLowerCase()))
+                .map((qt) => {
+                  const checked = form.prerequisiteIds.includes(qt.id);
+                  return (
+                    <label key={qt.id} className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer hover:bg-secondary">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setForm((prev) => ({
+                          ...prev,
+                          prerequisiteIds: checked
+                            ? prev.prerequisiteIds.filter((id) => id !== qt.id)
+                            : [...prev.prerequisiteIds, qt.id],
+                        }))}
+                      />
+                      <span className="text-foreground">{qt.name}</span>
+                    </label>
+                  );
+                })}
+            </div>
+            {form.prerequisiteIds.length > 0 && <p className="text-[11px] text-muted-foreground mt-1">{form.prerequisiteIds.length} követelmény kiválasztva</p>}
           </div>
 
           <div>
@@ -783,9 +990,15 @@ export default function Operations() {
                           p.sztsz.includes(personSearch))
                       )
                       .slice(0, 50)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.rank}) – {p.sztsz}</option>
-                      ))}
+                      .map((p) => {
+                        const elig = eligibilityMap[p.id];
+                        const warn = elig && !elig.eligible;
+                        return (
+                          <option key={p.id} value={p.id}>
+                            {warn ? "⚠ " : ""}{p.name} ({p.rank}) – {p.sztsz}{warn ? ` — hiányzik: ${elig.missing.join(", ")}` : ""}
+                          </option>
+                        );
+                      })}
                   </select>
                 </div>
                 {detail.source === "exercise" && (

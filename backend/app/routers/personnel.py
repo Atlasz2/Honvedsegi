@@ -24,6 +24,7 @@ from ..models import (
     QualificationTypeModel, TrainingModel, UserModel,
 )
 from ..schemas import PersonCreate, PersonRead, PersonUpdate
+from ..audit import record_activity
 
 router = APIRouter(prefix="/api/personnel", tags=["personnel"])
 
@@ -93,7 +94,7 @@ def list_personnel_paged(
     base_query = select(PersonModel)
     if unit.strip():
         base_query = base_query.where(PersonModel.unit == unit.strip())
-    if status_filter.strip() and status_filter.strip() != "Osszes":
+    if status_filter.strip() and status_filter.strip() not in ("Osszes", "Összes"):
         base_query = base_query.where(PersonModel.status == status_filter.strip())
     persons = db.scalars(base_query).all()
 
@@ -172,33 +173,53 @@ def get_person_history(item_id: str, db: Session = Depends(get_db), _: UserModel
     return result
 
 
+def _person_snapshot(item: PersonModel) -> dict:
+    """A személy szerkeszthető mezőinek pillanatképe a naplóhoz/visszaállításhoz."""
+    return {
+        "name": item.name, "sztsz": item.sztsz, "rank": item.rank, "unit": item.unit,
+        "beosztas": item.beosztas or "", "status": item.status, "email": item.email,
+        "phone": item.phone, "birthDate": item.birth_date, "address": item.address,
+        "joinDate": item.join_date, "notes": item.notes,
+    }
+
+
 @router.post("", response_model=PersonRead)
-def create_person(payload: PersonCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def create_person(payload: PersonCreate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     normalized = _normalize_sztsz(payload.sztsz)
     _assert_unique_sztsz(db, normalized)
     item = PersonModel()
     payload.sztsz = normalized
     _apply_person(item, payload)
     db.add(item)
+    db.flush()
+    record_activity(db, user, mode="create", module="Személyek", record_name=item.name,
+                    entity="personnel", after=_person_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_person_with_qual_table(db, item)
 
 
 @router.put("/{item_id}", response_model=PersonRead)
-def update_person(item_id: str, payload: PersonUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def update_person(item_id: str, payload: PersonUpdate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, PersonModel, item_id)
+    before = _person_snapshot(item)
     normalized = _normalize_sztsz(payload.sztsz)
     _assert_unique_sztsz(db, normalized, exclude_id=item_id)
     payload.sztsz = normalized
     _apply_person(item, payload)
+    record_activity(db, user, mode="update", module="Személyek", record_name=item.name,
+                    entity="personnel", before=before, after=_person_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_person_with_qual_table(db, item)
 
 
 @router.delete("/{item_id}", status_code=204)
-def delete_person(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def delete_person(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, PersonModel, item_id)
+    before = _person_snapshot(item)
+    record_name = item.name
     db.delete(item)
+    record_activity(db, user, mode="delete", module="Személyek", record_name=record_name,
+                    entity="personnel", before=before)
     db.commit()
