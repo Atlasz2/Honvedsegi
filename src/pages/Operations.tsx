@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus } from "lucide-react";
-import { exercises, trainings, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict } from "@/lib/store";
-import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person, QualificationType } from "@/lib/types";
+import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
+import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
+import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person, QualificationType, Series } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -11,12 +11,12 @@ import DateTimePickerInput from "@/components/DateTimePickerInput";
 import { shortRank, rankWeight } from "@/lib/rank";
 import { toast } from "sonner";
 
-type OperationStatus = "Tervezett" | "Folyamatban" | "Befejezett" | "Törölve";
+// A művelet státusza megegyezik a gyakorlatéval — egy igazságforrás, nincs másolat.
+type OperationStatus = Exercise["status"];
 type OperationSource = "exercise" | "training";
 
-type OperationItem = {
+type OperationItemBase = {
   id: string;
-  source: OperationSource;
   name: string;
   type: string;
   startDate: string;
@@ -25,10 +25,18 @@ type OperationItem = {
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
-  series: string;
+  seriesId: string;
   level: string;
-  assigned: Array<Record<string, unknown>>;
 };
+
+/**
+ * A `source` diszkriminátor dönti el, milyen beosztás tartozik az elemhez:
+ * gyakorlatnál van `role`, kiképzésnél nincs. Így a fordító őrzi, hogy a
+ * szerep-mezőt csak gyakorlaton olvassuk ki.
+ */
+type OperationItem =
+  | (OperationItemBase & { source: "exercise"; assigned: ExerciseAssignment[] })
+  | (OperationItemBase & { source: "training"; assigned: TrainingAssignment[] });
 
 type CreateForm = {
   source: OperationSource;
@@ -43,7 +51,7 @@ type CreateForm = {
   status: OperationStatus;
   qualificationId: string;       // mit ad teljesítéskor
   prerequisiteIds: string[];     // belépési követelmények
-  series: string;                // felkészítés-sorozat (pl. 7×20)
+  seriesId: string;              // szülő felkészítés-sorozat (pl. 7×20)
   level: string;                 // Alap/Haladó/Emelt
 };
 
@@ -76,7 +84,7 @@ const emptyCreateForm: CreateForm = {
   status: "Tervezett",
   qualificationId: "",
   prerequisiteIds: [],
-  series: "",
+  seriesId: "",
   level: "",
 };
 
@@ -107,10 +115,10 @@ function normalizeExercise(item: Exercise): OperationItem {
     location: item.location,
     maxPersonnel: item.maxPersonnel,
     description: item.description,
-    status: item.status as OperationStatus,
-    series: item.series ?? "",
+    status: item.status,
+    seriesId: item.seriesId ?? "",
     level: item.level ?? "",
-    assigned: item.assigned as Array<Record<string, unknown>>,
+    assigned: item.assigned,
   };
 }
 
@@ -125,10 +133,10 @@ function normalizeTraining(item: Training): OperationItem {
     location: item.location,
     maxPersonnel: item.maxPersonnel,
     description: item.description,
-    status: item.status as OperationStatus,
-    series: item.series ?? "",
+    status: item.status,
+    seriesId: item.seriesId ?? "",
     level: item.level ?? "",
-    assigned: item.assigned as Array<Record<string, unknown>>,
+    assigned: item.assigned,
   };
 }
 
@@ -137,7 +145,15 @@ export default function Operations() {
   const { canEdit, user } = useAuth();
 
   const [data, setData] = useState<OperationItem[]>([]);
-  const [seriesFilter, setSeriesFilter] = useState("Összes");
+  const [seriesList, setSeriesList] = useState<Series[]>([]);
+  const [selectedSeries, setSelectedSeries] = useState<Series | null>(null);
+  const [seriesMatrix, setSeriesMatrix] = useState<SeriesMatrix | null>(null);
+  const [matrixLoading, setMatrixLoading] = useState(false);
+  const [seriesDeleteTarget, setSeriesDeleteTarget] = useState<Series | null>(null);
+  const [newSeriesOpen, setNewSeriesOpen] = useState(false);
+  const [newSeriesName, setNewSeriesName] = useState("");
+  const [newSeriesDesc, setNewSeriesDesc] = useState("");
+  const [savingSeries, setSavingSeries] = useState(false);
   const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
   const [rawTrainings, setRawTrainings] = useState<Training[]>([]);
   const [personnelData, setPersonnelData] = useState<Person[]>([]);
@@ -207,14 +223,16 @@ export default function Operations() {
 
   const refresh = useCallback(async () => {
     try {
-      const [exerciseData, trainingData, pData] = await Promise.all([
+      const [exerciseData, trainingData, pData, seriesData] = await Promise.all([
         exercises.getAll(),
         trainings.getAll(),
         pStore.getAll(),
+        seriesStore.getAll(),
       ]);
       setRawExercises(exerciseData);
       setRawTrainings(trainingData);
       setPersonnelData(pData);
+      setSeriesList(seriesData);
       const merged = [...exerciseData.map(normalizeExercise), ...trainingData.map(normalizeTraining)]
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(merged);
@@ -251,16 +269,10 @@ export default function Operations() {
       if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
-      if (seriesFilter === "__standalone__") { if (item.series) return false; }
-      else if (seriesFilter !== "Összes" && item.series !== seriesFilter) return false;
+      if (item.seriesId) return false;  // a sorozat-elemek a sorozat-kártyán belül jelennek meg
       return true;
     });
-  }, [data, search, filter, sourceFilter, dateFrom, dateTo, seriesFilter]);
-
-  const seriesOptions = useMemo(
-    () => Array.from(new Set(data.map((i) => i.series).filter(Boolean))).sort((a, b) => a.localeCompare(b, "hu")),
-    [data],
-  );
+  }, [data, search, filter, sourceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -313,6 +325,17 @@ export default function Operations() {
   useEffect(() => {
     qualificationTypes.getAll().then(setQualTypeOptions).catch(() => setQualTypeOptions([]));
   }, []);
+
+  useEffect(() => {
+    if (!selectedSeries) { setSeriesMatrix(null); return; }
+    let active = true;
+    setMatrixLoading(true);
+    seriesStore.matrix(selectedSeries.id)
+      .then((m) => { if (active) setSeriesMatrix(m); })
+      .catch(() => { if (active) setSeriesMatrix(null); })
+      .finally(() => { if (active) setMatrixLoading(false); });
+    return () => { active = false; };
+  }, [selectedSeries]);
 
   // A megnyitott művelet követelmény-jogosultsága (figyelmeztetéshez a beosztásnál).
   useEffect(() => {
@@ -444,9 +467,7 @@ export default function Operations() {
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, maxPersonnel: editForm.maxPersonnel,
           description: editForm.description, status: editForm.status as Exercise["status"],
-        });
-        await logAction(user!.displayName, user!.username, "módosítva", "Műveletek", editForm.name);
-      } else {
+        });      } else {
         const raw = rawTrainings.find((t) => t.id === editing.id);
         if (!raw) return;
         const trainingStatus = editForm.status === "Törölve" ? "Tervezett" : editForm.status;
@@ -456,9 +477,7 @@ export default function Operations() {
           location: editForm.location, organizer: editForm.organizer,
           maxPersonnel: editForm.maxPersonnel, description: editForm.description,
           status: trainingStatus as Training["status"],
-        });
-        await logAction(user!.displayName, user!.username, "módosítva", "Műveletek", editForm.name);
-      }
+        });      }
       toast.success("Sikeresen mentve");
       setEditing(null);
       await refresh();
@@ -474,14 +493,52 @@ export default function Operations() {
         await exercises.remove(deleteTarget.id);
       } else {
         await trainings.remove(deleteTarget.id);
-      }
-      await logAction(user!.displayName, user!.username, "törölve", "Műveletek", deleteTarget.name);
-      toast.success("Törölve");
+      }      toast.success("Törölve");
       setDetail(null);
       setDeleteTarget(null);
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
+    }
+  };
+
+  // ── Felkészítés-sorozatok ────────────────────────────────────────────────────
+
+  const openCreateInSeries = (seriesId: string) => {
+    setForm({ ...emptyCreateForm, seriesId });
+    setErrors({});
+    setSelectedSeries(null);
+    setCreating(true);
+  };
+
+  const handleDeleteSeries = async () => {
+    if (!seriesDeleteTarget) return;
+    try {
+      await seriesStore.remove(seriesDeleteTarget.id);
+      await logAction(user!.displayName, user!.username, "törölve", "Sorozatok", seriesDeleteTarget.name);
+      setSeriesDeleteTarget(null);
+      setSelectedSeries(null);
+      await refresh();
+      toast.success("Sorozat törölve (az elemei önállóvá váltak)");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleCreateSeries = async () => {
+    const name = newSeriesName.trim();
+    if (!name) { toast.error("Add meg a sorozat nevét"); return; }
+    setSavingSeries(true);
+    try {
+      await seriesStore.create({ name, description: newSeriesDesc.trim() });
+      await logAction(user!.displayName, user!.username, "létrehozva", "Sorozatok", name);
+      setNewSeriesName(""); setNewSeriesDesc(""); setNewSeriesOpen(false);
+      await refresh();
+      toast.success("Sorozat létrehozva");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSavingSeries(false);
     }
   };
 
@@ -531,15 +588,11 @@ export default function Operations() {
         description: form.description.trim(),
       };
       if (form.source === "exercise") {
-        const created = await exercises.add({ ...common, status: form.status, qualificationId: form.qualificationId, series: form.series.trim(), level: form.level, assigned: [] });
-        await prerequisites.set("exercise", created.id, form.prerequisiteIds);
-        await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
-      } else {
+        const created = await exercises.add({ ...common, status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
+        await prerequisites.set("exercise", created.id, form.prerequisiteIds);      } else {
         const trainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
-        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: form.qualificationId, series: form.series.trim(), level: form.level });
-        await prerequisites.set("training", created.id, form.prerequisiteIds);
-        await logAction(user!.displayName, user!.username, "létrehozva", "Műveletek", common.name);
-      }
+        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level });
+        await prerequisites.set("training", created.id, form.prerequisiteIds);      }
       toast.success("Művelet létrehozva");
       setCreating(false);
       setForm(emptyCreateForm);
@@ -563,6 +616,11 @@ export default function Operations() {
           {canEdit && (
             <button onClick={() => setQualMgrOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
               <GraduationCap className="w-4 h-4" /> Képzettségek
+            </button>
+          )}
+          {canEdit && (
+            <button onClick={() => setNewSeriesOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
+              <Layers className="w-4 h-4" /> Új sorozat
             </button>
           )}
           {canEdit && (
@@ -592,6 +650,30 @@ export default function Operations() {
         <div className="stats-card"><div className="stats-number">{statusCounts.Törölve}</div><div className="stats-label">Törölve</div></div>
       </div>
 
+      {seriesList.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-bold uppercase tracking-military mb-3 flex items-center gap-2">
+            <Layers className="w-4 h-4 text-primary" /> Felkészítés-sorozatok
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {seriesList.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSelectedSeries(s)}
+                className="text-left bg-card border border-border border-l-2 border-l-primary p-4 hover:bg-secondary transition-colors"
+                style={{ borderRadius: "2px" }}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Layers className="w-4 h-4 text-primary" />
+                  <h3 className="font-bold font-rajdhani">{s.name}</h3>
+                </div>
+                <p className="text-xs text-muted-foreground font-mono">{s.itemCount} elem — belépéshez kattints</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-2 mb-6 flex-wrap items-end">
         <div className="relative flex-1 max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -613,19 +695,6 @@ export default function Operations() {
             {s}
           </button>
         ))}
-        {seriesOptions.length > 0 && (
-          <select
-            value={seriesFilter}
-            onChange={(e) => { setSeriesFilter(e.target.value); setPage(1); }}
-            className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
-            style={{ borderRadius: "2px" }}
-            title="Felkészítés-sorozat"
-          >
-            <option value="Összes">Minden sorozat</option>
-            {seriesOptions.map((s) => <option key={s} value={s}>{s}</option>)}
-            <option value="__standalone__">Önálló (sorozat nélkül)</option>
-          </select>
-        )}
         <div>
           <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Intervallum eleje</label>
           <DatePickerInput value={dateFrom} onChange={setDateFrom} className="px-2 py-1.5 text-xs" />
@@ -656,10 +725,8 @@ export default function Operations() {
                   {item.source === "exercise" ? <Crosshair className="w-3.5 h-3.5 text-primary" /> : <GraduationCap className="w-3.5 h-3.5 text-primary" />}
                   <span className="mono-chip text-xs">{typeMap[item.type] || item.type}</span>
                   <span className="mono-chip text-[10px]">{item.source === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}</span>
-                  {item.series && (
-                    <span className="mono-chip text-[10px] bg-primary/15 text-primary" title="Felkészítés-sorozat">
-                      {item.series}{item.level ? ` · ${item.level}` : ""}
-                    </span>
+                  {item.level && (
+                    <span className="mono-chip text-[10px] bg-primary/15 text-primary">{item.level}</span>
                   )}
                 </div>
                 <div className="space-y-1 text-sm text-muted-foreground">
@@ -694,6 +761,108 @@ export default function Operations() {
       )}
 
       {/* ── Létrehozás modal ──────────────────────────────────────────────── */}
+      <Modal open={!!selectedSeries} onClose={() => setSelectedSeries(null)} title={selectedSeries?.name ?? "Sorozat"} wide>
+        {selectedSeries && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs text-muted-foreground">{selectedSeries.description || "A sorozat elemei (modulok/szintek)."}</p>
+              {canEdit && (
+                <div className="flex items-center gap-2">
+                  <button onClick={() => openCreateInSeries(selectedSeries.id)} className="btn-mil-primary flex items-center gap-2 text-xs">
+                    <Plus className="w-4 h-4" /> Új elem a sorozatba
+                  </button>
+                  <button onClick={() => setSeriesDeleteTarget(selectedSeries)} className="btn-mil-danger text-xs">
+                    Sorozat törlése
+                  </button>
+                </div>
+              )}
+            </div>
+            {(() => {
+              const items = data.filter((o) => o.seriesId === selectedSeries.id);
+              return items.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">Még nincs elem ebben a sorozatban. Hozz létre egyet az „Új elem a sorozatba" gombbal.</p>
+              ) : (
+                <div className="border border-border" style={{ borderRadius: "2px" }}>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
+                        <th className="px-3 py-2">Megnevezés</th>
+                        <th className="px-3 py-2">Szint</th>
+                        <th className="px-3 py-2">Időszak</th>
+                        <th className="px-3 py-2">Állapot</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((o) => (
+                        <tr key={`${o.source}-${o.id}`} className="border-b border-border/50 hover:bg-secondary/40 cursor-pointer" onClick={() => { setSelectedSeries(null); setDetail(o); }}>
+                          <td className="px-3 py-1.5 font-rajdhani text-foreground">{o.name}</td>
+                          <td className="px-3 py-1.5 text-muted-foreground">{o.level || "—"}</td>
+                          <td className="px-3 py-1.5 text-muted-foreground text-xs">{formatDate(o.startDate)} → {formatDate(o.endDate)}</td>
+                          <td className="px-3 py-1.5"><span className={`px-2 py-0.5 text-xs uppercase font-mono ${statusClass[o.status]}`} style={{ borderRadius: "2px" }}>{o.status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-military mb-2">Haladási mátrix</h3>
+              {matrixLoading ? (
+                <p className="text-sm text-muted-foreground">Betöltés…</p>
+              ) : !seriesMatrix || seriesMatrix.rows.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Még senki nem teljesített elemet ebben a sorozatban.</p>
+              ) : (
+                <div className="overflow-x-auto border border-border" style={{ borderRadius: "2px" }}>
+                  <table className="text-sm">
+                    <thead>
+                      <tr className="text-xs uppercase tracking-military text-muted-foreground border-b border-border">
+                        <th className="px-3 py-2 text-left sticky left-0 bg-card">Név</th>
+                        {seriesMatrix.operations.map((o) => (
+                          <th key={o.id} className="px-2 py-2 text-center whitespace-nowrap">{o.name}{o.level ? ` (${o.level})` : ""}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {seriesMatrix.rows.map((r) => (
+                        <tr key={r.personnelId} className="border-b border-border/50">
+                          <td className="px-3 py-1.5 font-rajdhani text-foreground sticky left-0 bg-card">{r.name}</td>
+                          {seriesMatrix.operations.map((o) => (
+                            <td key={o.id} className="px-2 py-1.5 text-center">
+                              {r.completed.includes(o.id)
+                                ? <span className="text-emerald-400">✓</span>
+                                : <span className="text-muted-foreground/40">–</span>}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={newSeriesOpen} onClose={() => setNewSeriesOpen(false)} title="Új felkészítés-sorozat">
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Sorozat neve *</label>
+            <input value={newSeriesName} onChange={(e) => setNewSeriesName(e.target.value)} placeholder="pl. 7×20 Tartalékos szakfelkészítés" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>
+            <textarea value={newSeriesDesc} onChange={(e) => setNewSeriesDesc(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-20" style={{ borderRadius: "2px" }} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setNewSeriesOpen(false)} className="btn-mil-secondary text-xs">Mégse</button>
+            <button onClick={handleCreateSeries} disabled={savingSeries} className="btn-mil-primary text-xs">Létrehoz</button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal open={qualMgrOpen} onClose={() => setQualMgrOpen(false)} title="Képzettségek">
         <div className="space-y-4">
           <p className="text-xs text-muted-foreground">Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be.</p>
@@ -769,15 +938,9 @@ export default function Operations() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felkészítés-sorozat</label>
-              <input
-                list="operation-series"
-                value={form.series}
-                onChange={(e) => setForm({ ...form, series: e.target.value })}
-                placeholder="pl. 7×20 (üres = önálló)"
-                className="w-full bg-input border border-border px-3 py-2 text-sm"
-                style={{ borderRadius: "2px" }}
-              />
-              <datalist id="operation-series">{seriesOptions.map((s) => <option key={s} value={s} />)}</datalist>
+              <div className="w-full bg-input border border-border px-3 py-2 text-sm text-muted-foreground" style={{ borderRadius: "2px" }}>
+                {form.seriesId ? (seriesList.find((s) => s.id === form.seriesId)?.name ?? "Sorozat") : "Önálló (nincs sorozat)"}
+              </div>
             </div>
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szint</label>
@@ -794,6 +957,9 @@ export default function Operations() {
               </select>
             </div>
           </div>
+          {!!form.seriesId && (form.level === "Haladó" || form.level === "Emelt") && (
+            <p className="text-[11px] text-muted-foreground -mt-1">A rendszer automatikusan megköveteli az azonos nevű, eggyel alacsonyabb szintű elem képesítését (ha van).</p>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1114,6 +1280,13 @@ export default function Operations() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => { void handleDelete(); }}
         message={`Biztosan törli a következőt: „${deleteTarget?.name}"? Ez a művelet nem visszavonható.`}
+      />
+
+      <ConfirmDialog
+        open={!!seriesDeleteTarget}
+        onClose={() => setSeriesDeleteTarget(null)}
+        onConfirm={() => { void handleDeleteSeries(); }}
+        message={`Törli a(z) „${seriesDeleteTarget?.name}" sorozatot? Az elemei nem törlődnek, csak önállóvá válnak.`}
       />
     </div>
   );

@@ -23,6 +23,7 @@ import Leave from "@/pages/Leave";
 import Helyzetkep from "@/pages/Helyzetkep";
 import Availability from "@/pages/Availability";
 import Kovetelmenyek from "@/pages/Kovetelmenyek";
+import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -53,7 +54,7 @@ function AppRoutes() {
         <Route path="/figyelmeztetesek" element={<Alerts />} />
         {canEdit && <Route path="/settings" element={<SettingsPage />} />}
         <Route path="/activity-log" element={<ActivityLogPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </Layout>
   );

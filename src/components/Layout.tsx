@@ -35,7 +35,7 @@ const roleBadge: Record<string, string> = {
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout, isAdmin, canEdit } = useAuth();
+  const { user, logout, canEdit } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
 
@@ -105,7 +105,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Nav */}
         <nav className="flex-1 py-2 overflow-y-auto">
           {navItems.map(item => {
-            if (item.adminOnly && !isAdmin) return null;
             if (item.editorOnly && !canEdit) return null;
             const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
             const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;

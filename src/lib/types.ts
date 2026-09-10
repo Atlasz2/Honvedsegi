@@ -33,14 +33,21 @@ export interface Person {
   qualifications: string[];
 }
 
-export interface ExerciseAssignment {
+/**
+ * Egy eseményhez beosztott személy közös mezői. A gyakorlat- és kiképzés-beosztás
+ * ezt bővíti; a Műveletek oldal a kettőt együtt kezeli, ezért ez a közös szerződés.
+ */
+export interface PersonAssignment {
   personId: string;
   personName: string;
-  role: string;
   attendance?: string;
   rank?: string;
   rankShort?: string;
   sztsz?: string;
+}
+
+export interface ExerciseAssignment extends PersonAssignment {
+  role: string;
 }
 
 export interface Exercise {
@@ -54,19 +61,21 @@ export interface Exercise {
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
   qualificationId?: string;
-  series?: string;
+  seriesId?: string;
   level?: string;
   assigned: ExerciseAssignment[];
 }
 
-export interface TrainingAssignment {
-  personId: string;
-  personName: string;
+export interface Series {
+  id: string;
+  name: string;
+  description: string;
+  itemCount: number;
+}
+
+export interface TrainingAssignment extends PersonAssignment {
   attendance: 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
   qualificationApproved?: boolean;
-  rank?: string;
-  rankShort?: string;
-  sztsz?: string;
 }
 
 export interface Training {
@@ -81,7 +90,7 @@ export interface Training {
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
-  series?: string;
+  seriesId?: string;
   level?: string;
   assigned: TrainingAssignment[];
 }
