@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Clock, CheckCircle2, RefreshCw } from "lucide-react";
-import { qualificationAlerts } from "@/lib/store";
+import { qualificationAlerts, alerts as alertsStore, documents as docStore, type UnexcusedAlert, type ReadinessGap, type ExpiringDocument } from "@/lib/store";
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
 import { toast } from "sonner";
@@ -24,18 +24,27 @@ export default function Alerts() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState<QualificationAlert[]>([]);
   const [stats, setStats] = useState<QualificationStat[]>([]);
+  const [unexcused, setUnexcused] = useState<UnexcusedAlert[]>([]);
+  const [gaps, setGaps] = useState<ReadinessGap[]>([]);
+  const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
   const [daysAhead, setDaysAhead] = useState<DaysAhead>(60);
   const [showExpired, setShowExpired] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
+        alertsStore.unexcused(30),
+        alertsStore.readinessGaps(),
+        docStore.expiring(daysAhead),
       ]);
       setAlerts(alertData);
       setStats(statData);
+      setUnexcused(unexcusedData);
+      setGaps(gapData);
+      setExpiringDocs(docData);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -161,6 +170,94 @@ export default function Alerts() {
                       </td>
                     </tr>
                   ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Lejáró okmányok / alkalmasság */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <AlertTriangle className="w-4 h-4 text-primary" />
+          <h2 className="text-sm font-bold uppercase tracking-military">Lejáró okmányok / alkalmasság ({expiringDocs.length})</h2>
+        </div>
+        {expiringDocs.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Nincs lejáró okmány a kiválasztott időablakban</span></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full mil-table">
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Kategória</th><th>Megnevezés</th><th>Lejárat</th><th>Állapot</th></tr></thead>
+              <tbody>
+                {expiringDocs.map((d) => (
+                  <tr key={d.documentId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: d.personnelId } })}>
+                    <td className="font-medium">{d.name}</td>
+                    <td className="font-mono text-xs text-primary">{d.rank}</td>
+                    <td className="text-muted-foreground text-xs">{d.unit}</td>
+                    <td><span className="mono-chip text-[10px]">{d.category}</span></td>
+                    <td>{d.documentName}</td>
+                    <td className="font-mono text-xs">{d.expiryDate}</td>
+                    <td>
+                      <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${d.isExpired ? "badge-cancelled" : d.daysUntilExpiry <= 14 ? "badge-ongoing" : "badge-planned"}`} style={{ borderRadius: "2px" }}>
+                        {d.isExpired ? `Lejárt ${Math.abs(d.daysUntilExpiry)} napja` : `${d.daysUntilExpiry} nap`}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Igazolatlan távollétek */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <AlertTriangle className="w-4 h-4 text-destructive" />
+          <h2 className="text-sm font-bold uppercase tracking-military">Igazolatlan távollétek — 30 nap ({unexcused.length})</h2>
+        </div>
+        {unexcused.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Nincs igazolatlan távollét</span></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full mil-table">
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Dátum</th><th>Megjegyzés</th></tr></thead>
+              <tbody>
+                {unexcused.map((a, i) => (
+                  <tr key={`${a.personnelId}-${a.date}-${i}`} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: a.personnelId } })}>
+                    <td className="font-medium">{a.name}</td>
+                    <td className="font-mono text-xs text-primary">{a.rank}</td>
+                    <td className="text-muted-foreground text-xs">{a.unit}</td>
+                    <td className="font-mono text-xs">{a.date}</td>
+                    <td className="text-muted-foreground text-xs">{a.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Készenléti rés */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <AlertTriangle className="w-4 h-4 text-orange-500" />
+          <h2 className="text-sm font-bold uppercase tracking-military">Készenléti rés — érvényes képesítés nélkül ({gaps.length})</h2>
+        </div>
+        {gaps.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden aktív katonának van érvényes képesítése</span></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full mil-table">
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th></tr></thead>
+              <tbody>
+                {gaps.map((g) => (
+                  <tr key={g.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: g.personnelId } })}>
+                    <td className="font-medium">{g.name}</td>
+                    <td className="font-mono text-xs text-primary">{g.rank}</td>
+                    <td className="text-muted-foreground text-xs">{g.unit}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

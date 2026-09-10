@@ -33,8 +33,7 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 
 | # | Funkció | Méret | Alap | Leírás |
 |---|---------|-------|------|--------|
-| C1 | **Személyi okmányok és engedélyek** | M | bővít (képesítés-riasztás minta) | Igazolvány, nemzetbiztonsági ellenőrzés, belépő — lejárati figyeléssel. |
-| C2 | **Egészségügyi alkalmasság + fizikai felmérés** | M | bővít (képesítés) | Orvosi alkalmassági és fizikai állapotfelmérés eredménye, érvényesség, emlékeztető. |
+| C1+C2 | **Személyi okmányok és alkalmasság** ✅ | M | Igazolvány/nemzetbiztonsági/belépő + orvosi/fizikai alkalmasság, lejárattal. **Kész**: `PersonDocumentModel`, `/api/documents`, „Okmányok/Alkalmasság" fül a személy-részletben, `/api/documents/expiring` → a Figyelmeztetések oldalon. Ezzel a G4 riasztók teljesek. |
 | C3 | **Lőkiképzési jegyzék** | S | bővít (kiképzés) | Lőgyakorlat-eredmények, érvényesség. |
 
 ## D. Ügyintézés és iratkezelés
@@ -74,7 +73,7 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 | G8 | **Foglaltság-kereső** ✅ | M | „Szabad-e a lőtér 2 hét múlva?" — részleges helyszínnév + dátumtartomány. **Kész**: `/foglaltsag`, `/api/availability` (+ `/locations`), ékezet-érzéketlen, törölt/befejezett nem foglal. |
 | G2 | **Esemény-alapú jelenlét-kitöltés** ✅ | M | Egy gyakorlat/behívás beosztott névsorát egy gombbal a napi létszámba („ma gyakorlaton" → Szolgálatban). **Kész**: `/api/attendance/events` + `/fill`, esemény-kitöltő sor a `/letszam` oldalon. |
 | G3 | **Behívási készenlét-szűrő** | M | „Ki hívható be most": érvényes alkalmasság + nincs szabadságon + adott képesítés/egység. A B1-hez. |
-| G4 | **Proaktív riasztások egy helyen** | M | Lejáró okmány/alkalmasság/szerződés, igazolatlan távollét, rég nem képzett (készenléti rés). |
+| G4 | **Proaktív riasztások egy helyen** ✅ | M | Figyelmeztetések oldal: képesítés-lejárat + **igazolatlan távollét** (30 nap) + **készenléti rés** + **lejáró okmány/alkalmasság** (C1/C2). `routers/alerts.py` + `documents/expiring`. Hátra opció: szerződés-lejárat (B2). |
 | G5 | **Tömeges műveletek mindenhol** | S | Kijelölés + csoportos állapot/áthelyezés/értesítés (a létszámban már kész). |
 | G6 | **Gyors ugrás / command palette** | S | Bárhonnan keresés személyre vagy funkcióra. |
 | G7 | **Értesítési napló (offline-barát)** | M | Behívók/értesítések sablonból, nyomtatható; ki/mikor kapta. |
@@ -88,7 +87,7 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 | H1 | **Belépési követelmény / jogosultság** ✅ | M | Eseményhez szükséges képesítések; a rendszer megmondja, ki jogosult, kinek mi hiányzik. Progresszió (alap→haladó→emelt) és feltételek (pl. határszolgálat csak alapkiképzéssel). **Kész**: `/api/prerequisites` (+ `/eligibility`), `EventPrerequisiteModel`, lejárt képesítés nem számít. **Frissítés (06-18)**: a követelményt a művelet-űrlapon állítod; a `/kovetelmenyek` oldal **menüből kivéve** (route megmarad, jogosultság-áttekintő). |
 | H5 | **Képesítés-kezelés a Személyek oldalon** ✅ | S | A személy-részlet „Képesítségek" fülén a név beírása → ha nincs ilyen típus, létrejön, és kiadja (dátum alapból ma). Ez az egyetlen hely képesítés-TÍPUS létrehozására is. |
 | H2 | **Képesítés auto-jóváírása teljesítéskor** ✅ | M | „Befejezett" státusznál a megjelent résztvevők automatikusan megkapják a képzés/gyakorlat által adott képesítést (idempotens). **Kész**: gyakorlat is kapott `qualification_id`-t; `_grant_event_qualifications` (deps); új művelet létrehozásakor az Operations űrlapon állítható a **„mit ad"** és a **belépési követelmények** (keresővel). A kiképzések korábbi auto-jóváírásánál egy `autoflush=False` miatti latens hibát is javítottunk. |
-| H3 | **Képzési sorozat + szintek** ✅ (1. fázis) | M | A művelethez `series` (pl. „7×20") + `level` (Alap/Haladó/Emelt) mező. A Műveletek listája **sorozat-szűrővel** (együtt, de külön), a kártyákon sorozat·szint jelölés; a create-űrlapon beállítható. A szint-feltétel a „mit ad" + „követelmény" láncon (Alap ad képesítést → Haladó azt követeli). **Hátra (2. fázis): haladási mátrix** — ki melyik modult/szintet teljesítette. |
+| H3 | **Képzési sorozat (szülő kártya) + szintek** ✅ | M | Külön **sorozat-entitás** (`SeriesModel`, `/api/series`): a Műveletek oldalon **létrehozol egy „7×20" kártyát**, majd **belépve** hozod létre/listázod az elemeit (modulok, mind `series_id`-vel). Minden elemnek van `level` (Alap/Haladó/Emelt). A fő rács csak az önálló műveleteket mutatja; a sorozat-elemek a sorozat-kártya modaljában. A szint-feltétel a „mit ad" + „követelmény" láncon. **Haladási mátrix kész** (`/api/series/{id}/matrix`): a sorozat-modalban ki melyik modult/szintet teljesítette (Megjelent résztvevő), rács nézet. |
 | H4 | **Jogosultság-figyelmeztetés a beosztásnál** ✅ (1. fázis) | M | A művelet (Operations) beosztásánál a nem-jogosultak ⚠ jelölve a listában, és hozzáadáskor figyelmeztetés (hiányzó követelménnyel) — **gát nélkül** (a felhasználó döntése). Hátra (ha kérik): kemény kapu + parancsnoki engedély rögzítése (ki/mikor/indok) a `ParticipantModel`-en. |
 
 ---

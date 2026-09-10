@@ -4,7 +4,9 @@ import {
   personnel as pStore,
   personnelQualifications as pqStore,
   qualificationTypes as qtStore,
+  documents as docStore,
   getErrorMessage,
+  type PersonDocument,
 } from '@/lib/store';
 import type { PersonnelQualification, QualificationType } from '@/lib/types';
 import type { Person } from '@/lib/types';
@@ -86,7 +88,16 @@ interface Props {
 
 export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit }: Props) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'elozmenyek'>('alap');
+  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'okmanyok' | 'elozmenyek'>('alap');
+  const [docs, setDocs] = useState<PersonDocument[]>([]);
+  const [addingDoc, setAddingDoc] = useState(false);
+  const [docCategory, setDocCategory] = useState<'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb'>('Okmány');
+  const [docName, setDocName] = useState('');
+  const [docIdentifier, setDocIdentifier] = useState('');
+  const [docIssued, setDocIssued] = useState('');
+  const [docExpiry, setDocExpiry] = useState('');
+  const [docNotes, setDocNotes] = useState('');
+  const [savingDoc, setSavingDoc] = useState(false);
   const [qualifications, setQualifications] = useState<PersonnelQualification[]>([]);
   const [qualTypes, setQualTypes] = useState<QualificationType[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -112,12 +123,14 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
       pqStore.getForPerson(person.id),
       qtStore.getAll(),
       pStore.getHistory(person.id),
+      docStore.getForPerson(person.id),
     ])
-      .then(([quals, types, hist]) => {
+      .then(([quals, types, hist, personDocs]) => {
         if (!active) return;
         setQualifications(quals);
         setQualTypes(types);
         setHistory(hist as HistoryEntry[]);
+        setDocs(personDocs);
         setLoading(false);
       })
       .catch((err) => {
@@ -174,6 +187,39 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
     }
   }
 
+  async function handleAddDoc() {
+    const name = docName.trim();
+    if (!name) { toast.error('Add meg az okmány/alkalmasság nevét'); return; }
+    setSavingDoc(true);
+    try {
+      const created = await docStore.add(person.id, {
+        category: docCategory, name, identifier: docIdentifier,
+        issuedDate: docIssued, expiryDate: docExpiry || null, notes: docNotes,
+      });
+      setDocs(prev => [created, ...prev]);
+      setAddingDoc(false);
+      setDocName(''); setDocIdentifier(''); setDocIssued(''); setDocExpiry(''); setDocNotes('');
+      toast.success('Rögzítve');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setSavingDoc(false);
+    }
+  }
+
+  async function handleRemoveDoc(doc: PersonDocument) {
+    if (!confirm(`Törlöd a(z) "${doc.name}" tételt?`)) return;
+    try {
+      await docStore.remove(doc.id);
+      setDocs(prev => prev.filter(d => d.id !== doc.id));
+      toast.success('Törölve');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
+  const docExpiredCount = docs.filter(d => d.isExpired).length;
+
   const filteredHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
     if (!q) return history;
@@ -226,7 +272,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
 
         {/* Tab-navigáció */}
         <div className="flex border-b border-border gap-4">
-          {(['alap', 'kepesitsegek', 'elozmenyek'] as const).map((t) => (
+          {(['alap', 'kepesitsegek', 'okmanyok', 'elozmenyek'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -238,6 +284,12 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                    Képesítések
                    {expiredCount > 0 && <span className="px-1 text-xs badge-cancelled">{expiredCount}</span>}
                    {expiringSoonCount > 0 && !expiredCount && <span className="px-1 text-xs badge-reserve">{expiringSoonCount}</span>}
+                 </span>
+               ) :
+               t === 'okmanyok' ? (
+                 <span className="flex items-center gap-1">
+                   Okmányok/Alkalmasság
+                   {docExpiredCount > 0 && <span className="px-1 text-xs badge-cancelled">{docExpiredCount}</span>}
                  </span>
                ) : `Előzmények (${history.length})`}
             </button>
@@ -381,6 +433,79 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
             )}
 
             {/* ── Előzmények tab ── */}
+            {tab === 'okmanyok' && (
+              <div className="space-y-3">
+                {canEdit && (
+                  !addingDoc ? (
+                    <button onClick={() => setAddingDoc(true)} className="btn-mil-secondary text-xs">+ Okmány / alkalmasság hozzáadása</button>
+                  ) : (
+                    <div className="border border-border p-3 space-y-3" style={{ borderRadius: '2px' }}>
+                      <p className="text-xs uppercase tracking-military text-primary font-mono">Új tétel</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Kategória</label>
+                          <select value={docCategory} onChange={e => setDocCategory(e.target.value as 'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb')} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }}>
+                            <option value="Okmány">Okmány</option>
+                            <option value="Alkalmasság">Alkalmasság</option>
+                            <option value="Szerződés">Szerződés (jogviszony)</option>
+                            <option value="Egyéb">Egyéb</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Megnevezés *</label>
+                          <input value={docName} onChange={e => setDocName(e.target.value)} placeholder="pl. Katonai igazolvány / Orvosi alkalmasság" className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Azonosító (opcionális)</label>
+                          <input value={docIdentifier} onChange={e => setDocIdentifier(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Kiállítás dátuma</label>
+                          <input type="date" value={docIssued} onChange={e => setDocIssued(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Lejárat (opcionális)</label>
+                          <input type="date" value={docExpiry} onChange={e => setDocExpiry(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Megjegyzés</label>
+                          <input value={docNotes} onChange={e => setDocNotes(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={handleAddDoc} disabled={savingDoc} className="btn-mil-primary text-xs">{savingDoc ? 'Mentés...' : 'Mentés'}</button>
+                        <button onClick={() => setAddingDoc(false)} className="btn-mil-secondary text-xs">Mégse</button>
+                      </div>
+                    </div>
+                  )
+                )}
+                {docs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-mono py-4">Nincs rögzített okmány / alkalmasság</p>
+                ) : (
+                  <table className="w-full mil-table">
+                    <thead><tr><th>Kategória</th><th>Megnevezés</th><th>Azonosító</th><th>Lejárat</th><th>Állapot</th>{canEdit && <th></th>}</tr></thead>
+                    <tbody>
+                      {docs.map(d => (
+                        <tr key={d.id}>
+                          <td><span className="mono-chip text-[10px]">{d.category}</span></td>
+                          <td className="font-mono text-sm">{d.name}</td>
+                          <td className="font-mono text-xs text-muted-foreground">{d.identifier || '—'}</td>
+                          <td className="font-mono text-xs">{d.expiryDate || '—'}</td>
+                          <td>
+                            {d.expiryDate == null ? <span className="text-xs text-muted-foreground">nincs lejárat</span>
+                              : d.isExpired ? <span className="px-2 py-0.5 text-xs badge-cancelled" style={{ borderRadius: '2px' }}>Lejárt</span>
+                              : (d.daysUntilExpiry ?? 99) <= 30 ? <span className="px-2 py-0.5 text-xs badge-reserve" style={{ borderRadius: '2px' }}>{d.daysUntilExpiry} nap</span>
+                              : <span className="px-2 py-0.5 text-xs badge-active" style={{ borderRadius: '2px' }}>Érvényes</span>}
+                          </td>
+                          {canEdit && <td><button onClick={() => handleRemoveDoc(d)} className="text-xs text-destructive hover:text-destructive/80 font-mono">Törlés</button></td>}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
             {tab === 'elozmenyek' && (
               <div className="space-y-3">
                 <div>

@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from .models import (
     ActivityLogModel, AnnouncementModel, DutyModel, EquipmentModel,
-    EventModel, ExerciseModel, LoginAttemptModel, ParticipantModel, PersonModel,
+    EventModel, EventPrerequisiteModel, ExerciseModel, LoginAttemptModel, ParticipantModel, PersonModel,
     PersonnelQualificationModel, QualificationTypeModel,
     SessionTokenModel, SupplyModel, TrainingModel, UserModel, VehicleModel, new_id,
 )
@@ -541,6 +541,39 @@ def _grant_event_qualifications(db: Session, event_type: str, event_id: str, qua
         ))
         granted += 1
     return granted
+
+
+_LEVEL_PREV = {"Haladó": "Alap", "Emelt": "Haladó"}
+
+
+def _auto_chain_prerequisites(db: Session, event_type: str, event_id: str, series_id: str, level: str, module_name: str) -> None:
+    """Sorozaton belüli szint-lánc: a Haladó/Emelt elem automatikusan megköveteli
+    az azonos NEVŰ (modul) előző szintű elem által adott képesítést. Így a
+    progresszió (Alap→Haladó→Emelt) kézi követelmény-beállítás nélkül összeáll."""
+    if not series_id:
+        return
+    prev_level = _LEVEL_PREV.get(level)
+    if not prev_level:
+        return
+    key = (module_name or "").strip().lower()
+    qual_ids: set[str] = set()
+    for model in (ExerciseModel, TrainingModel):
+        for item in db.scalars(select(model).where(model.series_id == series_id, model.level == prev_level)).all():
+            if (item.name or "").strip().lower() != key:
+                continue
+            if item.qualification_id:
+                qual_ids.add(item.qualification_id)
+    if not qual_ids:
+        return
+    existing = set(db.scalars(
+        select(EventPrerequisiteModel.qual_type_id).where(
+            EventPrerequisiteModel.event_type == event_type,
+            EventPrerequisiteModel.event_id == event_id,
+        )
+    ).all())
+    for qual_id in qual_ids:
+        if qual_id not in existing:
+            db.add(EventPrerequisiteModel(id=new_id(), event_type=event_type, event_id=event_id, qual_type_id=qual_id))
 
 
 def _apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpdate) -> None:

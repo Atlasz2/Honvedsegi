@@ -8,13 +8,24 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_training, _get_current_user, _load_participants_by_event, _require_editor,
-    _require_model, _serialize_training, _sync_participants,
+    _apply_training, _auto_chain_prerequisites, _get_current_user, _load_participants_by_event,
+    _require_editor, _require_model, _serialize_training, _sync_participants,
 )
+from ..audit import record_activity
 from ..models import (
     ParticipantModel, PersonnelQualificationModel,
     QualificationTypeModel, TrainingModel, UserModel, new_id,
 )
+
+
+def _training_snapshot(item: TrainingModel) -> dict:
+    return {
+        "id": item.id, "name": item.name, "type": item.type,
+        "startDate": item.start_date, "endDate": item.end_date, "location": item.location,
+        "organizer": item.organizer or "", "qualificationId": item.qualification_id or "",
+        "maxPersonnel": item.max_personnel, "description": item.description, "status": item.status,
+        "seriesId": item.series_id or "", "level": item.level or "",
+    }
 from ..schemas import (
     ParticipantCreate, ParticipantRead, ParticipantUpdate,
     TrainingCreate, TrainingRead, TrainingUpdate,
@@ -78,34 +89,45 @@ def list_trainings(db: Session = Depends(get_db), _: UserModel = Depends(_get_cu
 
 
 @router.post("", response_model=TrainingRead, status_code=status.HTTP_201_CREATED)
-def create_training(payload: TrainingCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def create_training(payload: TrainingCreate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = TrainingModel()
     _apply_training(item, payload)
     db.add(item)
     db.flush()
     _sync_participants(db, "training", item.id, payload.assigned)
     _auto_grant_qualifications(db, item)
+    _auto_chain_prerequisites(db, "training", item.id, item.series_id, item.level, item.name)
+    record_activity(db, user, mode="create", module="Műveletek", record_name=item.name,
+                    entity="training", after=_training_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_training(db, item)
 
 
 @router.put("/{item_id}", response_model=TrainingRead)
-def update_training(item_id: str, payload: TrainingUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def update_training(item_id: str, payload: TrainingUpdate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, TrainingModel, item_id)
+    before = _training_snapshot(item)
     _apply_training(item, payload)
     _sync_participants(db, "training", item_id, payload.assigned)
     _auto_grant_qualifications(db, item)
+    _auto_chain_prerequisites(db, "training", item_id, item.series_id, item.level, item.name)
+    record_activity(db, user, mode="update", module="Műveletek", record_name=item.name,
+                    entity="training", before=before, after=_training_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_training(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_training(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def delete_training(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, TrainingModel, item_id)
+    before = _training_snapshot(item)
+    record_name = item.name
     _sync_participants(db, "training", item_id, [])
     db.delete(item)
+    record_activity(db, user, mode="delete", module="Műveletek", record_name=record_name,
+                    entity="training", before=before)
     db.commit()
 
 

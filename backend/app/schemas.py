@@ -131,6 +131,33 @@ class EligibilityPerson(BaseModel):
     missing: list[str]
 
 
+# ── Személyi okmányok / alkalmasság ─────────────────────────────────────────
+
+DocumentCategory = Literal["Okmány", "Alkalmasság", "Szerződés", "Egyéb"]
+
+
+class PersonDocumentCreate(BaseModel):
+    category: DocumentCategory = "Okmány"
+    name: str
+    identifier: str = ""
+    issuedDate: str = ""
+    expiryDate: str | None = None
+    notes: str = ""
+
+
+class PersonDocumentRead(BaseModel):
+    id: str
+    personnelId: str
+    category: str
+    name: str
+    identifier: str
+    issuedDate: str
+    expiryDate: str | None
+    notes: str
+    isExpired: bool
+    daysUntilExpiry: int | None
+
+
 # ── Szabadság / távollét ────────────────────────────────────────────────────
 
 class LeaveRequestCreate(BaseModel):

@@ -309,6 +309,22 @@ class AnnouncementModel(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class PersonDocumentModel(Base):
+    """Személyi okmány / alkalmasság, lejárattal (igazolvány, nemzetbiztonsági
+    ellenőrzés, belépő, orvosi vagy fizikai alkalmasság). Lejáráskor a riasztó
+    rendszer jelzi."""
+    __tablename__ = "person_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    category: Mapped[str] = mapped_column(String, default="Okmány")  # Okmány / Alkalmasság / Egyéb
+    name: Mapped[str] = mapped_column(String)
+    identifier: Mapped[str] = mapped_column(String, default="")  # okmányszám (opcionális)
+    issued_date: Mapped[str] = mapped_column(String, default="")
+    expiry_date: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
 class ActivityLogModel(Base):
     __tablename__ = "activity_logs"
 

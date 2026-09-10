@@ -80,7 +80,7 @@ def _ensure_extended_schema(db: Session) -> None:
     exercises_cols = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
     if "qualification_id" not in exercises_cols:
         db.execute(text("ALTER TABLE exercises ADD COLUMN qualification_id TEXT"))
-    for col in ("series", "level"):
+    for col in ("series_id", "level"):
         if col not in trainings_cols:
             db.execute(text(f"ALTER TABLE trainings ADD COLUMN {col} TEXT DEFAULT ''"))
         if col not in exercises_cols:

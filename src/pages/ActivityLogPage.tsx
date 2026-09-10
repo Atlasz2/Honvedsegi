@@ -35,6 +35,10 @@ const FIELD_LABELS: Record<string, string> = {
   address: 'Lakcím',
   joinDate: 'Bevonulás',
   notes: 'Megjegyzés',
+  maxPersonnel: 'Max létszám',
+  description: 'Leírás',
+  seriesId: 'Sorozat',
+  level: 'Szint',
 };
 
 function formatValue(value: unknown): string {

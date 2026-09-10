@@ -13,6 +13,7 @@ import {
   QualificationType,
   Supply,
   Training,
+  Series,
   AppEvent,
   User,
   Vehicle,
@@ -291,6 +292,74 @@ export function checkLocationConflicts(
 }
 export const exercises = createCrud<Exercise>('/exercises');
 export const trainings = createCrud<Training>('/trainings');
+
+export type SeriesMatrix = {
+  operations: { id: string; name: string; level: string; source: string; startDate: string }[];
+  rows: { personnelId: string; name: string; completed: string[] }[];
+};
+
+export const series = {
+  getAll: () => request<Series[]>('/series'),
+  create: (payload: { name: string; description?: string }) =>
+    request<Series>('/series', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (id: string, payload: { name: string; description?: string }) =>
+    request<Series>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (id: string) => request<void>(`/series/${id}`, { method: 'DELETE' }),
+  matrix: (id: string) => request<SeriesMatrix>(`/series/${id}/matrix`),
+};
+
+export type UnexcusedAlert = { personnelId: string; name: string; rank: string; unit: string; date: string; note: string };
+export type ReadinessGap = { personnelId: string; name: string; rank: string; unit: string };
+
+export const alerts = {
+  unexcused: (days = 30) => request<UnexcusedAlert[]>(`/alerts/unexcused?days=${days}`),
+  readinessGaps: () => request<ReadinessGap[]>('/alerts/readiness-gaps'),
+};
+
+export type PersonDocument = {
+  id: string;
+  personnelId: string;
+  category: string;
+  name: string;
+  identifier: string;
+  issuedDate: string;
+  expiryDate: string | null;
+  notes: string;
+  isExpired: boolean;
+  daysUntilExpiry: number | null;
+};
+
+export type DocumentPayload = {
+  category: string;
+  name: string;
+  identifier?: string;
+  issuedDate?: string;
+  expiryDate?: string | null;
+  notes?: string;
+};
+
+export type ExpiringDocument = {
+  documentId: string;
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  category: string;
+  documentName: string;
+  expiryDate: string | null;
+  isExpired: boolean;
+  daysUntilExpiry: number;
+};
+
+export const documents = {
+  getForPerson: (personId: string) => request<PersonDocument[]>(`/documents/personnel/${personId}`),
+  add: (personId: string, payload: DocumentPayload) =>
+    request<PersonDocument>(`/documents/personnel/${personId}`, { method: 'POST', body: JSON.stringify(payload) }),
+  update: (docId: string, payload: DocumentPayload) =>
+    request<PersonDocument>(`/documents/${docId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (docId: string) => request<void>(`/documents/${docId}`, { method: 'DELETE' }),
+  expiring: (days = 60) => request<ExpiringDocument[]>(`/documents/expiring?days=${days}`),
+};
 export const events = createCrud<AppEvent>('/events');
 export const duties = createCrud<Duty>('/duties');
 export const announcements = createCrud<Announcement>('/announcements',);

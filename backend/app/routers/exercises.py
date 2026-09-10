@@ -8,10 +8,21 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import (
-    _apply_exercise, _get_current_user, _grant_event_qualifications, _load_participants_by_event,
-    _require_editor, _require_model, _serialize_exercise, _sync_participants,
+    _apply_exercise, _auto_chain_prerequisites, _get_current_user, _grant_event_qualifications,
+    _load_participants_by_event, _require_editor, _require_model, _serialize_exercise, _sync_participants,
 )
+from ..audit import record_activity
 from ..models import ExerciseModel, ParticipantModel, UserModel, new_id
+
+
+def _exercise_snapshot(item: ExerciseModel) -> dict:
+    return {
+        "id": item.id, "name": item.name, "type": item.type,
+        "startDate": item.start_date, "endDate": item.end_date,
+        "location": item.location, "maxPersonnel": item.max_personnel, "description": item.description,
+        "status": item.status, "qualificationId": item.qualification_id or "",
+        "seriesId": item.series_id or "", "level": item.level or "",
+    }
 from ..schemas import (
     ExerciseCreate, ExerciseRead, ExerciseUpdate,
     ParticipantCreate, ParticipantRead, ParticipantUpdate,
@@ -28,7 +39,7 @@ def list_exercises(db: Session = Depends(get_db), _: UserModel = Depends(_get_cu
 
 
 @router.post("", response_model=ExerciseRead, status_code=status.HTTP_201_CREATED)
-def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = ExerciseModel()
     _apply_exercise(item, payload)
     db.add(item)
@@ -36,31 +47,39 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db), _: U
     _sync_participants(db, "exercise", item.id, payload.assigned)
     if item.status == "Befejezett":
         _grant_event_qualifications(db, "exercise", item.id, item.qualification_id)
+    _auto_chain_prerequisites(db, "exercise", item.id, item.series_id, item.level, item.name)
+    record_activity(db, user, mode="create", module="Műveletek", record_name=item.name,
+                    entity="exercise", after=_exercise_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_exercise(db, item)
 
 
 @router.put("/{item_id}", response_model=ExerciseRead)
-def update_exercise(item_id: str, payload: ExerciseUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def update_exercise(item_id: str, payload: ExerciseUpdate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, ExerciseModel, item_id)
+    before = _exercise_snapshot(item)
     _apply_exercise(item, payload)
     _sync_participants(db, "exercise", item_id, payload.assigned)
     if item.status == "Befejezett":
         _grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
+    _auto_chain_prerequisites(db, "exercise", item_id, item.series_id, item.level, item.name)
+    record_activity(db, user, mode="update", module="Műveletek", record_name=item.name,
+                    entity="exercise", before=before, after=_exercise_snapshot(item))
     db.commit()
     db.refresh(item)
     return _serialize_exercise(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_exercise(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def delete_exercise(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
     item = _require_model(db, ExerciseModel, item_id)
-    db.execute(
-        select(ParticipantModel).where(ParticipantModel.event_type == "exercise", ParticipantModel.event_id == item_id)
-    )
+    before = _exercise_snapshot(item)
+    record_name = item.name
     _sync_participants(db, "exercise", item_id, [])
     db.delete(item)
+    record_activity(db, user, mode="delete", module="Műveletek", record_name=record_name,
+                    entity="exercise", before=before)
     db.commit()
 
 
