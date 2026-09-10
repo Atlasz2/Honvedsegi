@@ -995,3 +995,73 @@ Clean code ürügyén könnyű túlmérnökölni. Ezeket **hagyd békén**:
 | Alembic bevezetése | A `migrate.py` + `startup.py` páros működik, tesztelt. Ha később bonyolódik, akkor térj vissza rá. |
 | Teljes frontend-újraírás react-queryre egy menetben | 22 oldal egyszerre = nem review-zható PR. Oldalanként, a 6.1 szerint. |
 | Data-at-rest titkosítás | Egyeztetés szerint ez a **legutolsó** lépés, minden más után. |
+
+---
+
+# Végrehajtási napló
+
+## ✅ Elkészült (2026-09-10)
+
+Ág: `takaritas-es-retegek`. Minden lépés után zöld teszt + build.
+
+| Lépés | Állapot | Eredmény |
+|---|---|---|
+| 1.1 Git-higiénia | ✅ | Követett fájlok 283 → 205, 0 db `.pyc` |
+| 1.2 `backend/main.py` | ✅ | Törölve a hitelesítés nélküli adat-API |
+| 1.3 Halott frontend | ✅ | 4 oldal törölve, `NotFound` bekötve és átírva |
+| 1.4 Műveletek v2 | ⏸️ | Döntés: **befejezzük** — külön menetben (lásd lent) |
+| 1.5 Hibabejelentő | ✅ | Törölve (a `BugReportModel` sosem létezett) |
+| 2.1 `services/` bekötése | ✅ | `imports` 292→44, `reports` 474→79 sor |
+| 2.2 `deps.py` szétbontása | ✅ | 670 sor → 7 modul |
+| 2.3 Publikus nevek | ✅ | Aláhúzás csak a valóban privátokon |
+| 2.4 Dependency-aliasok | ✅ | `core/dependencies.py`, ~120 import megszűnt |
+| 2.5 `issue_token()` | ✅ | Csak az `auth.py`-ban maradt |
+| 2.6 Törzsadatok | ✅ | `/api/reference` + migráció + őr-tesztek |
+| 3.1 `typecheck` script | ✅ | Bekötve, hibaszám 13 → 6 |
+
+**Tesztek: 68 → 103.** Új: `test_imports.py` (10), `test_reports.py` (20),
+`test_reference.py` (4).
+
+## A refaktor közben felszínre került, addig rejtett hibák
+
+1. **A `role` mező modellezési hibája** (`Operations.tsx`). A cast eltávolítása
+   után derült ki, hogy a kód minden beosztásnál kiolvasta a `role`-t, ami csak
+   gyakorlaton létezik. Futásidőben véletlenül jó volt; diszkriminált unióval
+   javítva.
+2. **A felhasználó a rosszabb hibaüzeneteket kapta.** A `services/imports.py`
+   ékezetes üzenetei két hónapja készen álltak, csak nem voltak bekötve.
+3. **Élő rendfokozat-elcsúszás.** A seed a zászlóalj-állomány 26%-át "Honvéd"
+   fokozatúra generálta, amit a frontend létrája nem ismert — 0 rendezési súly,
+   rövidítés nélkül. Három különböző szókincs volt forgalomban.
+4. **Hiányzó `date` import** az `appliers.py`-ban, amit a képesítés-jóváírás
+   tesztje azonnal elkapott.
+5. **A hibabejelentő importálni sem volt képes** — a `BugReportModel` soha nem
+   került be a `models.py`-ba.
+
+## ⏭️ Következő: a Műveletek v2 befejezése (1.4)
+
+A döntés **A) Befejezés**. A felmérés óta pontosodott a kép: ez nem „bekötés",
+hanem **feature-építés**, mert az alapok is hiányoznak.
+
+**Ami már megvan:** `services/operations.py` (523 sor) és `services/lifecycle.py`
+(106 sor) üzleti logikája, valamint a négy frontend komponens váza (466 sor).
+
+**Ami hiányzik — meg kell írni:**
+
+| Réteg | Hiányzik |
+|---|---|
+| `models.py` | `MaterialRequirementModel`, `OperationDocumentModel` (az `AttendanceModel` megvan) |
+| `schemas.py` | `OperationTreeNode`, `AttendanceEntryRead`, `AttendanceEntryUpdate`, `AttendanceBatchUpdateRequest`, `MaterialRequirementBase/Read/Update`, `OperationDocumentRead` |
+| router | Új `routers/operations_v2.py`, ~15 endpoint, regisztrálva a `main.py`-ban |
+| `types.ts` | `OperationTreeNode`, `OperationDocument`, `MaterialRequirement`, `RequirementStatus` (az `AttendanceEntry`/`AttendanceStatus` a `store.ts`-ben van, oda költözik) |
+| `store.ts` | `operationsV2` modul a fenti endpointokhoz |
+| `Operations.tsx` | A négy komponens bekötése |
+| tesztek | Fa, jelenlét, anyagigény, dokumentum-feltöltés |
+
+**Ezért a 4.1-es feltöltés-biztonsági munka (MIME a kiterjesztésből, escapelt
+`Content-Disposition`, chunkolt olvasás) NEM tárgytalan — a bekötés előtt
+kötelező.** Amíg a router nincs regisztrálva, a sebezhetőség nem elérhető.
+
+A `services/operations.py` jelenleg **nem importálható** (`MaterialRequirementModel`
+hiányzik), ezért a 3.2-es 6 maradék típushiba és ez a két service marad az
+egyetlen ismert „nem futó" kód a repóban — tudatosan, a befejezésig.
