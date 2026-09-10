@@ -2,29 +2,17 @@ from __future__ import annotations
 
 import unicodedata
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import (
-    _apply_person,
-    _assert_unique_sztsz,
-    _get_current_user,
-    _load_qualification_ids_by_person,
-    _normalize_sztsz,
-    _require_editor,
-    _require_model,
-    _serialize_person_with_qual_table,
-    _serialize_person_with_quals,
-)
-from ..models import (
-    DutyModel, EventModel, ExerciseModel,
-    ParticipantModel, PersonModel, PersonnelQualificationModel,
-    QualificationTypeModel, TrainingModel, UserModel,
-)
-from ..schemas import PersonCreate, PersonRead, PersonUpdate
+from ..appliers import apply_person
 from ..audit import record_activity
+from ..core.dependencies import DB, Reader, Editor
+from ..models import DutyModel, EventModel, ExerciseModel, ParticipantModel, PersonModel, TrainingModel
+from ..repository import require_model
+from ..schemas import PersonCreate, PersonRead, PersonUpdate
+from ..serializers import load_qualification_ids_by_person, serialize_person_with_qual_table, serialize_person_with_quals
+from ..validation import assert_unique_sztsz, normalize_sztsz
 
 router = APIRouter(prefix="/api/personnel", tags=["personnel"])
 
@@ -68,14 +56,16 @@ def _sort_persons(persons: list[PersonModel], sort_by: str, sort_dir: str) -> li
 
 
 @router.get("", response_model=list[PersonRead])
-def list_personnel(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
-    quals_by_person = _load_qualification_ids_by_person(db)
+def list_personnel(db: DB, _: Reader):
+    quals_by_person = load_qualification_ids_by_person(db)
     persons = _sort_persons(db.scalars(select(PersonModel)).all(), "name", "asc")
-    return [_serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in persons]
+    return [serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in persons]
 
 
 @router.get("/paged")
 def list_personnel_paged(
+    db: DB,
+    _: Reader,
     page: int = 1,
     page_size: int = 25,
     q: str = "",
@@ -84,8 +74,6 @@ def list_personnel_paged(
     qualification: str = "",
     sort_by: str = "name",
     sort_dir: str = "asc",
-    db: Session = Depends(get_db),
-    _: UserModel = Depends(_get_current_user),
 ):
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
@@ -99,7 +87,7 @@ def list_personnel_paged(
     persons = db.scalars(base_query).all()
 
     # All qualifications loaded once, keyed by person — no per-person query.
-    quals_by_person = _load_qualification_ids_by_person(db)
+    quals_by_person = load_qualification_ids_by_person(db)
 
     qf = qualification.strip()
     if qf:
@@ -124,7 +112,7 @@ def list_personnel_paged(
     page_persons = persons[offset: offset + page_size]
 
     # Build response objects only for the current page, not the whole result set.
-    items = [_serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in page_persons]
+    items = [serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in page_persons]
     return {
         "items": [i.model_dump() for i in items],
         "page": page,
@@ -143,9 +131,9 @@ _EVENT_MODELS = {
 
 
 @router.get("/{item_id}/history")
-def get_person_history(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+def get_person_history(item_id: str, db: DB, _: Reader):
     """Egy személy teljes eseménytörténete névvel és dátumokkal."""
-    _require_model(db, PersonModel, item_id)
+    require_model(db, PersonModel, item_id)
     rows = db.scalars(
         select(ParticipantModel)
         .where(ParticipantModel.personnel_id == item_id)
@@ -184,39 +172,39 @@ def _person_snapshot(item: PersonModel) -> dict:
 
 
 @router.post("", response_model=PersonRead)
-def create_person(payload: PersonCreate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
-    normalized = _normalize_sztsz(payload.sztsz)
-    _assert_unique_sztsz(db, normalized)
+def create_person(payload: PersonCreate, db: DB, user: Editor):
+    normalized = normalize_sztsz(payload.sztsz)
+    assert_unique_sztsz(db, normalized)
     item = PersonModel()
     payload.sztsz = normalized
-    _apply_person(item, payload)
+    apply_person(item, payload)
     db.add(item)
     db.flush()
     record_activity(db, user, mode="create", module="Személyek", record_name=item.name,
                     entity="personnel", after=_person_snapshot(item))
     db.commit()
     db.refresh(item)
-    return _serialize_person_with_qual_table(db, item)
+    return serialize_person_with_qual_table(db, item)
 
 
 @router.put("/{item_id}", response_model=PersonRead)
-def update_person(item_id: str, payload: PersonUpdate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
-    item = _require_model(db, PersonModel, item_id)
+def update_person(item_id: str, payload: PersonUpdate, db: DB, user: Editor):
+    item = require_model(db, PersonModel, item_id)
     before = _person_snapshot(item)
-    normalized = _normalize_sztsz(payload.sztsz)
-    _assert_unique_sztsz(db, normalized, exclude_id=item_id)
+    normalized = normalize_sztsz(payload.sztsz)
+    assert_unique_sztsz(db, normalized, exclude_id=item_id)
     payload.sztsz = normalized
-    _apply_person(item, payload)
+    apply_person(item, payload)
     record_activity(db, user, mode="update", module="Személyek", record_name=item.name,
                     entity="personnel", before=before, after=_person_snapshot(item))
     db.commit()
     db.refresh(item)
-    return _serialize_person_with_qual_table(db, item)
+    return serialize_person_with_qual_table(db, item)
 
 
 @router.delete("/{item_id}", status_code=204)
-def delete_person(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
-    item = _require_model(db, PersonModel, item_id)
+def delete_person(item_id: str, db: DB, user: Editor):
+    item = require_model(db, PersonModel, item_id)
     before = _person_snapshot(item)
     record_name = item.name
     db.delete(item)

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import unicodedata
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from fastapi import APIRouter
+from sqlalchemy import select
 
-from ..db import get_db
-from ..deps import _get_current_user
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel, UserModel
+from ..core.dependencies import DB, Reader
+from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
 
 router = APIRouter(prefix="/api/conflicts", tags=["conflicts"])
 
@@ -26,13 +24,13 @@ def _dates_overlap(s1: str, e1: str, s2: str, e2: str) -> bool:
 
 @router.get("")
 def check_conflicts(
+    db: DB,
+    _: Reader,
     location: str = "",
     start_date: str = "",
     end_date: str = "",
     exclude_type: str = "",
     exclude_id: str = "",
-    db: Session = Depends(get_db),
-    _: UserModel = Depends(_get_current_user),
 ):
     """
     Return all events at the given location whose date range overlaps [start_date, end_date].

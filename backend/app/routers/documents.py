@@ -6,22 +6,16 @@ lejárati dátummal. A lejáró/lejárt tételeket a Figyelmeztetések oldal jel
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor
-from ..models import PersonDocumentModel, PersonModel, UserModel, new_id
+from ..core.dependencies import DB, Reader, Editor
+from ..models import PersonDocumentModel, PersonModel, new_id
 from ..schemas import PersonDocumentCreate, PersonDocumentRead
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 
 def _enrich(doc: PersonDocumentModel) -> PersonDocumentRead:

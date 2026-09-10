@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .constants import BACKEND_ENV, IS_PRODUCTION
 from .db import Base, SessionLocal, engine, get_db
-from .deps import _utc_now
+from .core.time import utc_now
 from .seed import seed_database
 from .migrate import run_all as run_migrations
 from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _ensure_extended_schema
@@ -112,7 +112,7 @@ def health(db: Session = Depends(get_db)) -> dict[str, str]:
         db.execute(text("SELECT 1"))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Adatbázis nem elérhető: {exc}") from exc
-    return {"status": "ok", "environment": BACKEND_ENV, "time": _utc_now().isoformat()}
+    return {"status": "ok", "environment": BACKEND_ENV, "time": utc_now().isoformat()}
 
 # ── Frontend ───────────────────────────────────────────────────────────────
 # Mounted last so the API routes above take precedence over the SPA catch-all.

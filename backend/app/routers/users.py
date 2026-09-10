@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from ..constants import GOD_USERNAME, GOD_ROLE
-from ..db import get_db
-from ..deps import _is_god_user, _require_admin, _to_user_read
+from ..core.auth import is_god_user, to_user_read
+from ..core.dependencies import DB, Admin
 from ..models import SessionTokenModel, UserModel
 from ..schemas import UserCreate, UserRead, UserUpdate
 from ..security import assert_password_strength, hash_password
@@ -15,22 +14,15 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 
 
 @router.get("", response_model=list[UserRead])
-def list_users(
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(_require_admin),
-) -> list[UserRead]:
+def list_users(db: DB, current_user: Admin) -> list[UserRead]:
     items = db.scalars(select(UserModel).order_by(UserModel.username)).all()
-    if not _is_god_user(current_user):
+    if not is_god_user(current_user):
         items = [u for u in items if u.username != GOD_USERNAME and u.role != GOD_ROLE]
-    return [_to_user_read(item) for item in items]
+    return [to_user_read(item) for item in items]
 
 
 @router.post("", response_model=UserRead)
-def create_user(
-    payload: UserCreate,
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(_require_admin),
-) -> UserRead:
+def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
     if db.scalar(select(UserModel).where(UserModel.username == payload.username)):
         raise HTTPException(status_code=409, detail="Ez a felhasználónév már foglalt")
     if payload.username == GOD_USERNAME or payload.role == GOD_ROLE:
@@ -48,16 +40,11 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
-    return _to_user_read(user)
+    return to_user_read(user)
 
 
 @router.put("/{username}", response_model=UserRead)
-def update_user(
-    username: str,
-    payload: UserUpdate,
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(_require_admin),
-) -> UserRead:
+def update_user(username: str, payload: UserUpdate, db: DB, current_user: Admin) -> UserRead:
     user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not user:
         raise HTTPException(status_code=404, detail="Felhasználó nem található")
@@ -75,15 +62,11 @@ def update_user(
         user.password_hash = hash_password(payload.password)
     db.commit()
     db.refresh(user)
-    return _to_user_read(user)
+    return to_user_read(user)
 
 
 @router.delete("/{username}", status_code=204)
-def delete_user(
-    username: str,
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(_require_admin),
-):
+def delete_user(username: str, db: DB, current_user: Admin):
     user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not user:
         raise HTTPException(status_code=404, detail="Felhasználó nem található")

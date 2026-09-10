@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor
+from ..core.dependencies import DB, Reader, Editor
 from ..models import (
     PersonModel,
     PersonnelQualificationModel,
@@ -27,11 +24,7 @@ from ..schemas import (
 
 router = APIRouter(prefix="/api/qualifications", tags=["qualifications"])
 
-from ..models import UserModel
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 
 # ── segédfüggvények ────────────────────────────────────────────────────────────

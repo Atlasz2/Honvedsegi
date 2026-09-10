@@ -11,7 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..deps import _apply_event, _parse_iso_date, _serialize_event, _utc_now
+from ..appliers import apply_event
+from ..core.time import parse_iso_date, utc_now
+from ..serializers import serialize_event
 from ..models import (
     AttendanceModel,
     DutyModel,
@@ -115,7 +117,7 @@ def _event_to_tree_node(item: EventModel) -> OperationTreeNode:
 
 
 def _attendance_to_read(item: AttendanceModel) -> AttendanceEntryRead:
-    updated_at = item.updated_at.isoformat() if item.updated_at else _utc_now().isoformat()
+    updated_at = item.updated_at.isoformat() if item.updated_at else utc_now().isoformat()
     return AttendanceEntryRead(
         personId=item.person_id,
         personName=item.person_name,
@@ -139,7 +141,7 @@ def _requirement_to_read(item: MaterialRequirementModel) -> MaterialRequirementR
 
 
 def _document_to_read(item: OperationDocumentModel) -> OperationDocumentRead:
-    uploaded_at = item.uploaded_at.isoformat() if item.uploaded_at else _utc_now().isoformat()
+    uploaded_at = item.uploaded_at.isoformat() if item.uploaded_at else utc_now().isoformat()
     return OperationDocumentRead(
         id=item.id,
         operationId=item.operation_id,
@@ -206,12 +208,12 @@ def list_operations_data(db: Session) -> list[OperationRead]:
 
 def operations_summary_data(base_date: str | None, db: Session) -> dict:
     if base_date:
-        parsed = _parse_iso_date(base_date)
+        parsed = parse_iso_date(base_date)
         if not parsed:
             raise HTTPException(status_code=400, detail="Ervenytelen base_date formatum")
         base = parsed
     else:
-        base = _utc_now().date()
+        base = utc_now().date()
 
     next_week_end = base + timedelta(days=7)
     plus14_day = base + timedelta(days=14)
@@ -222,8 +224,8 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
     shooting_kw = ["lőtér", "loter"]
     next_week_shooting = []
     for item in exercises:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end or end < base or start > next_week_end:
             continue
         if not any(kw in (item.location or "").lower() for kw in shooting_kw):
@@ -236,8 +238,8 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
 
     plus14_duties = []
     for item in duties:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end:
             continue
         if start <= plus14_day <= end:
@@ -276,19 +278,19 @@ def get_operations_tree_data(db: Session) -> list[OperationTreeNode]:
 
 def create_operation_node_data(payload: EventCreate, db: Session) -> EventRead:
     item = EventModel()
-    _apply_event(item, payload)
+    apply_event(item, payload)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return _serialize_event(item)
+    return serialize_event(item)
 
 
 def update_operation_node_data(node_id: str, payload: EventUpdate, db: Session) -> EventRead:
     item = require_event(db, node_id)
-    _apply_event(item, payload)
+    apply_event(item, payload)
     db.commit()
     db.refresh(item)
-    return _serialize_event(item)
+    return serialize_event(item)
 
 
 def delete_operation_node_data(node_id: str, db: Session) -> None:
@@ -342,7 +344,7 @@ def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpda
         item.status = status
         item.note = (entry.note or "").strip()
         item.updated_by = current_user.username
-        item.updated_at = _utc_now()
+        item.updated_at = utc_now()
 
     db.commit()
     refreshed = db.scalars(
@@ -367,7 +369,7 @@ def patch_attendance_data(operation_id: str, person_id: str, payload: Attendance
         item.note = payload.note.strip()
 
     item.updated_by = current_user.username
-    item.updated_at = _utc_now()
+    item.updated_at = utc_now()
     db.commit()
     db.refresh(item)
     return _attendance_to_read(item)
@@ -462,7 +464,7 @@ async def upload_document_data(operation_id: str, file: UploadFile, title: str, 
         file_size=len(content),
         storage_path=str(target_path),
         uploaded_by=(uploaded_by or current_user.username).strip() or current_user.username,
-        uploaded_at=_utc_now(),
+        uploaded_at=utc_now(),
         title=title.strip() or None,
     )
     db.add(item)

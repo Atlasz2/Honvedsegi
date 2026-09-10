@@ -7,22 +7,17 @@ hacsak az ügyintéző felül nem írja az adott napra.
 from __future__ import annotations
 
 from datetime import date as date_cls
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor, _utc_now
-from ..models import LeaveRequestModel, PersonModel, UserModel, new_id
+from ..core.dependencies import DB, Reader, Editor
+from ..core.time import utc_now
+from ..models import LeaveRequestModel, PersonModel, new_id
 from ..schemas import LeaveDecision, LeaveRequestCreate, LeaveRequestRead
 
 router = APIRouter(prefix="/api/leave", tags=["leave"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 
 def _parse_day(value: str) -> str:
@@ -96,7 +91,7 @@ def decide_leave(leave_id: str, payload: LeaveDecision, db: DB, user: Editor):
         raise HTTPException(status_code=404, detail="A kérelem nem található")
     leave.status = "Jóváhagyva" if payload.approve else "Elutasítva"
     leave.decided_by = user.username
-    leave.decided_at = _utc_now()
+    leave.decided_at = utc_now()
     db.commit()
     db.refresh(leave)
     person = db.get(PersonModel, leave.personnel_id)

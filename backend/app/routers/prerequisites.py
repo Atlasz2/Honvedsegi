@@ -8,25 +8,23 @@ jogosult — így a progresszió (alap → haladó → emelt) és a belépési f
 from __future__ import annotations
 
 from datetime import date as date_cls
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor
+from ..core.dependencies import DB, Reader, Editor
 from ..models import (
-    EventPrerequisiteModel, PersonModel, PersonnelQualificationModel,
-    QualificationTypeModel, UserModel, new_id,
+    EventPrerequisiteModel,
+    PersonModel,
+    PersonnelQualificationModel,
+    QualificationTypeModel,
+    new_id,
 )
 from ..schemas import EligibilityPerson, PrerequisiteRead, PrerequisiteSet, QualTypeRef
 
 router = APIRouter(prefix="/api/prerequisites", tags=["prerequisites"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 _VALID_EVENT_TYPES = {"exercise", "training", "event", "duty"}
 _DISCHARGED_STATUS = "Leszerelt"
@@ -47,7 +45,7 @@ def _prereq_ids(db: Session, event_type: str, event_id: str) -> list[str]:
     ).all())
 
 
-def _serialize_prereq(db: Session, event_type: str, event_id: str) -> PrerequisiteRead:
+def serialize_prereq(db: Session, event_type: str, event_id: str) -> PrerequisiteRead:
     ids = _prereq_ids(db, event_type, event_id)
     name_by_id: dict[str, str] = {}
     if ids:
@@ -63,7 +61,7 @@ def _serialize_prereq(db: Session, event_type: str, event_id: str) -> Prerequisi
 @router.get("/{event_type}/{event_id}", response_model=PrerequisiteRead)
 def get_prerequisites(event_type: str, event_id: str, db: DB, _: Reader):
     _check_event_type(event_type)
-    return _serialize_prereq(db, event_type, event_id)
+    return serialize_prereq(db, event_type, event_id)
 
 
 @router.put("/{event_type}/{event_id}", response_model=PrerequisiteRead)
@@ -83,7 +81,7 @@ def set_prerequisites(event_type: str, event_id: str, payload: PrerequisiteSet, 
             id=new_id(), event_type=event_type, event_id=event_id, qual_type_id=qual_type_id,
         ))
     db.commit()
-    return _serialize_prereq(db, event_type, event_id)
+    return serialize_prereq(db, event_type, event_id)
 
 
 @router.get("/{event_type}/{event_id}/eligibility", response_model=list[EligibilityPerson])

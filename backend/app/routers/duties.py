@@ -1,55 +1,54 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import (
-    _apply_duty, _get_current_user, _load_participants_by_event, _require_editor,
-    _require_model, _serialize_duty, _sync_participants,
-)
-from ..models import DutyModel, ParticipantModel, UserModel, new_id
+from ..appliers import apply_duty
+from ..core.dependencies import DB, Reader, Editor
+from ..models import DutyModel, ParticipantModel, new_id
+from ..participants import load_participants_by_event, sync_participants
+from ..repository import require_model
 from ..schemas import DutyCreate, DutyRead, DutyUpdate, ParticipantCreate, ParticipantRead, ParticipantUpdate
+from ..serializers import serialize_duty
 
 router = APIRouter(prefix="/api/duties", tags=["duties"])
 
 
 @router.get("", response_model=list[DutyRead])
-def list_duties(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+def list_duties(db: DB, _: Reader):
     items = db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
-    participants_by_event = _load_participants_by_event(db, "duty")
-    return [_serialize_duty(db, i, participants_by_event.get(i.id, [])) for i in items]
+    participants_by_event = load_participants_by_event(db, "duty")
+    return [serialize_duty(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=DutyRead, status_code=status.HTTP_201_CREATED)
-def create_duty(payload: DutyCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def create_duty(payload: DutyCreate, db: DB, _: Editor):
     item = DutyModel()
-    _apply_duty(item, payload)
+    apply_duty(item, payload)
     db.add(item)
     db.flush()
     assigned = payload.assigned or ([{"personId": payload.personId, "personName": payload.personName}] if payload.personId else [])
-    _sync_participants(db, "duty", item.id, assigned)
+    sync_participants(db, "duty", item.id, assigned)
     db.commit()
     db.refresh(item)
-    return _serialize_duty(db, item)
+    return serialize_duty(db, item)
 
 
 @router.put("/{item_id}", response_model=DutyRead)
-def update_duty(item_id: str, payload: DutyUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
-    item = _require_model(db, DutyModel, item_id)
-    _apply_duty(item, payload)
+def update_duty(item_id: str, payload: DutyUpdate, db: DB, _: Editor):
+    item = require_model(db, DutyModel, item_id)
+    apply_duty(item, payload)
     assigned = payload.assigned or ([{"personId": payload.personId, "personName": payload.personName}] if payload.personId else [])
-    _sync_participants(db, "duty", item_id, assigned)
+    sync_participants(db, "duty", item_id, assigned)
     db.commit()
     db.refresh(item)
-    return _serialize_duty(db, item)
+    return serialize_duty(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_duty(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
-    item = _require_model(db, DutyModel, item_id)
-    _sync_participants(db, "duty", item_id, [])
+def delete_duty(item_id: str, db: DB, _: Editor):
+    item = require_model(db, DutyModel, item_id)
+    sync_participants(db, "duty", item_id, [])
     db.delete(item)
     db.commit()
 
@@ -57,8 +56,8 @@ def delete_duty(item_id: str, db: Session = Depends(get_db), _: UserModel = Depe
 # ── Résztvevő-kezelés ─────────────────────────────────────────────────────────
 
 @router.get("/{item_id}/participants", response_model=list[ParticipantRead])
-def list_participants(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
-    _require_model(db, DutyModel, item_id)
+def list_participants(item_id: str, db: DB, _: Reader):
+    require_model(db, DutyModel, item_id)
     rows = db.scalars(
         select(ParticipantModel)
         .where(ParticipantModel.event_type == "duty", ParticipantModel.event_id == item_id)
@@ -72,8 +71,8 @@ def list_participants(item_id: str, db: Session = Depends(get_db), _: UserModel 
 
 
 @router.post("/{item_id}/participants", response_model=ParticipantRead, status_code=status.HTTP_201_CREATED)
-def add_participant(item_id: str, body: ParticipantCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
-    duty = _require_model(db, DutyModel, item_id)
+def add_participant(item_id: str, body: ParticipantCreate, db: DB, _: Editor):
+    duty = require_model(db, DutyModel, item_id)
     existing = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.event_type == "duty",
@@ -104,7 +103,7 @@ def add_participant(item_id: str, body: ParticipantCreate, db: Session = Depends
 
 
 @router.put("/{item_id}/participants/{participant_id}", response_model=ParticipantRead)
-def update_participant(item_id: str, participant_id: str, body: ParticipantUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def update_participant(item_id: str, participant_id: str, body: ParticipantUpdate, db: DB, _: Editor):
     p = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.id == participant_id,
@@ -126,7 +125,7 @@ def update_participant(item_id: str, participant_id: str, body: ParticipantUpdat
 
 
 @router.delete("/{item_id}/participants/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_participant(item_id: str, participant_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def remove_participant(item_id: str, participant_id: str, db: DB, _: Editor):
     p = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.id == participant_id,

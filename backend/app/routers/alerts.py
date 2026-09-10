@@ -6,20 +6,15 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader
-from ..models import AttendanceModel, PersonModel, PersonnelQualificationModel, UserModel
+from ..core.dependencies import DB, Reader
+from ..models import AttendanceModel, PersonModel, PersonnelQualificationModel
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
 
 _ACTIVE_STATUS = "Aktív"
 

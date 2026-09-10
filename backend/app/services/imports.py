@@ -9,7 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..constants import IMPORT_DRAFT_TTL_MINUTES
-from ..deps import _apply_exercise, _apply_person, _normalize_sztsz, _utc_now
+from ..appliers import apply_exercise, apply_person
+from ..core.time import utc_now
+from ..validation import normalize_sztsz
 from ..importers import ENTITY_CONFIG, ImportRow, parse_import
 from ..models import ExerciseModel, PersonModel
 from ..schemas import ExerciseCreate, ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult, PersonCreate
@@ -26,7 +28,7 @@ def _save_draft(draft_id: str, entity: str, rows, operations, created, updated, 
         "created": created,
         "updated": updated,
         "skipped": skipped,
-        "expires_at": _utc_now() + timedelta(minutes=IMPORT_DRAFT_TTL_MINUTES),
+        "expires_at": utc_now() + timedelta(minutes=IMPORT_DRAFT_TTL_MINUTES),
     }
     return draft_id
 
@@ -41,7 +43,7 @@ def _get_draft(entity: str, draft_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Import draft nem talalhato")
     if draft["entity"] != entity:
         raise HTTPException(status_code=400, detail="A draft mas entitashoz tartozik")
-    if draft["expires_at"] < _utc_now():
+    if draft["expires_at"] < utc_now():
         IMPORT_DRAFTS.pop(draft_id, None)
         raise HTTPException(status_code=410, detail="Import draft lejart")
     return draft
@@ -58,7 +60,7 @@ def _normalize_mapping(data: dict[str, Any] | None) -> dict[str, str]:
     return {str(k).strip(): ("" if v is None else str(v).strip()) for k, v in data.items() if str(k).strip()}
 
 
-def _serialize_row(row: ImportRow | dict) -> dict[str, Any]:
+def serialize_row(row: ImportRow | dict) -> dict[str, Any]:
     if isinstance(row, ImportRow):
         return {
             "line": row.source_line,
@@ -128,7 +130,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
     rows: list[dict[str, Any]] = []
 
     for source in source_rows:
-        row = _serialize_row(source)
+        row = serialize_row(source)
         rows.append(row)
         line, enabled = row["line"], row["enabled"]
         data, raw_data = row["data"], row["rawData"]
@@ -149,7 +151,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                 try:
                     if entity == "personnel":
                         payload = PersonCreate(**prev_data)
-                        payload.sztsz = _normalize_sztsz(payload.sztsz)
+                        payload.sztsz = normalize_sztsz(payload.sztsz)
                         existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == payload.sztsz))
                         action = "update" if existing else "create"
                         key = payload.sztsz
@@ -298,13 +300,13 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfi
         p = op["payload"]
         if entity == "personnel":
             dto = PersonCreate(**p)
-            dto.sztsz = _normalize_sztsz(dto.sztsz)
+            dto.sztsz = normalize_sztsz(dto.sztsz)
             existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == dto.sztsz))
             if existing:
-                _apply_person(existing, dto)
+                apply_person(existing, dto)
             else:
                 item = PersonModel()
-                _apply_person(item, dto)
+                apply_person(item, dto)
                 db.add(item)
         else:
             dto = ExerciseCreate(**p)
@@ -316,10 +318,10 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfi
                 )
             )
             if existing:
-                _apply_exercise(existing, dto)
+                apply_exercise(existing, dto)
             else:
                 item = ExerciseModel()
-                _apply_exercise(item, dto)
+                apply_exercise(item, dto)
                 db.add(item)
 
     db.commit()

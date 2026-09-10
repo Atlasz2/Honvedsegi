@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import (
-    _apply_exercise, _auto_chain_prerequisites, _get_current_user, _grant_event_qualifications,
-    _load_participants_by_event, _require_editor, _require_model, _serialize_exercise, _sync_participants,
-)
+from ..appliers import apply_exercise, auto_chain_prerequisites, grant_event_qualifications
+from ..core.dependencies import DB, Reader, Editor
+from ..participants import load_participants_by_event, sync_participants
+from ..repository import require_model
+from ..serializers import serialize_exercise
 from ..audit import record_activity
-from ..models import ExerciseModel, ParticipantModel, UserModel, new_id
+from ..models import ExerciseModel, ParticipantModel, new_id
 
 
 def _exercise_snapshot(item: ExerciseModel) -> dict:
@@ -32,51 +30,51 @@ router = APIRouter(prefix="/api/exercises", tags=["exercises"])
 
 
 @router.get("", response_model=list[ExerciseRead])
-def list_exercises(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+def list_exercises(db: DB, _: Reader):
     items = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-    participants_by_event = _load_participants_by_event(db, "exercise")
-    return [_serialize_exercise(db, i, participants_by_event.get(i.id, [])) for i in items]
+    participants_by_event = load_participants_by_event(db, "exercise")
+    return [serialize_exercise(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
 @router.post("", response_model=ExerciseRead, status_code=status.HTTP_201_CREATED)
-def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
+def create_exercise(payload: ExerciseCreate, db: DB, user: Editor):
     item = ExerciseModel()
-    _apply_exercise(item, payload)
+    apply_exercise(item, payload)
     db.add(item)
     db.flush()
-    _sync_participants(db, "exercise", item.id, payload.assigned)
+    sync_participants(db, "exercise", item.id, payload.assigned)
     if item.status == "Befejezett":
-        _grant_event_qualifications(db, "exercise", item.id, item.qualification_id)
-    _auto_chain_prerequisites(db, "exercise", item.id, item.series_id, item.level, item.name)
+        grant_event_qualifications(db, "exercise", item.id, item.qualification_id)
+    auto_chain_prerequisites(db, "exercise", item.id, item.series_id, item.level, item.name)
     record_activity(db, user, mode="create", module="Műveletek", record_name=item.name,
                     entity="exercise", after=_exercise_snapshot(item))
     db.commit()
     db.refresh(item)
-    return _serialize_exercise(db, item)
+    return serialize_exercise(db, item)
 
 
 @router.put("/{item_id}", response_model=ExerciseRead)
-def update_exercise(item_id: str, payload: ExerciseUpdate, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
-    item = _require_model(db, ExerciseModel, item_id)
+def update_exercise(item_id: str, payload: ExerciseUpdate, db: DB, user: Editor):
+    item = require_model(db, ExerciseModel, item_id)
     before = _exercise_snapshot(item)
-    _apply_exercise(item, payload)
-    _sync_participants(db, "exercise", item_id, payload.assigned)
+    apply_exercise(item, payload)
+    sync_participants(db, "exercise", item_id, payload.assigned)
     if item.status == "Befejezett":
-        _grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
-    _auto_chain_prerequisites(db, "exercise", item_id, item.series_id, item.level, item.name)
+        grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
+    auto_chain_prerequisites(db, "exercise", item_id, item.series_id, item.level, item.name)
     record_activity(db, user, mode="update", module="Műveletek", record_name=item.name,
                     entity="exercise", before=before, after=_exercise_snapshot(item))
     db.commit()
     db.refresh(item)
-    return _serialize_exercise(db, item)
+    return serialize_exercise(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_exercise(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
-    item = _require_model(db, ExerciseModel, item_id)
+def delete_exercise(item_id: str, db: DB, user: Editor):
+    item = require_model(db, ExerciseModel, item_id)
     before = _exercise_snapshot(item)
     record_name = item.name
-    _sync_participants(db, "exercise", item_id, [])
+    sync_participants(db, "exercise", item_id, [])
     db.delete(item)
     record_activity(db, user, mode="delete", module="Műveletek", record_name=record_name,
                     entity="exercise", before=before)
@@ -86,8 +84,8 @@ def delete_exercise(item_id: str, db: Session = Depends(get_db), user: UserModel
 # ── Résztvevő-kezelés ─────────────────────────────────────────────────────────
 
 @router.get("/{item_id}/participants", response_model=list[ParticipantRead])
-def list_participants(item_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
-    _require_model(db, ExerciseModel, item_id)
+def list_participants(item_id: str, db: DB, _: Reader):
+    require_model(db, ExerciseModel, item_id)
     rows = db.scalars(
         select(ParticipantModel)
         .where(ParticipantModel.event_type == "exercise", ParticipantModel.event_id == item_id)
@@ -101,8 +99,8 @@ def list_participants(item_id: str, db: Session = Depends(get_db), _: UserModel 
 
 
 @router.post("/{item_id}/participants", response_model=ParticipantRead, status_code=status.HTTP_201_CREATED)
-def add_participant(item_id: str, body: ParticipantCreate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
-    _require_model(db, ExerciseModel, item_id)
+def add_participant(item_id: str, body: ParticipantCreate, db: DB, _: Editor):
+    require_model(db, ExerciseModel, item_id)
     existing = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.event_type == "exercise",
@@ -130,7 +128,7 @@ def add_participant(item_id: str, body: ParticipantCreate, db: Session = Depends
 
 
 @router.put("/{item_id}/participants/{participant_id}", response_model=ParticipantRead)
-def update_participant(item_id: str, participant_id: str, body: ParticipantUpdate, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def update_participant(item_id: str, participant_id: str, body: ParticipantUpdate, db: DB, _: Editor):
     p = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.id == participant_id,
@@ -154,7 +152,7 @@ def update_participant(item_id: str, participant_id: str, body: ParticipantUpdat
 
 
 @router.delete("/{item_id}/participants/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_participant(item_id: str, participant_id: str, db: Session = Depends(get_db), _: UserModel = Depends(_require_editor)):
+def remove_participant(item_id: str, participant_id: str, db: DB, _: Editor):
     p = db.execute(
         select(ParticipantModel).where(
             ParticipantModel.id == participant_id,

@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import (
-    _apply_duty,
-    _apply_event,
-    _apply_exercise,
-    _apply_person,
-    _apply_training,
-    _get_current_user,
-    _require_editor,
-    _serialize_log,
-)
-from ..models import ActivityLogModel, DutyModel, EventModel, ExerciseModel, PersonModel, TrainingModel, UserModel
+from ..appliers import apply_duty, apply_event, apply_exercise, apply_person, apply_training
+from ..core.dependencies import DB, Reader, Editor
+from ..models import ActivityLogModel, DutyModel, EventModel, ExerciseModel, PersonModel, TrainingModel
 from ..schemas import (
     ActivityLogCreate,
     ActivityLogRead,
@@ -26,6 +16,7 @@ from ..schemas import (
     PersonUpdate,
     TrainingUpdate,
 )
+from ..serializers import serialize_log
 
 router = APIRouter(prefix="/api/activity-log", tags=["activity-log"])
 
@@ -46,18 +37,18 @@ def _entity_model(entity: str):
     return mapping.get(entity)
 
 
-def _apply_entity_payload(entity: str, item, data: dict) -> None:
+def apply_entity_payload(entity: str, item, data: dict) -> None:
     try:
         if entity == "personnel":
-            _apply_person(item, PersonUpdate(**data))
+            apply_person(item, PersonUpdate(**data))
         elif entity == "exercise":
-            _apply_exercise(item, ExerciseUpdate(**data))
+            apply_exercise(item, ExerciseUpdate(**data))
         elif entity == "training":
-            _apply_training(item, TrainingUpdate(**data))
+            apply_training(item, TrainingUpdate(**data))
         elif entity == "event":
-            _apply_event(item, EventUpdate(**data))
+            apply_event(item, EventUpdate(**data))
         elif entity == "duty":
-            _apply_duty(item, DutyUpdate(**data))
+            apply_duty(item, DutyUpdate(**data))
         else:
             raise HTTPException(status_code=400, detail="Ismeretlen entitás")
     except ValidationError as exc:
@@ -65,15 +56,15 @@ def _apply_entity_payload(entity: str, item, data: dict) -> None:
 
 
 @router.get("", response_model=list[ActivityLogRead])
-def list_activity_logs(db: Session = Depends(get_db), current_user: UserModel = Depends(_get_current_user)):
+def list_activity_logs(db: DB, current_user: Reader):
     viewer_level = _ROLE_LEVEL.get(current_user.role, 1)
     entries = db.scalars(select(ActivityLogModel).order_by(ActivityLogModel.timestamp.desc())).all()
     visible = [e for e in entries if _ROLE_LEVEL.get(e.user_role or "reader", 1) <= viewer_level]
-    return [_serialize_log(i) for i in visible]
+    return [serialize_log(i) for i in visible]
 
 
 @router.post("", response_model=ActivityLogRead)
-def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db), current_user: UserModel = Depends(_get_current_user)):
+def create_activity_log(payload: ActivityLogCreate, db: DB, current_user: Reader):
     item = ActivityLogModel(
         user_id=payload.userId,
         user_name=payload.userName,
@@ -86,11 +77,11 @@ def create_activity_log(payload: ActivityLogCreate, db: Session = Depends(get_db
     db.add(item)
     db.commit()
     db.refresh(item)
-    return _serialize_log(item)
+    return serialize_log(item)
 
 
 @router.post("/{item_id}/restore", response_model=ActivityLogRead)
-def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserModel = Depends(_require_editor)):
+def restore_activity(item_id: str, db: DB, user: Editor):
     log_item = db.get(ActivityLogModel, item_id)
     if not log_item:
         raise HTTPException(status_code=404, detail="Naplóbejegyzés nem található")
@@ -123,7 +114,7 @@ def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserMode
             item = model(id=target_id)
             db.add(item)
         data = {k: v for k, v in source.items() if k != "id"}
-        _apply_entity_payload(entity, item, data)
+        apply_entity_payload(entity, item, data)
 
     else:
         source = before or {}
@@ -134,7 +125,7 @@ def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserMode
         if not item:
             raise HTTPException(status_code=404, detail="A visszaállítandó rekord nem található")
         data = {k: v for k, v in source.items() if k != "id"}
-        _apply_entity_payload(entity, item, data)
+        apply_entity_payload(entity, item, data)
 
     restore_log = ActivityLogModel(
         user_id=user.username,
@@ -148,7 +139,7 @@ def restore_activity(item_id: str, db: Session = Depends(get_db), user: UserMode
     db.add(restore_log)
     db.commit()
     db.refresh(restore_log)
-    return _serialize_log(restore_log)
+    return serialize_log(restore_log)
 
 
 

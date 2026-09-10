@@ -13,9 +13,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user
-from ..models import UserModel
+from ..core.dependencies import DB, Reader
 from ..services.reporting import (
     build_docx_report_bytes,
     build_excel_report_bytes,
@@ -25,8 +23,6 @@ from ..services.reporting import (
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(_get_current_user)]
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

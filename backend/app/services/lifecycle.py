@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..deps import _parse_iso_date
+from ..core.time import parse_iso_date
 from ..models import EventModel, ExerciseModel, PersonModel, TrainingModel
 
 PLANNED = "Tervezett"
@@ -19,8 +19,8 @@ def _today_iso() -> date:
 
 
 def _sync_temporal_status(item: Any, *, today: date) -> bool:
-    start = _parse_iso_date(getattr(item, "start_date", ""))
-    end = _parse_iso_date(getattr(item, "end_date", ""))
+    start = parse_iso_date(getattr(item, "start_date", ""))
+    end = parse_iso_date(getattr(item, "end_date", ""))
     if not start or not end:
         return False
 

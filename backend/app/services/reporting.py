@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..deps import _date_overlap, _parse_iso_date, _utc_now
+from ..core.time import date_overlap, parse_iso_date, utc_now
 from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
 
 
@@ -31,7 +31,7 @@ def report_filename_base(template: str, focus_type: str | None = None) -> str:
     }.get(template, "riport")
 
 
-def _serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
+def serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
     if item_type == "duty":
         return {
             "id": item.id,
@@ -64,7 +64,7 @@ def _serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
     return payload
 
 
-def _serialize_focus(item: Any, focus_type: str, focus_id: str) -> dict[str, Any]:
+def serialize_focus(item: Any, focus_type: str, focus_id: str) -> dict[str, Any]:
     if focus_type == "duty":
         return {
             "type": focus_type,
@@ -125,8 +125,8 @@ def build_report_data(
     if focus_type and focus_type not in allowed_focus:
         raise HTTPException(status_code=400, detail="Nem tamogatott fokusz tipus")
 
-    start_date = _parse_iso_date(date_from) if date_from else _utc_now().date()
-    end_date = _parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
+    start_date = parse_iso_date(date_from) if date_from else utc_now().date()
+    end_date = parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
     if not start_date or not end_date:
         raise HTTPException(status_code=400, detail="Ervenytelen datumtartomany")
     if end_date < start_date:
@@ -135,22 +135,22 @@ def build_report_data(
     exercises = [
         i
         for i in db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
     trainings = [
         i
         for i in db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
     events = [
         i
         for i in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
     duties = [
         i
         for i in db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
 
     sections: list[dict[str, Any]] = []
@@ -163,7 +163,7 @@ def build_report_data(
                 "title": title,
                 "count": len(items),
                 "truncated": len(items) > len(visible),
-                "items": [_serialize_report_item(i, itype) for i in visible],
+                "items": [serialize_report_item(i, itype) for i in visible],
             }
         )
 
@@ -181,7 +181,7 @@ def build_report_data(
         item = db.scalar(select(model).where(model.id == focus_id))
         if not item:
             raise HTTPException(status_code=404, detail="A kivalasztott rekord nem talalhato")
-        focus_payload = _serialize_focus(item, focus_type, focus_id)
+        focus_payload = serialize_focus(item, focus_type, focus_id)
     else:
         if template in {"overview", "operations"}:
             add_section("exercises", "Gyakorlatok", exercises, "exercise", 300)

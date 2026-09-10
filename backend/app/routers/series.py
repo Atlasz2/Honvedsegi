@@ -5,24 +5,19 @@ frontend a sorozat-kártyára lépve hozza létre és listázza a sorozat elemei
 """
 from __future__ import annotations
 
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor
-from ..models import ExerciseModel, ParticipantModel, SeriesModel, TrainingModel, UserModel, new_id
+from ..core.dependencies import DB, Reader, Editor
+from ..models import ExerciseModel, ParticipantModel, SeriesModel, TrainingModel, new_id
 
 _LEVEL_ORDER = {"Alap": 0, "Haladó": 1, "Emelt": 2, "": 9}
 from ..schemas import SeriesCreate, SeriesRead, SeriesUpdate
 
 router = APIRouter(prefix="/api/series", tags=["series"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 
 def _item_counts(db: Session) -> dict[str, int]:

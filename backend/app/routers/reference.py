@@ -5,17 +5,14 @@ Ezek korábban a frontendben voltak hardkódolva, a backend seedtől független�
 """
 from __future__ import annotations
 
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from ..constants import PERSON_STATUSES, RANKS, UNITS
-from ..deps import _get_current_user
-from ..models import UserModel
+from ..core.dependencies import Reader
 
 router = APIRouter(prefix="/api/reference", tags=["reference"])
 
-Reader = Annotated[UserModel, Depends(_get_current_user)]
 
 
 @router.get("")

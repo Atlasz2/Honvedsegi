@@ -1,23 +1,25 @@
 from __future__ import annotations
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
-from ..db import get_db
-from ..deps import _get_current_user, _parse_iso_date, _serialize_exercise, _serialize_training, _utc_now
-from ..models import DutyModel, ExerciseModel, ParticipantModel, TrainingModel, UserModel
+
+from ..core.dependencies import DB, Reader
+from ..core.time import parse_iso_date, utc_now
+from ..models import DutyModel, ExerciseModel, ParticipantModel, TrainingModel
 from ..schemas import OperationRead
+from ..serializers import serialize_exercise, serialize_training
 
 router = APIRouter(prefix="/api/operations", tags=["operations"])
 
 
 @router.get("", response_model=list[OperationRead])
-def list_operations(db: Session = Depends(get_db), _: UserModel = Depends(_get_current_user)):
+def list_operations(db: DB, _: Reader):
     exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
     trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
     ops = []
     for ex in exercises:
-        ser = _serialize_exercise(db, ex)
+        ser = serialize_exercise(db, ex)
         ops.append(OperationRead(
             id=ex.id, name=ex.name, type=ex.type, operationType="exercise",
             startDate=ex.start_date, endDate=ex.end_date, location=ex.location,
@@ -25,7 +27,7 @@ def list_operations(db: Session = Depends(get_db), _: UserModel = Depends(_get_c
             status=ex.status, assigned=ser.assigned,
         ))
     for tr in trainings:
-        ser = _serialize_training(db, tr)
+        ser = serialize_training(db, tr)
         ops.append(OperationRead(
             id=tr.id, name=tr.name, type=tr.type, operationType="training",
             startDate=tr.start_date, endDate=tr.end_date, location=tr.location,
@@ -37,18 +39,14 @@ def list_operations(db: Session = Depends(get_db), _: UserModel = Depends(_get_c
 
 
 @router.get("/summary")
-def operations_summary(
-    base_date: str | None = None,
-    db: Session = Depends(get_db),
-    _: UserModel = Depends(_get_current_user),
-):
+def operations_summary(db: DB, _: Reader, base_date: str | None = None):
     if base_date:
-        parsed = _parse_iso_date(base_date)
+        parsed = parse_iso_date(base_date)
         if not parsed:
             raise HTTPException(status_code=400, detail="Ervenytelen base_date formatum")
         base = parsed
     else:
-        base = _utc_now().date()
+        base = utc_now().date()
 
     next_week_end = base + timedelta(days=7)
     plus14_day = base + timedelta(days=14)
@@ -63,8 +61,8 @@ def operations_summary(
     shooting_kw = ["lőtér", "loter"]
     next_week_shooting = []
     for item in exercises:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end or end < base or start > next_week_end:
             continue
         if not any(kw in (item.location or "").lower() for kw in shooting_kw):
@@ -83,8 +81,8 @@ def operations_summary(
 
     plus14_duties = []
     for item in duties:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end:
             continue
         if start <= plus14_day <= end:

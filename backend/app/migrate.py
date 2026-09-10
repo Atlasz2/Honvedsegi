@@ -13,12 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import (
-    ParticipantModel,
-    PersonnelQualificationModel,
-    QualificationTypeModel,
-    new_id,
-)
+from .models import new_id
 
 log = logging.getLogger(__name__)
 

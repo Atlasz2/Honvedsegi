@@ -8,20 +8,26 @@ jelöli, akár tömegesen. PUT: a nap állapotainak (be)írása (upsert).
 from __future__ import annotations
 
 from datetime import date as date_cls
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..attendance_export import build_pdf, build_xlsx
 from ..constants import LEAVE_TO_ATTENDANCE_STATUS
-from ..db import get_db
-from ..deps import _get_current_user as require_reader, _require_editor as require_editor, _utc_now
+from ..core.dependencies import DB, Reader, Editor
+from ..core.time import utc_now
 from ..models import (
-    AttendanceModel, DutyModel, EventModel, ExerciseModel, LeaveRequestModel,
-    ParticipantModel, PersonModel, TrainingModel, UserModel, new_id,
+    AttendanceModel,
+    DutyModel,
+    EventModel,
+    ExerciseModel,
+    LeaveRequestModel,
+    ParticipantModel,
+    PersonModel,
+    TrainingModel,
+    new_id,
 )
 from ..schemas import AttendanceDayRead, AttendanceEntry, AttendanceFill, AttendanceUpdate
 
@@ -42,9 +48,6 @@ _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 
 router = APIRouter(prefix="/api/attendance", tags=["attendance"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
-Editor = Annotated[UserModel, Depends(require_editor)]
 
 DEFAULT_STATUS = "Jelen"
 _DISCHARGED_STATUS = "Leszerelt"
@@ -196,7 +199,7 @@ def fill_from_event(payload: AttendanceFill, db: DB, user: Editor):
             existing[personnel_id] = record
         record.status = payload.status
         record.recorded_by = user.username
-        record.recorded_at = _utc_now()
+        record.recorded_at = utc_now()
 
     db.commit()
     return _build_day(db, day, "")
@@ -224,7 +227,7 @@ def set_attendance(payload: AttendanceUpdate, db: DB, user: Editor):
         record.status = mark.status
         record.note = mark.note
         record.recorded_by = user.username
-        record.recorded_at = _utc_now()
+        record.recorded_at = utc_now()
 
     db.commit()
     return _build_day(db, day, "")

@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .constants import GOD_USERNAME, GOD_ROLE
-from .models import PersonModel, UserModel
+from .models import UserModel
 from .security import hash_password
 
 

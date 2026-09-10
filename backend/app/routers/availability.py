@@ -6,22 +6,17 @@ egyezést igénylő szerkesztő-ellenőrzéshez a /api/conflicts való.
 """
 from __future__ import annotations
 
-import unicodedata
 from datetime import date as date_cls
-from typing import Annotated
+import unicodedata
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel, UserModel
+from ..core.dependencies import DB, Reader
+from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
 
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
 
 _SOURCES = [
     ("exercise", ExerciseModel),

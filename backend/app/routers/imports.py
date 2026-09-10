@@ -6,14 +6,10 @@ alkalmazás) ott él — lásd a modul docstringjét.
 """
 from __future__ import annotations
 
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, File, UploadFile
 
-from ..db import get_db
-from ..deps import _require_editor
-from ..models import UserModel
+from ..core.dependencies import DB, Editor
 from ..schemas import ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult
 from ..services.imports import (
     confirm_import_draft,
@@ -23,8 +19,6 @@ from ..services.imports import (
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
-DB = Annotated[Session, Depends(get_db)]
-Editor = Annotated[UserModel, Depends(_require_editor)]
 
 
 @router.post("/{entity}/preview", response_model=ImportPreviewResult)
