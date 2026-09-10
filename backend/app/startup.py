@@ -5,7 +5,8 @@ import os
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .constants import GOD_USERNAME, GOD_ROLE
+from .constants import GOD_ROLE
+from .core.privileged import god_username
 from .models import UserModel
 from .security import hash_password
 
@@ -38,13 +39,21 @@ def _ensure_personnel_sztsz_schema(db: Session) -> None:
 
 
 def _enforce_single_god_user(db: Session) -> None:
-    god_user = db.scalar(select(UserModel).where(UserModel.username == GOD_USERNAME))
+    """Garantálja, hogy pontosan egy god-fiók létezzen, minden indításkor.
+
+    Ez teszi „kiírhatatlanná" a szintet: ha törölnék vagy lefokoznák, a
+    következő indulás újra létrehozza/megerősíti. A név környezetből jön
+    (privileged.god_username), a jelszó a BACKEND_DEV_MASTER_PASSWORD-ból az
+    első létrehozáskor. Minden más, tévedésből god-szerepre állított fiókot
+    visszafokoz adminná — így a szint valóban kizárólagos."""
+    username = god_username()
+    god_user = db.scalar(select(UserModel).where(UserModel.username == username))
     if not god_user:
         dev_pwd = os.getenv("BACKEND_DEV_MASTER_PASSWORD", "").strip()
         if not dev_pwd:
-            raise RuntimeError("Hiányzó BACKEND_DEV_MASTER_PASSWORD a dev_master létrehozásához")
+            raise RuntimeError("Hiányzó BACKEND_DEV_MASTER_PASSWORD a god-fiók létrehozásához")
         god_user = UserModel(
-            username=GOD_USERNAME,
+            username=username,
             password_hash=hash_password(dev_pwd),
             display_name="Fejlesztő Mester",
             role=GOD_ROLE,
@@ -57,10 +66,10 @@ def _enforce_single_god_user(db: Session) -> None:
     god_user.active = True
     god_user.protected = True
 
-    other_devs = db.scalars(
-        select(UserModel).where(UserModel.role == GOD_ROLE, UserModel.username != GOD_USERNAME)
+    impostors = db.scalars(
+        select(UserModel).where(UserModel.role == GOD_ROLE, UserModel.username != username)
     ).all()
-    for user in other_devs:
+    for user in impostors:
         user.role = "admin"
         user.protected = False
 

@@ -437,6 +437,26 @@ export const users = {
   remove: (username: string) => request<void>(`/users/${username}`, { method: 'DELETE' }),
 };
 
+export type SystemStatus = {
+  time: string;
+  database: { path: string; sizeBytes: number };
+  lastBackup: { name: string; sizeBytes: number; modifiedAt: string; count: number } | null;
+  sessions: { active: number; expired: number };
+  users: { byRole: Record<string, number> };
+  lockedAccounts: number;
+};
+
+/**
+ * Karbantartás — kizárólag a god (dev_master) éri el. Nem-god hívónál a backend
+ * semleges 403-at ad, ezért a felület ezt a szekciót csak god esetén jeleníti meg.
+ */
+export const maintenance = {
+  status: () => request<SystemStatus>('/maintenance/status'),
+  purgeSessions: () => request<{ removed: number }>('/maintenance/sessions/purge', { method: 'POST' }),
+  forceLogout: (username: string) => request<{ revoked: number }>(`/maintenance/users/${username}/logout`, { method: 'POST' }),
+  unlock: (username: string) => request<{ status: string }>(`/maintenance/users/${username}/unlock`, { method: 'POST' }),
+};
+
 export const activityLog = {
   getAll: () => request<ActivityLogEntry[]>('/activity-log'),
   add: (payload: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => request<ActivityLogEntry>('/activity-log', { method: 'POST', body: JSON.stringify(payload) }),

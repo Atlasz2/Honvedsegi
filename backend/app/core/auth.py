@@ -9,8 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..constants import (
-    GOD_ROLE, GOD_USERNAME, LOCKOUT_MINUTES, MAX_FAILED_LOGINS,
-    SESSION_HOURS, SESSION_SLIDE_BELOW_HOURS,
+    LOCKOUT_MINUTES, MAX_FAILED_LOGINS, SESSION_HOURS, SESSION_SLIDE_BELOW_HOURS,
 )
 from ..db import get_db
 from ..models import LoginAttemptModel, SessionTokenModel, UserModel
@@ -137,14 +136,7 @@ def require_admin(user: UserModel = Depends(get_current_user)) -> UserModel:
     return user
 
 
-def is_god_user(user: UserModel) -> bool:
-    return user.username == GOD_USERNAME and user.role == GOD_ROLE and user.active
-
-
-def require_god_user(user: UserModel = Depends(get_current_user)) -> UserModel:
-    if not is_god_user(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Csak a dev_master jogosult erre a művelethez")
-    return user
+# A god-szint (dev_master) szabályai a core/privileged.py-ban élnek, egy helyen.
 
 
 # Public aliases for Annotated-style dependencies

@@ -15,8 +15,9 @@ from ..db import get_db
 from ..models import UserModel
 from .auth import (
     AuthenticatedSession, get_current_session, get_current_user,
-    require_admin, require_editor, require_god_user,
+    require_admin, require_editor,
 )
+from .privileged import require_god_user
 
 DB = Annotated[Session, Depends(get_db)]
 

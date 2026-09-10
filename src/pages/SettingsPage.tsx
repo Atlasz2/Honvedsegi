@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import SystemStatusPanel from '@/components/SystemStatusPanel';
 import { useNavigate } from 'react-router-dom';
 
 type ImportFieldConfig = {
@@ -300,10 +301,14 @@ export default function SettingsPage() {
   const canEditUser = (u: User) => {
     if (u.username === authUser?.username) return false;
     if (u.role === 'fejleszto' && !isDev) return false;
+    // Másik admint csak a god kezelhet — igazodik a backend szabályához.
+    if (u.role === 'admin' && !isDev) return false;
     return true;
   };
 
-  const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin', 'fejleszto'] : ['reader', 'editor', 'admin'];
+  // A god-szerep (fejleszto) API-n át sosem osztható ki; admin szintet csak a god
+  // adhat. Ezért az admin legfeljebb szerkesztőt hozhat létre, a god admint is.
+  const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin'] : ['reader', 'editor'];
   const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
 
   return (
@@ -325,6 +330,8 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {isDev && <SystemStatusPanel />}
 
       {isAdmin && (<>
       <div className="flex items-center gap-3 mb-4">

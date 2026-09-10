@@ -176,15 +176,35 @@ A backend indításához kötelezően be kell állítani:
 
 Fontos: production módban a backend API dokumentáció (`/docs`, `/redoc`, `/openapi.json`) le van tiltva.
 
-A rendszerben csak a `dev_master` lehet fejlesztői (god-level) szerepben.
-Más felhasználóhoz a `fejleszto` szerep API-n keresztül nem rendelhető.
-
 ## Szerepkörök (éles modell)
 
 - **Olvasó (`reader`)**: csak olvasás, módosítás nélkül.
 - **Szerkesztő (`editor`)**: olvasás + adatmódosítás.
-- **Admin (`admin`)**: olvasás + adatmódosítás + beállítások (felhasználókezelés) az alkalmazáson belül.
-- **Dev master (`fejleszto`, `dev_master` felhasználó)**: teljes jogosultság (god-level), kizárólag a fejlesztői csapatnak, más felhasználónak nem adható ki.
+- **Admin (`admin`)**: olvasás + adatmódosítás + felhasználókezelés — de **csak
+  olvasó/szerkesztő** fiókokat kezelhet. Másik admint nem hozhat létre, nem
+  módosíthat és nem törölhet, és admin szintet nem oszthat ki.
+- **Dev master (god, `fejleszto` szerep)**: a legmagasabb szint, az admin
+  fölött. Ez kezelheti az adminokat is, és csak ez éri el a karbantartó
+  végpontokat (`/api/maintenance/*`: rendszerállapot, munkamenet-ürítés,
+  kényszerkiléptetés, zárolás-feloldás).
+
+### A god-szint garantált tulajdonságai
+
+- **Kizárólagos és mindig létezik.** A `fejleszto` szerepet egyetlen fiók
+  birtokolhatja; az indítás minden alkalommal újra megerősíti (ha törölnék vagy
+  lefokoznák, a következő induláskor visszaáll). API-n keresztül nem hozható
+  létre és nem osztható ki.
+- **Az admin nem látja és nem éri el.** A felhasználó-listából ki van szűrve, a
+  rá irányuló admin-kérés pedig `404` (mintha nem is létezne) — így a puszta
+  létezése sem szivárog. A karbantartó végpontok semleges `403`-at adnak
+  nem-god hívónak, ugyanazt, mint bármely jogosultsági hiba.
+- **Nem törölhető, nem módosítható** az alkalmazáson keresztül — még maga a god
+  által sem.
+- **A neve a kódban nincs benne.** A `BACKEND_DEV_MASTER_USERNAME` környezeti
+  változó adja; éles telepítésen egyedi, csak a telepítő által ismert értéket
+  állíts be. Alapérték fejlesztéshez: `dev_master`.
+- **A műveletei naplózódnak**, de a tevékenységnaplóban csak god-szinten
+  láthatók — az admin ezeket sem látja. (Elszámoltathatóság + rejtés együtt.)
 
 ## Teszt belépések (jelenlegi)
 

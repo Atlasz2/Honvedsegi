@@ -20,6 +20,7 @@ from .models import (
     VehicleModel,
 )
 from .constants import UNITS
+from .core.privileged import god_username
 
 # A generált állomány rendfokozat-eloszlása. Modulszinten, hogy tesztelhető
 # legyen: minden itt szereplő fokozatnak szerepelnie kell a constants.RANKS
@@ -81,7 +82,7 @@ def seed_database(db: Session) -> None:
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
     ]
 
     personnel = [
@@ -184,7 +185,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
     ]
 
     male_first_names = [

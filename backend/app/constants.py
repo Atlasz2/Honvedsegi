@@ -6,7 +6,8 @@ SESSION_HOURS = 8
 SESSION_SLIDE_BELOW_HOURS = 1
 MAX_FAILED_LOGINS = 5
 LOCKOUT_MINUTES = 15
-GOD_USERNAME = "dev"
+# A god-fiók felhasználóneve NEM itt él: környezetből jön (privileged.god_username),
+# hogy éles telepítésen ne szerepeljen a forráskódban. A szerep azonosítója stabil.
 GOD_ROLE = "fejleszto"
 BACKEND_ENV = os.getenv("BACKEND_ENV", "development").strip().lower()
 IS_PRODUCTION = BACKEND_ENV == "production"
