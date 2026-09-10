@@ -1009,7 +1009,7 @@ Clean code ürügyén könnyű túlmérnökölni. Ezeket **hagyd békén**:
 | 1.1 Git-higiénia | ✅ | Követett fájlok 283 → 205, 0 db `.pyc` |
 | 1.2 `backend/main.py` | ✅ | Törölve a hitelesítés nélküli adat-API |
 | 1.3 Halott frontend | ✅ | 4 oldal törölve, `NotFound` bekötve és átírva |
-| 1.4 Műveletek v2 | ⏸️ | Döntés: **befejezzük** — külön menetben (lásd lent) |
+| 1.4 Műveletek v2 | ✅ | Befejezve: 2 modell, 9 séma, 18 végpont, 6 komponens bekötve |
 | 1.5 Hibabejelentő | ✅ | Törölve (a `BugReportModel` sosem létezett) |
 | 2.1 `services/` bekötése | ✅ | `imports` 292→44, `reports` 474→79 sor |
 | 2.2 `deps.py` szétbontása | ✅ | 670 sor → 7 modul |
@@ -1038,30 +1038,47 @@ Clean code ürügyén könnyű túlmérnökölni. Ezeket **hagyd békén**:
 5. **A hibabejelentő importálni sem volt képes** — a `BugReportModel` soha nem
    került be a `models.py`-ba.
 
-## ⏭️ Következő: a Műveletek v2 befejezése (1.4)
+## ✅ Műveletek v2 — befejezve
 
-A döntés **A) Befejezés**. A felmérés óta pontosodott a kép: ez nem „bekötés",
-hanem **feature-építés**, mert az alapok is hiányoznak.
+A döntés **A) Befejezés** volt. A munka során kiderült, hogy ez nem „bekötés",
+hanem feature-építés: a modellek és sémák sem léteztek.
 
-**Ami már megvan:** `services/operations.py` (523 sor) és `services/lifecycle.py`
-(106 sor) üzleti logikája, valamint a négy frontend komponens váza (466 sor).
+**Ütközés, ami menet közben derült ki.** A `services/operations.py` egy
+`AttendanceModel`-re épült, ami *létezik* — de mást jelent: az a napi
+létszámjelentés (A1) modellje, naptári nap szerint, élő funkcióval és
+tesztekkel. A service viszont eseményhez kötött jelenlétet vár. A két fogalom
+összevonása elrontotta volna a napi létszámot, ezért külön
+`OperationAttendanceModel` készült, és regressziós teszt figyeli, hogy a
+művelet-jelenlét ne módosítsa az A1 összesítőt.
 
-**Ami hiányzik — meg kell írni:**
+**Ami elkészült:**
 
-| Réteg | Hiányzik |
+| Réteg | Eredmény |
 |---|---|
-| `models.py` | `MaterialRequirementModel`, `OperationDocumentModel` (az `AttendanceModel` megvan) |
-| `schemas.py` | `OperationTreeNode`, `AttendanceEntryRead`, `AttendanceEntryUpdate`, `AttendanceBatchUpdateRequest`, `MaterialRequirementBase/Read/Update`, `OperationDocumentRead` |
-| router | Új `routers/operations_v2.py`, ~15 endpoint, regisztrálva a `main.py`-ban |
-| `types.ts` | `OperationTreeNode`, `OperationDocument`, `MaterialRequirement`, `RequirementStatus` (az `AttendanceEntry`/`AttendanceStatus` a `store.ts`-ben van, oda költözik) |
-| `store.ts` | `operationsV2` modul a fenti endpointokhoz |
-| `Operations.tsx` | A négy komponens bekötése |
-| tesztek | Fa, jelenlét, anyagigény, dokumentum-feltöltés |
+| `models.py` | `OperationAttendanceModel`, `MaterialRequirementModel`, `OperationDocumentModel`, `EventModel.parent_id` |
+| `schemas.py` | 9 séma |
+| `startup.py` | Idempotens séma-kiegészítés a meglévő `events` táblához |
+| `routers/operations.py` | 18 végpont, a `/tree` a `{operation_id}` elé sorolva |
+| `types.ts` | Művelet-típusok + a napi létszám típusai a `store.ts`-ből ide költöztetve (3.3) |
+| `store.ts` | 4 API-modul; a mojibake hibaüzenet is javítva (4.4/a) |
+| UI | `OperationDetailTabs` konténer + `SubOperationPanel`; mind a 6 komponens bekötve |
+| tesztek | `test_operations.py` (18) |
 
-**Ezért a 4.1-es feltöltés-biztonsági munka (MIME a kiterjesztésből, escapelt
-`Content-Disposition`, chunkolt olvasás) NEM tárgytalan — a bekötés előtt
-kötelező.** Amíg a router nincs regisztrálva, a sebezhetőség nem elérhető.
+**Biztonság (4.1) — a bekötés előtt elvégezve**, mert a router regisztrálásával
+a sebezhetőség elérhetővé vált volna:
 
-A `services/operations.py` jelenleg **nem importálható** (`MaterialRequirementModel`
-hiányzik), ezért a 3.2-es 6 maradék típushiba és ez a két service marad az
-egyetlen ismert „nem futó" kód a repóban — tudatosan, a befejezésig.
+- A MIME a már allowlist-elt kiterjesztésből származik, nem a kliens
+  `content_type` fejlécéből (tárolt XSS).
+- Inline megjelenítés csak PDF-re; minden más `attachment`.
+- `Content-Disposition` fájlnév RFC 5987 szerint escapelve.
+- Chunkolt feltöltés futó méret-számlálóval, 413-mal.
+
+Mindegyikre teszt is készült.
+
+## ⏭️ Következő lépések
+
+A 3.4 (`strict` fokozatosan), 4.2 (audit kiterjesztése), 4.3 (session),
+5.1 (CI) és a 6. fázis maradt. **A CI-nél vedd figyelembe, hogy az éles
+környezet offline intranet**: a GitHub Actions csak a fejlesztői gépen/gitben
+fut, a telepített rendszernek nincs internetkapcsolata — a build artefaktumot
+kézzel kell átvinni.

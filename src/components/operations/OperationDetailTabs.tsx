@@ -5,20 +5,24 @@ import {
   operationAttendance,
   operationDocuments,
   operationRequirements,
+  operationTree,
 } from '@/lib/store';
 import type {
   MaterialRequirement,
   OperationAttendanceEntry,
   OperationDocument,
+  OperationTreeNode,
   PersonAssignment,
 } from '@/lib/types';
 import AttendanceGrid from './AttendanceGrid';
 import DocumentList from './DocumentList';
 import RequirementsList from './RequirementsList';
+import SubOperationPanel from './SubOperationPanel';
 
-type Tab = 'attendance' | 'requirements' | 'documents';
+type Tab = 'subOperations' | 'attendance' | 'requirements' | 'documents';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'subOperations', label: 'Részfeladatok' },
   { key: 'attendance', label: 'Jelenlét' },
   { key: 'requirements', label: 'Anyagigény' },
   { key: 'documents', label: 'Dokumentumok' },
@@ -26,6 +30,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 type Props = {
   operationId: string;
+  operationName: string;
   assigned: PersonAssignment[];
   canEdit: boolean;
 };
@@ -34,8 +39,11 @@ type Props = {
  * A művelet-részletek három fülét fogja össze, és birtokolja a hozzájuk tartozó
  * betöltést. Külön komponens, hogy az Operations oldal ne hízzon tovább.
  */
-export default function OperationDetailTabs({ operationId, assigned, canEdit }: Props) {
+export default function OperationDetailTabs({ operationId, operationName, assigned, canEdit }: Props) {
   const [tab, setTab] = useState<Tab>('attendance');
+  /** A jelenlét/anyagigény/dokumentum a kiválasztott részfeladatra vonatkozik. */
+  const [activeId, setActiveId] = useState(operationId);
+  const [subOperations, setSubOperations] = useState<OperationTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -47,21 +55,23 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [att, reqs, docs] = await Promise.all([
-        operationAttendance.get(operationId),
-        operationRequirements.get(operationId),
-        operationDocuments.get(operationId),
+      const [att, reqs, docs, tree] = await Promise.all([
+        operationAttendance.get(activeId),
+        operationRequirements.get(activeId),
+        operationDocuments.get(activeId),
+        operationTree.get(),
       ]);
       setAttendance(att);
       setRequirements(reqs);
       setDocuments(docs);
+      setSubOperations(tree.find(node => node.id === operationId)?.children ?? []);
       setDirtyPersonIds(new Set());
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, [operationId]);
+  }, [operationId, activeId]);
 
   useEffect(() => {
     void refresh();
@@ -74,7 +84,7 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
    */
   const rows: OperationAttendanceEntry[] = (() => {
     const byPerson = new Map(attendance.map(entry => [entry.personId, entry]));
-    for (const person of assigned) {
+    for (const person of (activeId === operationId ? assigned : [])) {
       if (byPerson.has(person.personId)) continue;
       byPerson.set(person.personId, {
         personId: person.personId,
@@ -105,9 +115,22 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
     setSaving(true);
     try {
       const entries = rows.map(({ personId, personName, status, note }) => ({ personId, personName, status, note }));
-      setAttendance(await operationAttendance.saveBatch(operationId, entries));
+      setAttendance(await operationAttendance.saveBatch(activeId, entries));
       setDirtyPersonIds(new Set());
       toast.success('Jelenlét mentve');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runTreeAction = async (action: () => Promise<unknown>, successMessage: string) => {
+    setSaving(true);
+    try {
+      await action();
+      await refresh();
+      toast.success(successMessage);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -119,7 +142,7 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
     setSaving(true);
     try {
       await action();
-      setRequirements(await operationRequirements.get(operationId));
+      setRequirements(await operationRequirements.get(activeId));
       toast.success(successMessage);
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -132,7 +155,7 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
     setSaving(true);
     try {
       await action();
-      setDocuments(await operationDocuments.get(operationId));
+      setDocuments(await operationDocuments.get(activeId));
       if (successMessage) toast.success(successMessage);
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -155,6 +178,7 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
             }`}
           >
             {label}
+            {key === 'subOperations' && subOperations.length > 0 && ` (${subOperations.length})`}
             {key === 'requirements' && requirements.length > 0 && ` (${requirements.length})`}
             {key === 'documents' && documents.length > 0 && ` (${documents.length})`}
           </button>
@@ -165,6 +189,32 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
         <p className="text-xs text-muted-foreground py-4">Betöltés…</p>
       ) : (
         <>
+          {tab === 'subOperations' && (
+            <SubOperationPanel
+              rootId={operationId}
+              rootName={operationName}
+              subOperations={subOperations}
+              activeId={activeId}
+              canEdit={canEdit}
+              busy={saving}
+              onSelect={setActiveId}
+              onCreate={payload => runTreeAction(() => operationTree.create({
+                eventType: 'esemeny',
+                name: payload.name,
+                type: payload.type,
+                startDate: payload.startDate,
+                endDate: payload.endDate,
+                location: payload.location,
+                status: 'Tervezett',
+                parentId: operationId,
+              }), 'Részfeladat létrehozva')}
+              onDelete={id => runTreeAction(async () => {
+                await operationTree.remove(id);
+                setActiveId(operationId);
+              }, 'Részfeladat törölve')}
+            />
+          )}
+
           {tab === 'attendance' && (
             <AttendanceGrid
               entries={rows}
@@ -182,11 +232,11 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
               canEdit={canEdit}
               busy={saving}
               onCreate={payload => runRequirementAction(
-                () => operationRequirements.create(operationId, payload), 'Anyagigény rögzítve')}
+                () => operationRequirements.create(activeId, payload), 'Anyagigény rögzítve')}
               onUpdate={(id, payload) => runRequirementAction(
-                () => operationRequirements.update(operationId, id, payload), 'Anyagigény módosítva')}
+                () => operationRequirements.update(activeId, id, payload), 'Anyagigény módosítva')}
               onDelete={id => runRequirementAction(
-                () => operationRequirements.remove(operationId, id), 'Anyagigény törölve')}
+                () => operationRequirements.remove(activeId, id), 'Anyagigény törölve')}
             />
           )}
 
@@ -196,15 +246,15 @@ export default function OperationDetailTabs({ operationId, assigned, canEdit }: 
               canEdit={canEdit}
               busy={saving}
               onUpload={(file, title) => runDocumentAction(
-                () => operationDocuments.upload(operationId, file, title), 'Dokumentum feltöltve')}
+                () => operationDocuments.upload(activeId, file, title), 'Dokumentum feltöltve')}
               onDelete={docId => runDocumentAction(
-                () => operationDocuments.remove(operationId, docId), 'Dokumentum törölve')}
+                () => operationDocuments.remove(activeId, docId), 'Dokumentum törölve')}
               onDownload={(docId, originalName) => runDocumentAction(
-                () => operationDocuments.download(operationId, docId, originalName))}
+                () => operationDocuments.download(activeId, docId, originalName))}
               onView={docId => {
                 const doc = documents.find(item => item.id === docId);
                 return runDocumentAction(
-                  () => operationDocuments.view(operationId, docId, doc?.originalName ?? 'dokumentum'));
+                  () => operationDocuments.view(activeId, docId, doc?.originalName ?? 'dokumentum'));
               }}
             />
           )}

@@ -1189,7 +1189,7 @@ export default function Operations() {
               <div className="h-px flex-1 bg-primary/30" />
             </div>
 
-            <OperationDetailTabs operationId={detail.id} assigned={detail.assigned} canEdit={canEdit} />
+            <OperationDetailTabs operationId={detail.id} operationName={detail.name} assigned={detail.assigned} canEdit={canEdit} />
 
             <div className="flex justify-between pt-2">
               <button onClick={() => { setDetail(null); setPersonSearch(""); }} className="btn-mil-secondary text-xs">Bezárás</button>
