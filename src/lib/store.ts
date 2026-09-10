@@ -234,6 +234,21 @@ export const personnel = {
   getHistory: (id: string) => request<PersonHistoryEntry[]>(`/personnel/${id}/history`),
 };
 
+export type ReferenceData = {
+  units: string[];
+  personStatuses: string[];
+  ranks: { name: string; short: string }[];
+};
+
+/**
+ * Törzsadatok a backendből. Korábban az egységek, rendfokozatok és státuszok a
+ * Personnel.tsx-ben voltak hardkódolva, a seedtől függetlenül — így a kettő el
+ * tudott (és el is szokott) csúszni egymástól.
+ */
+export const reference = {
+  get: () => request<ReferenceData>('/reference'),
+};
+
 export const qualificationTypes = {
   getAll: () => request<QualificationType[]>('/qualifications/types'),
   create: (payload: Omit<QualificationType, 'id'>) =>

@@ -344,6 +344,33 @@ def _migrate_qualifications_from_trainings(db: Session) -> None:
     log.info("Képesítés-migráció kiképzésekből: %d bejegyzés", count)
 
 
+# ── migration: rendfokozat-nevek egységesítése ────────────────────────────────
+
+# A rendfokozatok korábban három helyen, egymástól függetlenül éltek, ezért
+# elcsúsztak: a seed fix demó-személyei "Közkatona"-t kaptak, a generált
+# állomány "Honvéd"-et, a frontend legördülője pedig csak az előbbit ismerte.
+# A hivatalos létra (constants.RANKS) a "Honvéd"-et használja; ez a migráció a
+# meglévő adatbázisokat is arra igazítja, hogy ne maradjon ismeretlen fokozat.
+_RANK_RENAMES = {"Közkatona": "Honvéd"}
+
+
+def _migrate_rank_names(db: Session) -> None:
+    key = "v2_rank_names_official"
+    if _migration_done(db, key):
+        return
+
+    for old_name, new_name in _RANK_RENAMES.items():
+        result = db.execute(
+            text("UPDATE personnel SET rank = :new WHERE rank = :old"),
+            {"new": new_name, "old": old_name},
+        )
+        if result.rowcount:
+            log.info("Rendfokozat átnevezve: %s -> %s (%d fő)", old_name, new_name, result.rowcount)
+
+    db.commit()
+    _mark_done(db, key)
+
+
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
 def run_all(db: Session) -> None:
@@ -352,3 +379,4 @@ def run_all(db: Session) -> None:
     _migrate_participants(db)
     _migrate_qualifications(db)
     _migrate_qualifications_from_trainings(db)
+    _migrate_rank_names(db)

@@ -19,6 +19,30 @@ from .models import (
     UserModel,
     VehicleModel,
 )
+from .constants import UNITS
+
+# A generált állomány rendfokozat-eloszlása. Modulszinten, hogy tesztelhető
+# legyen: minden itt szereplő fokozatnak szerepelnie kell a constants.RANKS
+# hivatalos létrájában, különben a kliens nem tudja rendezni/rövidíteni.
+BATTALION_RANK_WEIGHTS: list[tuple[str, int]] = [
+    ("Honvéd", 26), ("Őrvezető", 18), ("Tizedes", 15), ("Szakaszvezető", 14), ("Őrmester", 10),
+    ("Törzsőrmester", 7), ("Főtörzsőrmester", 4), ("Zászlós", 2), ("Hadnagy", 2), ("Főhadnagy", 1),
+    ("Százados", 1),
+]
+
+STAFF_RANK_WEIGHTS: list[tuple[str, int]] = [
+    ("Szakaszvezető", 6), ("Őrmester", 8), ("Törzsőrmester", 10), ("Főtörzsőrmester", 10), ("Zászlós", 8),
+    ("Törzszászlós", 6), ("Hadnagy", 11), ("Főhadnagy", 13), ("Százados", 13), ("Őrnagy", 8),
+    ("Alezredes", 5), ("Ezredes", 2),
+]
+
+# Tervezett létszám egységenként. A kulcsainak fedniük kell a constants.UNITS-t.
+UNIT_PLAN: dict[str, int] = {
+    "31 TVZ": 400,
+    "83 TVZ": 400,
+    "19 TVZ": 400,
+    "Ezredtörzs": 100,
+}
 from .security import assert_password_strength, hash_password
 
 
@@ -66,9 +90,9 @@ def seed_database(db: Session) -> None:
         PersonModel(id="p3", name="Nagy Péter", sztsz="10000003", rank="Tizedes", unit="1. szakasz", status="Tartalékos", email="nagy.peter@gmail.com", join_date="2020-09-10"),
         PersonModel(id="p4", name="Horváth Zoltán", sztsz="10000004", rank="Őrmester", unit="2. szakasz", status="Aktív", email="horvath.z@honved.hu", phone="+36 70 555 6666", join_date="2017-01-20"),
         PersonModel(id="p5", name="Kiss Erzsébet", sztsz="10000005", rank="Főhadnagy", unit="Törzs", status="Szabadságon", email="kiss.e@honved.hu", join_date="2015-07-04", notes="Szülési szabadság"),
-        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Közkatona", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
+        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Honvéd", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
         PersonModel(id="p9", name="Molnár Dóra", sztsz="10000009", rank="Hadnagy", unit="Törzs", status="Aktív", email="molnar.d@honved.hu", phone="+36 30 999 0000", join_date="2020-03-01"),
-        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Közkatona", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
+        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Honvéd", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
         PersonModel(id="p11", name="Lukács Béla", sztsz="10000011", rank="Törzsőrmester", unit="2. szakasz", status="Aktív", email="lukacs.b@honved.hu", join_date="2014-08-22"),
         PersonModel(id="p12", name="Farkas Réka", sztsz="10000012", rank="Százados", unit="Törzs", status="Aktív", email="farkas.r@honved.hu", phone="+36 20 444 5555", join_date="2012-04-10"),
     ]
@@ -176,22 +200,9 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         "Lakatos", "Takács", "Juhász", "Mészáros", "Oláh", "Simon", "Rácz", "Fekete", "Bíró", "Boros", "Kelemen", "Lukács",
         "Gulyás", "Sipos", "Veres", "Bodnár", "Király", "Szalai",
     ]
-    battalion_rank_weights = [
-        ("Honvéd", 26), ("Őrvezető", 18), ("Tizedes", 15), ("Szakaszvezető", 14), ("Őrmester", 10),
-        ("Törzsőrmester", 7), ("Főtörzsőrmester", 4), ("Zászlós", 2), ("Hadnagy", 2), ("Főhadnagy", 1),
-        ("Százados", 1),
-    ]
-    staff_rank_weights = [
-        ("Szakaszvezető", 6), ("Őrmester", 8), ("Törzsőrmester", 10), ("Főtörzsőrmester", 10), ("Zászlós", 8),
-        ("Törzszászlós", 6), ("Hadnagy", 11), ("Főhadnagy", 13), ("Százados", 13), ("Őrnagy", 8),
-        ("Alezredes", 5), ("Ezredes", 2),
-    ]
-    unit_plan = {
-        "31 TVZ": 400,
-        "83 TVZ": 400,
-        "19 TVZ": 400,
-        "Ezredtörzs": 100,
-    }
+    battalion_rank_weights = BATTALION_RANK_WEIGHTS
+    staff_rank_weights = STAFF_RANK_WEIGHTS
+    unit_plan = UNIT_PLAN
 
     locations_by_unit = {
         "31 TVZ": ["Budapest", "Szentendre", "Gödöllő", "Cegléd"],
@@ -322,7 +333,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Budapest", "Kecskemét", "Szolnok", "Debrecen", "Esztergom"]),
-                organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
+                organizer=rng.choice(UNITS),
                 max_personnel=max_personnel,
                 description=rng.choice([
                     "Beosztáshoz kötött éves felkészítés.",
@@ -357,7 +368,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Budapest", "Szentendre", "Veszprém", "Kecskemét", "Szolnok", "Pápa"]),
-                organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
+                organizer=rng.choice(UNITS),
                 max_personnel=max_personnel,
                 description=rng.choice([
                     "Helyőrségi szintű koordinációs és tájékoztató esemény.",

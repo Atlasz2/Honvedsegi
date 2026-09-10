@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { personnel as store, qualificationTypes as qtStore, getErrorMessage } from '@/lib/store';
+import { personnel as store, qualificationTypes as qtStore, reference as refStore, getErrorMessage } from '@/lib/store';
 import { Person, QualificationType } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
@@ -9,9 +9,11 @@ import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import DatePickerInput from '@/components/DatePickerInput';
 import PersonnelDetailModal from '@/components/PersonnelDetailModal';
 
-const RANKS = ['Közkatona','Tizedes','Szakaszvezető','Őrmester','Törzsőrmester','Főtörzsőrmester','Zászlós','Törzszászlós','Főtörzszászlós','Hadnagy','Főhadnagy','Százados','Őrnagy','Alezredes','Ezredes'];
-const STATUSES = ['Aktív','Tartalékos','Szabadságon','Leszerelt'] as const;
-const UNIT_OPTIONS = ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'] as const;
+// A törzsadatok forrása a backend (/api/reference). Ezek csak tartalék-értékek
+// az első betöltésig, hogy az űrlap ne villanjon üres legördülőkkel.
+const FALLBACK_RANKS = ['Honvéd', 'Őrvezető', 'Tizedes', 'Szakaszvezető', 'Őrmester'];
+const FALLBACK_STATUSES = ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'];
+const FALLBACK_UNITS = ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'];
 const PHONE_REGEX = /^\+36 \d{2} \d{3} \d{4}$/;
 
 function normalizeHungarianPhone(input: string): string {
@@ -112,6 +114,9 @@ export default function Personnel() {
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [detailPerson, setDetailPerson] = useState<Person | null>(null);
+  const [ranks, setRanks] = useState<string[]>(FALLBACK_RANKS);
+  const [statuses, setStatuses] = useState<string[]>(FALLBACK_STATUSES);
+  const [units, setUnits] = useState<string[]>(FALLBACK_UNITS);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -151,6 +156,16 @@ export default function Personnel() {
 
   useEffect(() => {
     qtStore.getAll().then(setQualTypeOptions).catch(() => setQualTypeOptions([]));
+  }, []);
+
+  useEffect(() => {
+    refStore.get()
+      .then(data => {
+        setRanks(data.ranks.map(rank => rank.name));
+        setStatuses(data.personStatuses);
+        setUnits(data.units);
+      })
+      .catch(() => { /* marad a tartalék-lista */ });
   }, []);
 
   useEffect(() => {
@@ -224,7 +239,7 @@ export default function Personnel() {
       name: p.name,
       sztsz: p.sztsz,
       rank: p.rank,
-      unit: UNIT_OPTIONS.includes(p.unit as typeof UNIT_OPTIONS[number]) ? p.unit : UNIT_OPTIONS[0],
+      unit: units.includes(p.unit) ? p.unit : units[0],
       beosztas: p.beosztas || '',
       status: p.status,
       email: p.email,
@@ -274,7 +289,7 @@ export default function Personnel() {
           style={{ borderRadius: '2px' }}
         >
           <option value="Összes">Minden alegység</option>
-          {UNIT_OPTIONS.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+          {units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
         </select>
 
 
@@ -287,7 +302,7 @@ export default function Personnel() {
           <option value="">Minden képzettség</option>
           {qualTypeOptions.map(qt => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
         </select>
-        {['Összes', ...STATUSES].map(s => (
+        {['Összes', ...statuses].map(s => (
           <button
             key={s}
             onClick={() => { setStatusFilter(s); setPage(1); }}
@@ -369,14 +384,14 @@ export default function Personnel() {
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Rendfokozat</label>
             <select value={form.rank} onChange={e => setForm(prev => ({ ...prev, rank: e.target.value }))}
               className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }}>
-              {RANKS.map(r => <option key={r} value={r}>{r}</option>)}
+              {ranks.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Alakulat *</label>
             <select value={form.unit} onChange={e => setForm(prev => ({ ...prev, unit: e.target.value }))}
               className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }}>
-              {UNIT_OPTIONS.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+              {units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
             </select>
             {errors.unit && <p className="text-destructive text-xs mt-1">{errors.unit}</p>}
           </div>
@@ -384,7 +399,7 @@ export default function Personnel() {
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
             <select value={form.status} onChange={e => setForm(prev => ({ ...prev, status: e.target.value as Person['status'] }))}
               className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }}>
-              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <FormField label="Email" field="email" form={form} setForm={setForm} errors={errors} type="email" />

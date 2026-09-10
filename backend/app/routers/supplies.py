@@ -4,9 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import _apply_supply, _get_current_user, _require_editor, _require_model, _serialize_supply, _utc_now
-from ..models import SupplyModel, UserModel
+from ..models import SupplyModel, UserModel, new_id
 from ..schemas import SupplyCreate, SupplyMovementCreate, SupplyRead, SupplyUpdate
-from ..security import issue_token
 
 router = APIRouter(prefix="/api/supplies", tags=["supplies"])
 
@@ -53,7 +52,7 @@ def create_supply_movement(
     else:
         qty = payload.quantity
     movement = {
-        "id": issue_token(), "type": payload.type, "quantity": payload.quantity,
+        "id": new_id(), "type": payload.type, "quantity": payload.quantity,
         "note": payload.note, "date": _utc_now().isoformat(),
         "userId": user.username, "userName": user.display_name,
     }
