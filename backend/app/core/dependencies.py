@@ -13,12 +13,18 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import UserModel
-from .auth import get_current_user, require_admin, require_editor, require_god_user
+from .auth import (
+    AuthenticatedSession, get_current_session, get_current_user,
+    require_admin, require_editor, require_god_user,
+)
 
 DB = Annotated[Session, Depends(get_db)]
 
 #: Bármely bejelentkezett felhasználó (olvasás).
 Reader = Annotated[UserModel, Depends(get_current_user)]
+
+#: A felhasználó és a munkamenet tényleges lejárata együtt.
+CurrentSession = Annotated[AuthenticatedSession, Depends(get_current_session)]
 
 #: Szerkesztő, admin vagy fejlesztő (írás).
 Editor = Annotated[UserModel, Depends(require_editor)]

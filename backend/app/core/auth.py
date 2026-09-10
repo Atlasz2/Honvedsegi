@@ -1,13 +1,17 @@
 """Hitelesítés: munkamenet-ellenőrzés, jogosultsági szintek, login-korlátozás."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from fastapi import Depends, Header, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..constants import GOD_ROLE, GOD_USERNAME, LOCKOUT_MINUTES, MAX_FAILED_LOGINS
+from ..constants import (
+    GOD_ROLE, GOD_USERNAME, LOCKOUT_MINUTES, MAX_FAILED_LOGINS,
+    SESSION_HOURS, SESSION_SLIDE_BELOW_HOURS,
+)
 from ..db import get_db
 from ..models import LoginAttemptModel, SessionTokenModel, UserModel
 from ..schemas import AuthUser, UserRead
@@ -67,10 +71,30 @@ def to_user_read(user: UserModel) -> UserRead:
 
 # ── FastAPI auth dependencies ─────────────────────────────────────────────
 
-def get_current_user(
+@dataclass(frozen=True)
+class AuthenticatedSession:
+    """A hitelesített felhasználó ÉS a munkamenet tényleges lejárata.
+
+    A kettő együtt jár: a lejáratot korábban a /me frissen számolta ki, ami nem
+    a tárolt értéket adta vissza — vagyis hazudott."""
+
+    user: UserModel
+    expires_at: datetime
+
+
+def purge_expired_sessions(db: Session) -> int:
+    """A lejárt munkamenet-tokenek eldobása.
+
+    Enélkül csak használatkor törlődnének, így a tábla korlátlanul nőne."""
+    result = db.execute(delete(SessionTokenModel).where(SessionTokenModel.expires_at < utc_now()))
+    db.commit()
+    return result.rowcount or 0
+
+
+def get_current_session(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
-) -> UserModel:
+) -> AuthenticatedSession:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bejelentkezés szükséges")
     token_value = authorization.split(" ", 1)[1].strip()
@@ -85,7 +109,20 @@ def get_current_user(
     user = db.get(UserModel, session_token.user_id)
     if not user or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="A felhasználó nem aktív")
-    return user
+
+    # Csúszó munkamenet: aktív munka közben ne dobja ki az ügyintézőt. Csak akkor
+    # írunk, ha tényleg fogytán az idő — így nem lesz DB-írás minden kérésből.
+    remaining = as_utc(session_token.expires_at) - utc_now()
+    if remaining < timedelta(hours=SESSION_SLIDE_BELOW_HOURS):
+        session_token.expires_at = utc_now() + timedelta(hours=SESSION_HOURS)
+        db.commit()
+        db.refresh(session_token)
+
+    return AuthenticatedSession(user=user, expires_at=as_utc(session_token.expires_at))
+
+
+def get_current_user(session: AuthenticatedSession = Depends(get_current_session)) -> UserModel:
+    return session.user
 
 
 def require_editor(user: UserModel = Depends(get_current_user)) -> UserModel:

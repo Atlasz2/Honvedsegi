@@ -8,28 +8,13 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import DatePickerInput from '@/components/DatePickerInput';
 import PersonnelDetailModal from '@/components/PersonnelDetailModal';
+import { isValidHungarianPhone, normalizeHungarianPhone } from '@/lib/phone';
 
 // A törzsadatok forrása a backend (/api/reference). Ezek csak tartalék-értékek
 // az első betöltésig, hogy az űrlap ne villanjon üres legördülőkkel.
 const FALLBACK_RANKS = ['Honvéd', 'Őrvezető', 'Tizedes', 'Szakaszvezető', 'Őrmester'];
 const FALLBACK_STATUSES = ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'];
 const FALLBACK_UNITS = ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'];
-const PHONE_REGEX = /^\+36 \d{2} \d{3} \d{4}$/;
-
-function normalizeHungarianPhone(input: string): string {
-  const digitsRaw = input.replace(/\D/g, '');
-  let digits = digitsRaw;
-  if (digits.startsWith('06')) {
-    digits = digits.slice(2);
-  } else if (digits.startsWith('36')) {
-    digits = digits.slice(2);
-  }
-  digits = digits.slice(0, 9);
-  if (!digits) return '';
-  if (digits.length <= 2) return `+36 ${digits}`;
-  if (digits.length <= 5) return `+36 ${digits.slice(0, 2)} ${digits.slice(2)}`;
-  return `+36 ${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5)}`;
-}
 
 const statusClass: Record<string, string> = {
   'Aktív': 'badge-active', 'Tartalékos': 'badge-reserve', 'Szabadságon': 'badge-leave', 'Leszerelt': 'badge-discharged',
@@ -182,7 +167,7 @@ export default function Personnel() {
     if (!form.sztsz.trim()) e.sztsz = 'Kötelező mező';
     if (!/^\d{8}$/.test(form.sztsz.trim())) e.sztsz = 'Pontosan 8 számjegy';
     if (!form.unit.trim()) e.unit = 'Kötelező mező';
-    if (form.phone && !PHONE_REGEX.test(form.phone)) e.phone = 'Formátum: +36 XX XXX XXXX';
+    if (form.phone && !isValidHungarianPhone(form.phone)) e.phone = 'Formátum: +36 XX XXX XXXX';
     setErrors(e);
     return Object.keys(e).length === 0;
   };

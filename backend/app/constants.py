@@ -2,6 +2,8 @@ from __future__ import annotations
 import os
 
 SESSION_HOURS = 8
+# Ennyi hátralévő idő alatt a munkamenet aktivitásra meghosszabbodik.
+SESSION_SLIDE_BELOW_HOURS = 1
 MAX_FAILED_LOGINS = 5
 LOCKOUT_MINUTES = 15
 GOD_USERNAME = "dev"

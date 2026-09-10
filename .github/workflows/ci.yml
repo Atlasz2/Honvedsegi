@@ -1,0 +1,47 @@
+# Fejlesztői minőségkapu.
+#
+# FONTOS: ez a fejlesztéshez tartozik, NEM a telepítéshez. Az éles rendszer
+# offline intraneten fut, egyetlen központi gépen — oda a `npm run build`
+# eredményét és a backend forrását kézzel visszük át. A CI csak azt őrzi, hogy
+# ami a gitbe kerül, az forduljon, típushelyes legyen és átmenjen a teszteken.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (lint, típusok, teszt, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  backend:
+    name: Backend (pytest + lefedettség)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # A seed az első indításkor ezekből hozza létre a kezdeti felhasználókat.
+      # Eldobható CI-értékek; élesben a prod.env-ből jönnek.
+      BACKEND_ADMIN_PASSWORD: CiAdminJelszo_2026!
+      BACKEND_DEV_MASTER_PASSWORD: CiDevMasterJelszo_2026!
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q --cov=app --cov-report=term

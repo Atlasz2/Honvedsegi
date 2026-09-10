@@ -13,7 +13,7 @@ from ..core.auth import (
     reset_login_attempt,
     user_to_auth_payload,
 )
-from ..core.dependencies import DB, Reader
+from ..core.dependencies import DB, CurrentSession, Reader
 from ..core.time import utc_now
 from ..models import SessionTokenModel, UserModel
 from ..schemas import AuthUser, LoginRequest, LoginResponse
@@ -58,9 +58,10 @@ def login(payload: LoginRequest, db: DB) -> LoginResponse:
 
 
 @router.get("/me", response_model=AuthUser)
-def me(user: Reader) -> AuthUser:
-    expiry = utc_now() + timedelta(hours=SESSION_HOURS)
-    return user_to_auth_payload(user, expiry)
+def me(session: CurrentSession) -> AuthUser:
+    # A TÁROLT lejárat, nem frissen számolt: a kliens erre alapozza, hogy mikor
+    # kell újra bejelentkezni. Korábban egy fiktív, mindig 8 órás értéket kapott.
+    return user_to_auth_payload(session.user, session.expires_at)
 
 
 @router.post("/logout", status_code=204)

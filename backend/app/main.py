@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .constants import BACKEND_ENV, IS_PRODUCTION
+from .core.auth import purge_expired_sessions
 from .db import Base, SessionLocal, engine, get_db
 from .core.time import utc_now
 from .seed import seed_database
@@ -44,6 +45,7 @@ async def lifespan(_app: FastAPI):
         _ensure_extended_schema(db)
         _enforce_single_god_user(db)
         run_migrations(db)
+        purge_expired_sessions(db)
     yield
 
 
