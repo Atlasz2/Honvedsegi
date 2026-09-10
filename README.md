@@ -47,18 +47,35 @@ A cél az volt, hogy a korábbi localStorage-alapú demó helyett olyan rendszer
 guard-guard-duty/
   backend/
     app/
-      db.py
-      main.py
-      models.py
-      schemas.py
-      security.py
-      seed.py
+      core/           auth.py, time.py, dependencies.py — alaprétegek
+      routers/        HTTP-végpontok (csak kérés/válasz fordítás)
+      services/       üzleti logika (import, riport, műveletek, életciklus)
+      serializers.py  modell -> API-válasz
+      appliers.py     API-kérés -> modell
+      participants.py résztvevők olvasása/szinkronizálása
+      validation.py   bemenet-ellenőrzés (SZTSz)
+      repository.py   generikus model-getter
+      audit.py        mező-szintű tevékenységnapló
+      models.py       SQLAlchemy modellek
+      schemas.py      Pydantic sémák
+      constants.py    törzsadatok (egységek, rendfokozatok) + beállítások
+      migrate.py      idempotens adatmigrációk
+      static_serving.py  a frontend kiszolgálása ugyanabból a processzből
+    tests/            pytest (136 teszt)
     requirements.txt
   src/
-    components/
-    lib/
-    pages/
+    components/       közös UI + operations/ almodul
+    lib/              store (API), types, auth, rank, phone
+    pages/            útvonalanként egy oldal
+  ops/windows/        telepítő-, mentés- és tűzfal-scriptek
+  docs/               roadmap, állapotfelmérés, cselekvési terv
 ```
+
+### Rétegszabály
+
+A router HTTP-t fordít, a service üzleti szabályt tud, a serializer alakot vált.
+Ezek nem keverednek: ha egy routerben üzleti logikát találsz, az a service-be
+való.
 
 ## Indítás fejlesztéshez
 
@@ -95,6 +112,28 @@ A frontend alapértelmezetten relatív API útvonalat használ:
 
 Ha ettől eltérő backend címet akarsz használni, állítsd be a `VITE_API_URL` környezeti változót.
 
+## Minőségkapu (fejlesztéshez)
+
+Minden változtatás után futtasd le mind a négyet — a CI is ezeket futtatja
+(`.github/workflows/ci.yml`):
+
+```powershell
+npm run lint          # ESLint
+npm run typecheck     # tsc --noEmit — a vite build NEM ellenőriz típust!
+npm test              # vitest (frontend)
+npm run build         # produkciós build
+
+cd backend
+..\.venv\Scripts\python.exe -m pytest -q                      # 136 teszt
+..\.venv\Scripts\python.exe -m pytest -q --cov=app --cov-report=term
+```
+
+> A `vite build` az SWC miatt **nem** végez típusellenőrzést, csak transzpilál —
+> ezért a `typecheck` külön lépés, és nem hagyható ki.
+
+A CI a fejlesztéshez tartozik, **nem a telepítéshez**: az éles rendszer offline
+intraneten fut, oda a build eredményét kézzel visszük át.
+
 ## Offline / intranet üzem (internet nélkül)
 
 A rendszer internet nélkül is futtatható, ha a függőségeket előre letöltöd vagy belső tükörből szolgálod ki.
@@ -107,7 +146,9 @@ A rendszer internet nélkül is futtatható, ha a függőségeket előre letölt
   - telepítés intraneten: `pip install --no-index --find-links backend/wheels -r backend/requirements.txt`
 - Frontend kiadás:
   - `npm run build`
-  - a `dist/` kimenetet szolgáld ki intranetes webszerverről (IIS/Nginx)
+  - a `dist/` kimenetet **maga a backend szolgálja ki** ugyanabból a processzből
+    (`app/static_serving.py`) — nem kell külön IIS/Nginx. A helye a
+    `BACKEND_FRONTEND_DIR` változóval felülírható.
 - API kommunikáció:
   - javasolt, hogy ugyanazon host alatt menjen frontend + backend
   - frontend útvonal: `/api`
@@ -122,7 +163,6 @@ A backend indításához kötelezően be kell állítani:
 - `BACKEND_DEV_MASTER_PASSWORD`
 - `BACKEND_PASSWORD_PEPPER` (hosszú, random, csak szerveren tárolt titok)
 - `BACKEND_TOKEN_PEPPER` (session token fingerprinthez használt külön titok)
-- `BACKEND_DATA_KEY` (Fernet base64 kulcs a személyzeti adatok érzékeny mezőinek DB-szintű titkosításához; `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` paranccsal generálható)
 - `BACKEND_READER_PASSWORD` (olvasó tesztfiók jelszava)
 - `BACKEND_EDITOR_PASSWORD` (szerkesztő tesztfiók jelszava)
 
@@ -164,7 +204,6 @@ $env:BACKEND_ADMIN_PASSWORD = "AdminTeszt_2026!"
 $env:BACKEND_DEV_MASTER_PASSWORD = "DevMasterTeszt_2026!"
 $env:BACKEND_PASSWORD_PEPPER = "HOSSZU_RANDOM_PEPPER_CSERELD_LE_ELESBEN"
 $env:BACKEND_TOKEN_PEPPER = "KULON_RANDOM_TOKEN_PEPPER_CSERELD_LE_ELESBEN"
-$env:BACKEND_DATA_KEY = "<Fernet.generate_key() kimenetét add meg itt>"
 ```
 
 Ezek után a teszt loginok:
@@ -190,7 +229,8 @@ Ezek után a teszt loginok:
    - Ne interaktív felhasználó alatt fusson.
 
 4. Frontend kiadás
-   - `npm run build` kimenetet szolgáld ki belső webszerverről (IIS/Nginx intraneten).
+   - `npm run build`, majd a `dist/` a backend mellett marad — a backend maga
+     szolgálja ki, egy porton, egy processzből.
    - Dev szervert (`npm run dev`) ne használd élesben.
 
 5. Tűzfal szabályok
