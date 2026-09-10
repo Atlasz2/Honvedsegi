@@ -29,7 +29,13 @@ const Availability = lazy(() => import("@/pages/Availability"));
 const Kovetelmenyek = lazy(() => import("@/pages/Kovetelmenyek"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
-const queryClient = new QueryClient();
+// Intranetes, egygépes üzem: az ablakváltásra való automatikus újratöltés csak
+// fölösleges kéréseket generálna. A frissítést az oldalak maguk kérik.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { refetchOnWindowFocus: false, retry: 1 },
+  },
+});
 
 function AppRoutes() {
   const { user, canEdit } = useAuth();

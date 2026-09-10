@@ -1108,9 +1108,50 @@ naplót — ugyanez az elv, amiért generikus audit-middleware sem készült (CC
 | `operations` | Az új művelet-modul; a jelenlét/anyagigény naplózása külön kör |
 | `series`, `prerequisites` | Konfiguráció, nem személyes adat |
 
-## ⏭️ Következő lépések
+## ✅ 3.4, 4.3, 5.x, 6.x — a terv többi lépése
 
-A 3.4 (`strict` fokozatosan), 4.3 (session), 5.1 (CI) és a 6. fázis maradt. **A CI-nél vedd figyelembe, hogy az éles
-környezet offline intranet**: a GitHub Actions csak a fejlesztői gépen/gitben
-fut, a telepített rendszernek nincs internetkapcsolata — a build artefaktumot
-kézzel kell átvinni.
+| Lépés | Eredmény |
+|---|---|
+| 3.4 `strict` | **Teljes strict mód, 0 hiba.** Három valódi hibát talált (lásd lent) |
+| 4.3 Munkamenet | Valódi lejárat a `/me`-ben, csúszó hosszabbítás, lejárt tokenek takarítása |
+| 5.1 CI | `.github/workflows/ci.yml` — lint, typecheck, teszt, build + pytest |
+| 5.2 Coverage | `pytest-cov`, jelenleg **72%**; küszöb szándékosan nincs |
+| 5.4 Frontend tesztek | 1 ál-teszt → **24 valódi** (phone, rank, store) |
+| 6.1 react-query | Bekötve; a törzsadat az első valódi felhasználó |
+| 6.2 Lazy route-ok | Belépő csomag **676 kB → 438 kB** |
+| 6.3 README | Struktúra, rétegszabály, minőségkapu; két félrevezető állítás javítva |
+
+### Amit a `strict` talált
+
+1. **`FormField` elnyelte a `placeholder` és `inputMode` propokat** — a
+   telefon-mező se példa-szöveget, se mobil numerikus billentyűzetet nem kapott.
+2. **`devTapCount`**: a state értékét senki nem olvasta, csak a setterét — minden
+   koppintás fölösleges újrarajzolást okozott. `useRef`-re cserélve.
+3. **`role`-hozzáférés** a művelet-részleteknél: a korábbi cast takarta, most
+   `"role" in a` szűkítéssel, cast nélkül.
+
+A `strict` első három foka meglepően olcsó volt, mert az 1–2. fázis
+típusrendezése (egységesített `types.ts`, diszkriminált unió, castok
+eltávolítása) már elvégezte a munka nagyját.
+
+### react-query — a bevezetett minta
+
+A `lib/queries.ts` tartja a kulcsokat és a hookokat. Az első hook a
+`useReferenceData`: a törzsadat egy telepítésen belül gyakorlatilag állandó,
+ezért egyórás frissesség, és tartalék-lista, ha nem érhető el. A `QueryClient`
+`refetchOnWindowFocus: false` beállítást kapott — egygépes intraneten az
+ablakváltásra való újratöltés csak fölösleges kéréseket generálna.
+
+**A többi oldal továbbra is `useEffect` + `fetch`.** Ez tudatos: 22 oldal
+egyszerre átírása nem review-zható változás lenne. A minta megvan, oldalanként
+terjeszthető.
+
+## ⏭️ Ami hátravan
+
+- **Az `attendance` és az `operations` audit-naplózása** összesítő formában
+  (a 4.2-ben tudatosan kihagyva).
+- **A react-query terjesztése** a többi oldalra, egyesével.
+- **E2E teszt** (5.5): a Playwright be van állítva, egy smoke-folyam hiányzik —
+  bejelentkezés → személy létrehozása → napi létszám → kijelentkezés.
+- **Data-at-rest titkosítás** — egyeztetés szerint ez a legutolsó lépés.
+- A `funkcio-roadmap.md` következő funkciói (D1, B1, F1).

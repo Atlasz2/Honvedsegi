@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { personnel as store, qualificationTypes as qtStore, reference as refStore, getErrorMessage } from '@/lib/store';
+import { personnel as store, qualificationTypes as qtStore, getErrorMessage } from '@/lib/store';
+import { useReferenceData } from '@/lib/queries';
 import { Person, QualificationType } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
@@ -10,11 +11,6 @@ import DatePickerInput from '@/components/DatePickerInput';
 import PersonnelDetailModal from '@/components/PersonnelDetailModal';
 import { isValidHungarianPhone, normalizeHungarianPhone } from '@/lib/phone';
 
-// A törzsadatok forrása a backend (/api/reference). Ezek csak tartalék-értékek
-// az első betöltésig, hogy az űrlap ne villanjon üres legördülőkkel.
-const FALLBACK_RANKS = ['Honvéd', 'Őrvezető', 'Tizedes', 'Szakaszvezető', 'Őrmester'];
-const FALLBACK_STATUSES = ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'];
-const FALLBACK_UNITS = ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'];
 
 const statusClass: Record<string, string> = {
   'Aktív': 'badge-active', 'Tartalékos': 'badge-reserve', 'Szabadságon': 'badge-leave', 'Leszerelt': 'badge-discharged',
@@ -101,9 +97,11 @@ export default function Personnel() {
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [detailPerson, setDetailPerson] = useState<Person | null>(null);
-  const [ranks, setRanks] = useState<string[]>(FALLBACK_RANKS);
-  const [statuses, setStatuses] = useState<string[]>(FALLBACK_STATUSES);
-  const [units, setUnits] = useState<string[]>(FALLBACK_UNITS);
+  // Törzsadat gyorsítótárból: oldalváltásnál nem tölt újra (lásd lib/queries.ts).
+  const { data: referenceData } = useReferenceData();
+  const ranks = referenceData.ranks.map(rank => rank.name);
+  const statuses = referenceData.personStatuses;
+  const units = referenceData.units;
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -143,16 +141,6 @@ export default function Personnel() {
 
   useEffect(() => {
     qtStore.getAll().then(setQualTypeOptions).catch(() => setQualTypeOptions([]));
-  }, []);
-
-  useEffect(() => {
-    refStore.get()
-      .then(data => {
-        setRanks(data.ranks.map(rank => rank.name));
-        setStatuses(data.personStatuses);
-        setUnits(data.units);
-      })
-      .catch(() => { /* marad a tartalék-lista */ });
   }, []);
 
   useEffect(() => {
