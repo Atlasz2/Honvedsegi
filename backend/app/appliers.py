@@ -147,6 +147,7 @@ def apply_event(target: EventModel, payload: EventCreate | EventUpdate) -> None:
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     target.status = payload.status
+    target.parent_id = payload.parentId
     # assigned is managed via participants table; caller must call sync_participants
 
 

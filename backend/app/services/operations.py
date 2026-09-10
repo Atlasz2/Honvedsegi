@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import secrets
+from urllib.parse import quote
 from datetime import timedelta
 from pathlib import Path
 
@@ -13,13 +14,14 @@ from sqlalchemy.orm import Session
 
 from ..appliers import apply_event
 from ..core.time import parse_iso_date, utc_now
-from ..serializers import serialize_event
+from ..participants import load_participants_by_event
+from ..serializers import serialize_event, serialize_exercise, serialize_training
 from ..models import (
-    AttendanceModel,
     DutyModel,
     EventModel,
     ExerciseModel,
     MaterialRequirementModel,
+    OperationAttendanceModel,
     OperationDocumentModel,
     TrainingModel,
     UserModel,
@@ -45,6 +47,16 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".docx", ".doc", ".txt"}
 ALLOWED_ATTENDANCE = {"Present", "Excused", "Absent", "Pending"}
 ALLOWED_REQUIREMENT = {"Requested", "Approved", "Fulfilled"}
+INLINE_MEDIA_TYPES = {"application/pdf"}
+_UPLOAD_CHUNK_SIZE = 1 << 20  # 1 MB
+
+
+def _content_disposition_filename(original_name: str) -> str:
+    """RFC 5987 szerinti, escapelt fájlnév.
+
+    A nyers interpoláció fejléc-injektálásra adna módot egy idézőjelet vagy
+    sortörést tartalmazó fájlnévvel."""
+    return f"filename*=UTF-8''{quote(original_name)}"
 
 
 def _build_shadow_event(operation_id: str, source: ExerciseModel | TrainingModel, source_kind: str) -> EventModel:
@@ -116,7 +128,7 @@ def _event_to_tree_node(item: EventModel) -> OperationTreeNode:
     )
 
 
-def _attendance_to_read(item: AttendanceModel) -> AttendanceEntryRead:
+def _attendance_to_read(item: OperationAttendanceModel) -> AttendanceEntryRead:
     updated_at = item.updated_at.isoformat() if item.updated_at else utc_now().isoformat()
     return AttendanceEntryRead(
         personId=item.person_id,
@@ -177,6 +189,23 @@ def _safe_document_name(original_name: str) -> str:
     return f"{token}{ext}"
 
 
+async def _read_within_limit(file: UploadFile) -> bytes:
+    """Chunkonként olvas, és a limit átlépésekor azonnal megszakít.
+
+    A teljes fájl memóriába olvasása a méret ellenőrzése előtt azt jelentené,
+    hogy egy 2 GB-os feltöltés is bekerül a memóriába, mielőtt elutasítjuk."""
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
+        total += len(chunk)
+        if total > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="A fájl túl nagy (max 20 MB)")
+        chunks.append(chunk)
+    if not total:
+        raise HTTPException(status_code=400, detail="Üres fájl")
+    return b"".join(chunks)
+
+
 def _operation_upload_dir(operation_id: str) -> Path:
     target = UPLOAD_ROOT / operation_id
     target.mkdir(parents=True, exist_ok=True)
@@ -184,23 +213,35 @@ def _operation_upload_dir(operation_id: str) -> Path:
 
 
 def list_operations_data(db: Session) -> list[OperationRead]:
+    """Gyakorlatok és kiképzések egy listában, művelet-nézethez.
+
+    A beosztás a participants táblából jön (a migráció óta az az igazságforrás,
+    nem a régi JSON-oszlop), eseménytípusonként EGY lekérdezéssel — így a lista
+    nem indít résztvevő-lekérdezést elemenként."""
     sync_temporal_statuses(db)
+
     exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
     trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
+    participants_by_exercise = load_participants_by_event(db, "exercise")
+    participants_by_training = load_participants_by_event(db, "training")
+
     ops: list[OperationRead] = []
     for ex in exercises:
+        serialized = serialize_exercise(db, ex, participants_by_exercise.get(ex.id, []))
         ops.append(OperationRead(
             id=ex.id, name=ex.name, type=ex.type, operationType="exercise",
             startDate=ex.start_date, endDate=ex.end_date, location=ex.location,
             organizer=None, maxPersonnel=ex.max_personnel, description=ex.description,
-            status=ex.status, assigned=ex.assigned or [],
+            status=ex.status, assigned=[a.model_dump() for a in serialized.assigned],
         ))
     for tr in trainings:
+        serialized = serialize_training(db, tr, participants_by_training.get(tr.id, []))
         ops.append(OperationRead(
             id=tr.id, name=tr.name, type=tr.type, operationType="training",
             startDate=tr.start_date, endDate=tr.end_date, location=tr.location,
             organizer=tr.organizer or "", maxPersonnel=tr.max_personnel,
-            description=tr.description, status=tr.status, assigned=tr.assigned or [],
+            description=tr.description, status=tr.status,
+            assigned=[a.model_dump() for a in serialized.assigned],
         ))
     ops.sort(key=lambda x: x.startDate)
     return ops
@@ -282,7 +323,7 @@ def create_operation_node_data(payload: EventCreate, db: Session) -> EventRead:
     db.add(item)
     db.commit()
     db.refresh(item)
-    return serialize_event(item)
+    return serialize_event(db, item)
 
 
 def update_operation_node_data(node_id: str, payload: EventUpdate, db: Session) -> EventRead:
@@ -290,13 +331,13 @@ def update_operation_node_data(node_id: str, payload: EventUpdate, db: Session) 
     apply_event(item, payload)
     db.commit()
     db.refresh(item)
-    return serialize_event(item)
+    return serialize_event(db, item)
 
 
 def delete_operation_node_data(node_id: str, db: Session) -> None:
     item = require_event(db, node_id)
 
-    for att in db.scalars(select(AttendanceModel).where(AttendanceModel.sub_operation_id == node_id)).all():
+    for att in db.scalars(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == node_id)).all():
         db.delete(att)
     for req in db.scalars(select(MaterialRequirementModel).where(MaterialRequirementModel.operation_id == node_id)).all():
         db.delete(req)
@@ -316,9 +357,9 @@ def delete_operation_node_data(node_id: str, db: Session) -> None:
 def get_attendance_data(operation_id: str, db: Session) -> list[AttendanceEntryRead]:
     require_event(db, operation_id)
     items = db.scalars(
-        select(AttendanceModel)
-        .where(AttendanceModel.sub_operation_id == operation_id)
-        .order_by(AttendanceModel.person_name, AttendanceModel.person_id)
+        select(OperationAttendanceModel)
+        .where(OperationAttendanceModel.sub_operation_id == operation_id)
+        .order_by(OperationAttendanceModel.person_name, OperationAttendanceModel.person_id)
     ).all()
     return [_attendance_to_read(item) for item in items]
 
@@ -326,7 +367,7 @@ def get_attendance_data(operation_id: str, db: Session) -> list[AttendanceEntryR
 def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpdateRequest, db: Session, current_user: UserModel) -> list[AttendanceEntryRead]:
     require_event(db, operation_id)
 
-    existing = db.scalars(select(AttendanceModel).where(AttendanceModel.sub_operation_id == operation_id)).all()
+    existing = db.scalars(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == operation_id)).all()
     existing_map = {item.person_id: item for item in existing}
 
     for entry in payload.entries:
@@ -336,7 +377,7 @@ def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpda
         status = _validate_attendance_status(entry.status)
         item = existing_map.get(person_id)
         if not item:
-            item = AttendanceModel(sub_operation_id=operation_id, person_id=person_id)
+            item = OperationAttendanceModel(sub_operation_id=operation_id, person_id=person_id)
             db.add(item)
             existing_map[person_id] = item
 
@@ -348,16 +389,16 @@ def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpda
 
     db.commit()
     refreshed = db.scalars(
-        select(AttendanceModel)
-        .where(AttendanceModel.sub_operation_id == operation_id)
-        .order_by(AttendanceModel.person_name, AttendanceModel.person_id)
+        select(OperationAttendanceModel)
+        .where(OperationAttendanceModel.sub_operation_id == operation_id)
+        .order_by(OperationAttendanceModel.person_name, OperationAttendanceModel.person_id)
     ).all()
     return [_attendance_to_read(item) for item in refreshed]
 
 
 def patch_attendance_data(operation_id: str, person_id: str, payload: AttendanceEntryUpdate, db: Session, current_user: UserModel) -> AttendanceEntryRead:
     require_event(db, operation_id)
-    item = db.scalar(select(AttendanceModel).where(AttendanceModel.sub_operation_id == operation_id, AttendanceModel.person_id == person_id))
+    item = db.scalar(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == operation_id, OperationAttendanceModel.person_id == person_id))
     if not item:
         raise HTTPException(status_code=404, detail="Jelenléti rekord nem található")
 
@@ -447,14 +488,13 @@ async def upload_document_data(operation_id: str, file: UploadFile, title: str, 
     target_dir = _operation_upload_dir(operation_id)
     target_path = target_dir / safe_name
 
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Üres fájl")
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="A fájl túl nagy (max 20MB)")
-
+    content = await _read_within_limit(file)
     target_path.write_bytes(content)
-    mime_type = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+    # A MIME a MÁR allowlist-elt kiterjesztésből származik, nem a kliens
+    # content_type fejlécéből: egy .txt "text/html"-ként, inline kiszolgálva
+    # tárolt XSS lenne — azonos originről, ahol a munkamenet-token él.
+    mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
 
     item = OperationDocumentModel(
         operation_id=operation_id,
@@ -518,8 +558,13 @@ def view_document_response(operation_id: str, doc_id: str, db: Session) -> FileR
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="A dokumentumfájl nem található a tárhelyen")
 
+    # Inline megjelenítést csak PDF-re engedünk, fix típussal. Minden más
+    # letöltésként megy, hogy a böngésző semmiképp ne rendereljen felhasználói
+    # tartalmat ezen az originen.
+    media_type = item.mime_type or "application/octet-stream"
+    disposition = "inline" if media_type in INLINE_MEDIA_TYPES else "attachment"
     return FileResponse(
         path=str(path),
-        media_type=item.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename=\"{item.original_name}\""},
+        media_type=media_type,
+        headers={"Content-Disposition": f"{disposition}; {_content_disposition_filename(item.original_name)}"},
     )

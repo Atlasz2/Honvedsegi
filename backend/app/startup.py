@@ -85,6 +85,12 @@ def _ensure_extended_schema(db: Session) -> None:
             db.execute(text(f"ALTER TABLE trainings ADD COLUMN {col} TEXT DEFAULT ''"))
         if col not in exercises_cols:
             db.execute(text(f"ALTER TABLE exercises ADD COLUMN {col} TEXT DEFAULT ''"))
+    # Művelet-fa: szülő-hivatkozás a meglévő events táblán.
+    events_cols = {row[1] for row in db.execute(text("PRAGMA table_info(events)")).fetchall()}
+    if "parent_id" not in events_cols:
+        db.execute(text("ALTER TABLE events ADD COLUMN parent_id TEXT"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_events_parent_id ON events(parent_id)"))
+
     duties_cols = {row[1] for row in db.execute(text("PRAGMA table_info(duties)")).fetchall()}
     if "assigned" not in duties_cols:
         db.execute(text("ALTER TABLE duties ADD COLUMN assigned JSON"))

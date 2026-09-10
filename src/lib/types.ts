@@ -301,3 +301,88 @@ export interface PersonHistoryEntry {
   qualificationApproved: boolean;
   notes: string;
 }
+
+// ── Napi létszámjelentés (A1) ─────────────────────────────────────────────
+// NEM keverendő a művelet-jelenléttel alább: ez naptári nap szerinti,
+// az eseményhez kötött.
+
+export type AttendanceStatus =
+  | 'Jelen' | 'Szabadság' | 'Betegállomány' | 'Vezényelve'
+  | 'Szolgálatban' | 'Kiküldetés' | 'Igazolt távollét' | 'Igazolatlan távollét';
+
+export interface AttendanceEntry {
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  status: AttendanceStatus;
+  note: string;
+}
+
+export interface AttendanceDay {
+  date: string;
+  total: number;
+  summary: Record<string, number>;
+  items: AttendanceEntry[];
+}
+
+export interface AttendanceMark {
+  personnelId: string;
+  status: AttendanceStatus;
+  note?: string;
+}
+
+// ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
+
+export interface OperationTreeNode {
+  id: string;
+  eventType: 'esemeny';
+  parentId: string | null;
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  organizer: string;
+  maxPersonnel: number;
+  description: string;
+  status: string;
+  assigned: Record<string, unknown>[];
+  children: OperationTreeNode[];
+}
+
+/** Egy művelet jelenléti íve — külön fogalom a napi létszám AttendanceStatus-ától. */
+export type OperationAttendanceStatus = 'Present' | 'Excused' | 'Absent' | 'Pending';
+
+export interface OperationAttendanceEntry {
+  personId: string;
+  personName: string;
+  status: OperationAttendanceStatus;
+  note: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type RequirementStatus = 'Requested' | 'Approved' | 'Fulfilled';
+
+export interface MaterialRequirement {
+  id: string;
+  operationId: string;
+  itemName: string;
+  quantity: number;
+  unit: string;
+  note: string;
+  status: RequirementStatus;
+}
+
+export interface OperationDocument {
+  id: string;
+  operationId: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  title: string;
+}

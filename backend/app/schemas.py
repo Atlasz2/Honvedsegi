@@ -336,6 +336,90 @@ class OperationRead(BaseModel):
     status: str
     assigned: list[dict] = []
 
+
+# ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
+
+AttendanceState = Literal["Present", "Excused", "Absent", "Pending"]
+RequirementStatus = Literal["Requested", "Approved", "Fulfilled"]
+
+
+class OperationTreeNode(BaseModel):
+    """Egy csomópont a művelet-fában, a gyerekeivel együtt."""
+    id: str
+    eventType: Literal["esemeny"] = "esemeny"
+    parentId: str | None = None
+    name: str
+    type: str
+    startDate: str
+    endDate: str
+    location: str = ""
+    organizer: str = ""
+    maxPersonnel: int = 0
+    description: str = ""
+    status: str
+    assigned: list[dict] = []
+    children: list["OperationTreeNode"] = []
+
+
+class AttendanceEntryRead(BaseModel):
+    personId: str
+    personName: str
+    status: AttendanceState
+    note: str = ""
+    updatedAt: str
+    updatedBy: str = ""
+
+
+class AttendanceEntryUpdate(BaseModel):
+    personName: str | None = None
+    status: AttendanceState | None = None
+    note: str | None = None
+
+
+class AttendanceBatchEntry(BaseModel):
+    personId: str
+    personName: str = ""
+    status: AttendanceState = "Pending"
+    note: str = ""
+
+
+class AttendanceBatchUpdateRequest(BaseModel):
+    entries: list[AttendanceBatchEntry] = []
+
+
+class MaterialRequirementBase(BaseModel):
+    itemName: str
+    quantity: int = 0
+    unit: str = ""
+    note: str = ""
+    status: RequirementStatus = "Requested"
+
+
+class MaterialRequirementUpdate(BaseModel):
+    itemName: str | None = None
+    quantity: int | None = None
+    unit: str | None = None
+    note: str | None = None
+    status: RequirementStatus | None = None
+
+
+class MaterialRequirementRead(MaterialRequirementBase):
+    id: str
+    operationId: str
+
+
+class OperationDocumentRead(BaseModel):
+    id: str
+    operationId: str
+    filename: str
+    originalName: str
+    mimeType: str
+    fileSize: int
+    uploadedBy: str = ""
+    uploadedAt: str
+    title: str = ""
+
+
 class EventBase(BaseModel):
     eventType: Literal["esemeny"] = "esemeny"
     name: str
@@ -348,6 +432,7 @@ class EventBase(BaseModel):
     description: str = ""
     status: ExerciseStatus
     assigned: list[dict] = []
+    parentId: str | None = None   # szülő a művelet-fában
 
 
 class EventCreate(EventBase):

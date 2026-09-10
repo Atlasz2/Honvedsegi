@@ -15,6 +15,13 @@ import {
   Training,
   Series,
   AppEvent,
+  AttendanceDay,
+  AttendanceMark,
+  AttendanceStatus,
+  MaterialRequirement,
+  OperationAttendanceEntry,
+  OperationDocument,
+  OperationTreeNode,
   User,
   Vehicle,
 } from './types';
@@ -161,7 +168,7 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
           ? data
           : '';
 
-    throw new Error(detail || `A k?r?s sikertelen volt (${response.status})`);
+    throw new Error(detail || `A kérés sikertelen volt (${response.status})`);
   }
 
   return data as T;
@@ -701,31 +708,7 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
   });
 }
 
-export type AttendanceStatus =
-  | 'Jelen' | 'Szabadság' | 'Betegállomány' | 'Vezényelve'
-  | 'Szolgálatban' | 'Kiküldetés' | 'Igazolt távollét' | 'Igazolatlan távollét';
-
-export type AttendanceEntry = {
-  personnelId: string;
-  name: string;
-  rank: string;
-  unit: string;
-  status: AttendanceStatus;
-  note: string;
-};
-
-export type AttendanceDay = {
-  date: string;
-  total: number;
-  summary: Record<string, number>;
-  items: AttendanceEntry[];
-};
-
-export type AttendanceMark = {
-  personnelId: string;
-  status: AttendanceStatus;
-  note?: string;
-};
+export type { AttendanceStatus, AttendanceEntry, AttendanceDay, AttendanceMark } from './types';
 
 function attendanceQuery(date: string, unit?: string, includeReserve?: boolean): string {
   const query = new URLSearchParams({ date });
@@ -862,11 +845,76 @@ export const prerequisites = {
   },
 };
 
+// ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
 
+export type OperationNodePayload = {
+  eventType: 'esemeny';
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location?: string;
+  organizer?: string;
+  maxPersonnel?: number;
+  description?: string;
+  status: string;
+  parentId?: string | null;
+};
 
+export const operationTree = {
+  get: () => request<OperationTreeNode[]>('/operations/tree'),
+  create: (payload: OperationNodePayload) =>
+    request<{ id: string }>('/operations/tree', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (nodeId: string, payload: OperationNodePayload) =>
+    request<{ id: string }>(`/operations/tree/${nodeId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (nodeId: string) => request<void>(`/operations/tree/${nodeId}`, { method: 'DELETE' }),
+};
 
+export const operationAttendance = {
+  get: (operationId: string) =>
+    request<OperationAttendanceEntry[]>(`/operations/${operationId}/attendance`),
+  saveBatch: (operationId: string, entries: Array<Pick<OperationAttendanceEntry, 'personId' | 'personName' | 'status' | 'note'>>) =>
+    request<OperationAttendanceEntry[]>(`/operations/${operationId}/attendance`, {
+      method: 'PUT',
+      body: JSON.stringify({ entries }),
+    }),
+  patch: (operationId: string, personId: string, payload: Partial<Pick<OperationAttendanceEntry, 'personName' | 'status' | 'note'>>) =>
+    request<OperationAttendanceEntry>(`/operations/${operationId}/attendance/${personId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+};
 
+export const operationRequirements = {
+  get: (operationId: string) =>
+    request<MaterialRequirement[]>(`/operations/${operationId}/requirements`),
+  create: (operationId: string, payload: Omit<MaterialRequirement, 'id' | 'operationId'>) =>
+    request<MaterialRequirement>(`/operations/${operationId}/requirements`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  update: (operationId: string, id: string, payload: Partial<Omit<MaterialRequirement, 'id' | 'operationId'>>) =>
+    request<MaterialRequirement>(`/operations/${operationId}/requirements/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  remove: (operationId: string, id: string) =>
+    request<void>(`/operations/${operationId}/requirements/${id}`, { method: 'DELETE' }),
+};
 
-
-
-
+export const operationDocuments = {
+  get: (operationId: string) =>
+    request<OperationDocument[]>(`/operations/${operationId}/documents`),
+  upload: (operationId: string, file: File, title: string) => {
+    const body = new FormData();
+    body.append('file', file);
+    body.append('title', title);
+    return request<OperationDocument>(`/operations/${operationId}/documents`, { method: 'POST', body });
+  },
+  remove: (operationId: string, docId: string) =>
+    request<void>(`/operations/${operationId}/documents/${docId}`, { method: 'DELETE' }),
+  download: (operationId: string, docId: string, originalName: string) =>
+    downloadBlob(`/operations/${operationId}/documents/${docId}/download`, originalName),
+  view: (operationId: string, docId: string, originalName: string) =>
+    downloadBlob(`/operations/${operationId}/documents/${docId}/view`, originalName),
+};

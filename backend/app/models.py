@@ -141,8 +141,8 @@ class EventModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-
-
+    # Szülő művelet a művelet-fában. NULL = gyökérszintű elem.
+    parent_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class ExerciseModel(Base):
@@ -339,3 +339,57 @@ class ActivityLogModel(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
+# ── Műveletek: jelenlét, anyagigény, dokumentumok ─────────────────────────
+
+class OperationAttendanceModel(Base):
+    """Egy művelet(-részfeladat) jelenléti íve.
+
+    NEM keverendő az AttendanceModel-lel: az a napi létszámjelentés (A1),
+    naptári nap szerint. Ez itt eseményhez kötött, és a művelet lezárásáig
+    szerkeszthető."""
+    __tablename__ = "operation_attendance"
+    __table_args__ = (
+        UniqueConstraint("sub_operation_id", "person_id", name="uq_operation_attendance_person"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    sub_operation_id: Mapped[str] = mapped_column(String, index=True)
+    person_id: Mapped[str] = mapped_column(String, index=True)
+    person_name: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="Pending")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class MaterialRequirementModel(Base):
+    """Egy művelethez igényelt anyag/eszköz, igénylés -> jóváhagyás -> teljesítés."""
+    __tablename__ = "material_requirements"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, index=True)
+    item_name: Mapped[str] = mapped_column(String, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, default="Requested", index=True)
+
+
+class OperationDocumentModel(Base):
+    """Művelethez csatolt dokumentum.
+
+    A fájl a lemezen él (uploads/operations/<művelet>/), a sorban csak a
+    hivatkozás. A `filename` a tárolt, véletlen név; az `original_name` a
+    felhasználó által adott — utóbbi soha nem kerül a fájlrendszerbe."""
+    __tablename__ = "operation_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, index=True)
+    filename: Mapped[str] = mapped_column(String)
+    original_name: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String, default="application/octet-stream")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    storage_path: Mapped[str] = mapped_column(String)
+    uploaded_by: Mapped[str] = mapped_column(String, default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)

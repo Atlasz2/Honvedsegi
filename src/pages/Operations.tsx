@@ -8,6 +8,7 @@ import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DatePickerInput from "@/components/DatePickerInput";
 import DateTimePickerInput from "@/components/DateTimePickerInput";
+import OperationDetailTabs from "@/components/operations/OperationDetailTabs";
 import { shortRank, rankWeight } from "@/lib/rank";
 import { toast } from "sonner";
 
@@ -1181,6 +1182,14 @@ export default function Operations() {
                 <button onClick={() => { void addPerson(); }} className="btn-mil-primary text-xs">Hozzáadás</button>
               </div>
             )}
+
+            <div className="flex items-center gap-3 pt-2">
+              <div className="h-px flex-1 bg-primary/30" />
+              <span className="text-xs uppercase tracking-military text-primary font-mono">Művelet-adminisztráció</span>
+              <div className="h-px flex-1 bg-primary/30" />
+            </div>
+
+            <OperationDetailTabs operationId={detail.id} assigned={detail.assigned} canEdit={canEdit} />
 
             <div className="flex justify-between pt-2">
               <button onClick={() => { setDetail(null); setPersonSearch(""); }} className="btn-mil-secondary text-xs">Bezárás</button>
