@@ -1075,10 +1075,42 @@ a sebezhetőség elérhetővé vált volna:
 
 Mindegyikre teszt is készült.
 
+## ✅ 4.2 — Az audit kiterjesztése
+
+Auditált modulok: **3 → 14**. Minden mutáció a `db.commit()` ELŐTT naplóz, így
+a bejegyzés és a változás egy tranzakcióban dől el.
+
+| Prioritás | Modul | Mit rögzít |
+|---|---|---|
+| 1 | `users` | Jogosultság-változás; a jelszócsere **ténye** (a tartalma soha) |
+| 2 | `leave` | Jóváhagyási döntés, a döntéshozóval |
+| 3 | `documents` | Okmány, alkalmasság, lejárat |
+| 4 | `qualifications` | Képesítés megadása/visszavonása |
+| 5 | `duties`, `events` | Szolgálat, esemény |
+| 6 | `equipment`, `vehicles`, `supplies`, `announcements` | Eszközkezelés |
+| 7 | `imports` | **Összesítő** bejegyzés importonként |
+
+Az importnál szándékosan nem soronkénti a naplózás: egy import több száz
+rekordot érinthet, a tételes tartalom a preview-ban látszik, a naplóban a hatás
+(létrehozva/módosítva/kihagyva) szerepel. Soronkénti bejegyzés zajjá tenné a
+naplót — ugyanez az elv, amiért generikus audit-middleware sem készült (CC7).
+
+Új tesztek: `test_audit_coverage.py` (10). Külön teszt őrzi, hogy a napló
+**soha ne tartalmazzon jelszót vagy hasht**.
+
+### Szándékosan naplózatlan maradt
+
+| Modul | Miért |
+|---|---|
+| `activity_log` | Önmagát naplózná — körkörös |
+| `auth` | A bejelentkezés a `LoginAttemptModel`-ben és a `last_login`-ban követett |
+| `attendance` | Napi tömeges rögzítés; hasznos lenne, de összesítő formában — külön kör |
+| `operations` | Az új művelet-modul; a jelenlét/anyagigény naplózása külön kör |
+| `series`, `prerequisites` | Konfiguráció, nem személyes adat |
+
 ## ⏭️ Következő lépések
 
-A 3.4 (`strict` fokozatosan), 4.2 (audit kiterjesztése), 4.3 (session),
-5.1 (CI) és a 6. fázis maradt. **A CI-nél vedd figyelembe, hogy az éles
+A 3.4 (`strict` fokozatosan), 4.3 (session), 5.1 (CI) és a 6. fázis maradt. **A CI-nél vedd figyelembe, hogy az éles
 környezet offline intranet**: a GitHub Actions csak a fejlesztői gépen/gitben
 fut, a telepített rendszernek nincs internetkapcsolata — a build artefaktumot
 kézzel kell átvinni.

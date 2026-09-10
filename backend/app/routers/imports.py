@@ -34,5 +34,5 @@ def update_import_draft(
 
 
 @router.post("/{entity}/confirm/{draft_id}", response_model=ImportConfirmResult)
-def confirm_import(entity: str, draft_id: str, db: DB, _: Editor) -> ImportConfirmResult:
-    return confirm_import_draft(entity, draft_id, db)
+def confirm_import(entity: str, draft_id: str, db: DB, user: Editor) -> ImportConfirmResult:
+    return confirm_import_draft(entity, draft_id, db, user)

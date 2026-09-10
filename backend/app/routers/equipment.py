@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from ..appliers import apply_equipment
+from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import EquipmentModel, PersonModel
@@ -13,25 +14,42 @@ from ..serializers import serialize_equipment
 router = APIRouter(prefix="/api/equipment", tags=["equipment"])
 
 
+MODULE = "Felszerelés"
+
+
+def _snapshot(item: EquipmentModel) -> dict:
+    return {
+        "name": item.name, "category": item.category, "serialNumber": item.serial_number,
+        "qrCode": item.qr_code, "condition": item.condition, "description": item.description,
+        "checkedOutToName": item.checked_out_to_name or "", "checkedOutDate": item.checked_out_date or "",
+    }
+
+
 @router.get("", response_model=list[EquipmentRead])
 def list_equipment(db: DB, _: Reader):
     return [serialize_equipment(i) for i in db.scalars(select(EquipmentModel).order_by(EquipmentModel.name, EquipmentModel.serial_number)).all()]
 
 
 @router.post("", response_model=EquipmentRead)
-def create_equipment(payload: EquipmentCreate, db: DB, _: Editor):
+def create_equipment(payload: EquipmentCreate, db: DB, user: Editor):
     item = EquipmentModel()
     apply_equipment(item, payload)
     db.add(item)
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=item.name,
+                    entity="equipment", after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_equipment(item)
 
 
 @router.put("/{item_id}", response_model=EquipmentRead)
-def update_equipment(item_id: str, payload: EquipmentUpdate, db: DB, _: Editor):
+def update_equipment(item_id: str, payload: EquipmentUpdate, db: DB, user: Editor):
     item = require_model(db, EquipmentModel, item_id)
+    before = _snapshot(item)
     apply_equipment(item, payload)
+    record_activity(db, user, mode="update", module=MODULE, record_name=item.name,
+                    entity="equipment", before=before, after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_equipment(item)
@@ -69,7 +87,9 @@ def return_equipment(item_id: str, db: DB, _: Editor):
 
 
 @router.delete("/{item_id}", status_code=204)
-def delete_equipment(item_id: str, db: DB, _: Editor):
+def delete_equipment(item_id: str, db: DB, user: Editor):
     item = require_model(db, EquipmentModel, item_id)
+    record_activity(db, user, mode="delete", module=MODULE, record_name=item.name,
+                    entity="equipment", before=_snapshot(item))
     db.delete(item)
     db.commit()

@@ -11,12 +11,27 @@ from datetime import date as date_cls
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
+from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import LeaveRequestModel, PersonModel, new_id
 from ..schemas import LeaveDecision, LeaveRequestCreate, LeaveRequestRead
 
 router = APIRouter(prefix="/api/leave", tags=["leave"])
+
+MODULE = "Szabadság"
+
+
+def _snapshot(leave: LeaveRequestModel) -> dict:
+    return {
+        "personnelId": leave.personnel_id,
+        "type": leave.type,
+        "startDate": leave.start_date,
+        "endDate": leave.end_date,
+        "reason": leave.reason,
+        "status": leave.status,
+        "decidedBy": leave.decided_by or "",
+    }
 
 
 
@@ -79,6 +94,9 @@ def create_leave(payload: LeaveRequestCreate, db: DB, user: Editor):
         status="Beadva", requested_by=user.username,
     )
     db.add(leave)
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=person.name,
+                    entity="leave", after=_snapshot(leave))
     db.commit()
     db.refresh(leave)
     return _serialize(leave, person.name)
@@ -89,19 +107,28 @@ def decide_leave(leave_id: str, payload: LeaveDecision, db: DB, user: Editor):
     leave = db.get(LeaveRequestModel, leave_id)
     if not leave:
         raise HTTPException(status_code=404, detail="A kérelem nem található")
+    before = _snapshot(leave)
     leave.status = "Jóváhagyva" if payload.approve else "Elutasítva"
     leave.decided_by = user.username
     leave.decided_at = utc_now()
+
+    person = db.get(PersonModel, leave.personnel_id)
+    record_activity(db, user, mode="update", module=MODULE,
+                    record_name=person.name if person else leave.personnel_id,
+                    entity="leave", before=before, after=_snapshot(leave))
     db.commit()
     db.refresh(leave)
-    person = db.get(PersonModel, leave.personnel_id)
     return _serialize(leave, person.name if person else "")
 
 
 @router.delete("/{leave_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_leave(leave_id: str, db: DB, _: Editor):
+def delete_leave(leave_id: str, db: DB, user: Editor):
     leave = db.get(LeaveRequestModel, leave_id)
     if not leave:
         raise HTTPException(status_code=404, detail="A kérelem nem található")
+    person = db.get(PersonModel, leave.personnel_id)
+    record_activity(db, user, mode="delete", module=MODULE,
+                    record_name=person.name if person else leave.personnel_id,
+                    entity="leave", before=_snapshot(leave))
     db.delete(leave)
     db.commit()

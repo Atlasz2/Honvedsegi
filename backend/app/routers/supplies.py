@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from ..appliers import apply_supply
+from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import SupplyModel, new_id
@@ -13,25 +14,41 @@ from ..serializers import serialize_supply
 router = APIRouter(prefix="/api/supplies", tags=["supplies"])
 
 
+MODULE = "Készletek"
+
+
+def _snapshot(item: SupplyModel) -> dict:
+    return {
+        "name": item.name, "category": item.category, "unit": item.unit,
+        "currentQty": item.current_qty, "minQty": item.min_qty, "description": item.description,
+    }
+
+
 @router.get("", response_model=list[SupplyRead])
 def list_supplies(db: DB, _: Reader):
     return [serialize_supply(i) for i in db.scalars(select(SupplyModel).order_by(SupplyModel.name)).all()]
 
 
 @router.post("", response_model=SupplyRead)
-def create_supply(payload: SupplyCreate, db: DB, _: Editor):
+def create_supply(payload: SupplyCreate, db: DB, user: Editor):
     item = SupplyModel()
     apply_supply(item, payload)
     db.add(item)
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=item.name,
+                    entity="supply", after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_supply(item)
 
 
 @router.put("/{item_id}", response_model=SupplyRead)
-def update_supply(item_id: str, payload: SupplyUpdate, db: DB, _: Editor):
+def update_supply(item_id: str, payload: SupplyUpdate, db: DB, user: Editor):
     item = require_model(db, SupplyModel, item_id)
+    before = _snapshot(item)
     apply_supply(item, payload)
+    record_activity(db, user, mode="update", module=MODULE, record_name=item.name,
+                    entity="supply", before=before, after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_supply(item)
@@ -62,7 +79,9 @@ def create_supply_movement(item_id: str, payload: SupplyMovementCreate, db: DB, 
 
 
 @router.delete("/{item_id}", status_code=204)
-def delete_supply(item_id: str, db: DB, _: Editor):
+def delete_supply(item_id: str, db: DB, user: Editor):
     item = require_model(db, SupplyModel, item_id)
+    record_activity(db, user, mode="delete", module=MODULE, record_name=item.name,
+                    entity="supply", before=_snapshot(item))
     db.delete(item)
     db.commit()

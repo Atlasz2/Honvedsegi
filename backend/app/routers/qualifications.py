@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..models import (
     PersonModel,
@@ -133,8 +134,23 @@ def list_person_qualifications(person_id: str, db: DB, _: Reader):
     return result
 
 
+MODULE = "Képesítések"
+
+
+def _qual_snapshot(pq: PersonnelQualificationModel, type_name: str) -> dict:
+    return {
+        "personnelId": pq.personnel_id,
+        "qualType": type_name,
+        "earnedDate": pq.earned_date,
+        "expiryDate": pq.expiry_date,
+        "sourceEventId": pq.source_event_id,
+        "sourceEventType": pq.source_event_type,
+        "notes": pq.notes,
+    }
+
+
 @router.post("/personnel/{person_id}", response_model=PersonnelQualificationRead, status_code=status.HTTP_201_CREATED)
-def add_qualification(person_id: str, body: PersonnelQualificationCreate, db: DB, _: Editor):
+def add_qualification(person_id: str, body: PersonnelQualificationCreate, db: DB, user: Editor):
     person = db.get(PersonModel, person_id)
     if not person:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Személy nem található")
@@ -154,13 +170,16 @@ def add_qualification(person_id: str, body: PersonnelQualificationCreate, db: DB
         notes=body.notes,
     )
     db.add(pq)
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=person.name,
+                    entity="personnel_qualification", after=_qual_snapshot(pq, qt.name))
     db.commit()
     db.refresh(pq)
     return _enrich(pq, qt)
 
 
 @router.put("/personnel/{person_id}/{qual_id}", response_model=PersonnelQualificationRead)
-def update_qualification(person_id: str, qual_id: str, body: PersonnelQualificationUpdate, db: DB, _: Editor):
+def update_qualification(person_id: str, qual_id: str, body: PersonnelQualificationUpdate, db: DB, user: Editor):
     pq = db.execute(
         select(PersonnelQualificationModel)
         .where(PersonnelQualificationModel.id == qual_id, PersonnelQualificationModel.personnel_id == person_id)
@@ -171,24 +190,35 @@ def update_qualification(person_id: str, qual_id: str, body: PersonnelQualificat
     if not qt:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
 
+    before = _qual_snapshot(pq, qt.name)
     pq.earned_date = body.earnedDate
     pq.expiry_date = body.expiryDate or _compute_expiry(body.earnedDate, qt.validity_days)
     pq.source_event_id = body.sourceEventId
     pq.source_event_type = body.sourceEventType
     pq.notes = body.notes
+    person = db.get(PersonModel, person_id)
+    record_activity(db, user, mode="update", module=MODULE,
+                    record_name=person.name if person else person_id,
+                    entity="personnel_qualification", before=before, after=_qual_snapshot(pq, qt.name))
     db.commit()
     db.refresh(pq)
     return _enrich(pq, qt)
 
 
 @router.delete("/personnel/{person_id}/{qual_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_qualification(person_id: str, qual_id: str, db: DB, _: Editor):
+def delete_qualification(person_id: str, qual_id: str, db: DB, user: Editor):
     pq = db.execute(
         select(PersonnelQualificationModel)
         .where(PersonnelQualificationModel.id == qual_id, PersonnelQualificationModel.personnel_id == person_id)
     ).scalar_one_or_none()
     if not pq:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    qt = db.get(QualificationTypeModel, pq.qual_type_id)
+    person = db.get(PersonModel, person_id)
+    record_activity(db, user, mode="delete", module=MODULE,
+                    record_name=person.name if person else person_id,
+                    entity="personnel_qualification",
+                    before=_qual_snapshot(pq, qt.name if qt else pq.qual_type_id))
     db.delete(pq)
     db.commit()
 

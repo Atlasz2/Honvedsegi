@@ -9,12 +9,33 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from ..core.dependencies import DB, Reader, Editor
+from ..audit import record_activity
+from ..core.dependencies import DB, Editor, Reader
 from ..models import PersonDocumentModel, PersonModel, new_id
 from ..schemas import PersonDocumentCreate, PersonDocumentRead
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+MODULE = "Okmányok"
+
+
+def _snapshot(doc: PersonDocumentModel) -> dict:
+    return {
+        "personnelId": doc.personnel_id,
+        "category": doc.category,
+        "name": doc.name,
+        "identifier": doc.identifier,
+        "issuedDate": doc.issued_date,
+        "expiryDate": doc.expiry_date,
+        "notes": doc.notes,
+    }
+
+
+def _person_label(db: Session, personnel_id: str) -> str:
+    person = db.get(PersonModel, personnel_id)
+    return person.name if person else personnel_id
 
 
 
@@ -54,7 +75,7 @@ def list_person_documents(person_id: str, db: DB, _: Reader):
 
 
 @router.post("/personnel/{person_id}", response_model=PersonDocumentRead, status_code=status.HTTP_201_CREATED)
-def add_document(person_id: str, body: PersonDocumentCreate, db: DB, _: Editor):
+def add_document(person_id: str, body: PersonDocumentCreate, db: DB, user: Editor):
     if not db.get(PersonModel, person_id):
         raise HTTPException(status_code=404, detail="A személy nem található")
     if not body.name.strip():
@@ -62,27 +83,35 @@ def add_document(person_id: str, body: PersonDocumentCreate, db: DB, _: Editor):
     doc = PersonDocumentModel(id=new_id(), personnel_id=person_id)
     _apply(doc, body)
     db.add(doc)
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=_person_label(db, person_id),
+                    entity="document", after=_snapshot(doc))
     db.commit()
     db.refresh(doc)
     return _enrich(doc)
 
 
 @router.put("/{doc_id}", response_model=PersonDocumentRead)
-def update_document(doc_id: str, body: PersonDocumentCreate, db: DB, _: Editor):
+def update_document(doc_id: str, body: PersonDocumentCreate, db: DB, user: Editor):
     doc = db.get(PersonDocumentModel, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Az okmány nem található")
+    before = _snapshot(doc)
     _apply(doc, body)
+    record_activity(db, user, mode="update", module=MODULE, record_name=_person_label(db, doc.personnel_id),
+                    entity="document", before=before, after=_snapshot(doc))
     db.commit()
     db.refresh(doc)
     return _enrich(doc)
 
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(doc_id: str, db: DB, _: Editor):
+def delete_document(doc_id: str, db: DB, user: Editor):
     doc = db.get(PersonDocumentModel, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Az okmány nem található")
+    record_activity(db, user, mode="delete", module=MODULE, record_name=_person_label(db, doc.personnel_id),
+                    entity="document", before=_snapshot(doc))
     db.delete(doc)
     db.commit()
 

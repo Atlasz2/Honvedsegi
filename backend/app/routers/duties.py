@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from ..appliers import apply_duty
+from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..models import DutyModel, ParticipantModel, new_id
 from ..participants import load_participants_by_event, sync_participants
@@ -21,33 +22,51 @@ def list_duties(db: DB, _: Reader):
     return [serialize_duty(db, i, participants_by_event.get(i.id, [])) for i in items]
 
 
+MODULE = "Szolgálatok"
+
+
+def _snapshot(item: DutyModel) -> dict:
+    return {
+        "type": item.type, "startDate": item.start_date, "endDate": item.end_date,
+        "location": item.location, "personName": item.person_name,
+        "status": item.status, "notes": item.notes,
+    }
+
+
 @router.post("", response_model=DutyRead, status_code=status.HTTP_201_CREATED)
-def create_duty(payload: DutyCreate, db: DB, _: Editor):
+def create_duty(payload: DutyCreate, db: DB, user: Editor):
     item = DutyModel()
     apply_duty(item, payload)
     db.add(item)
     db.flush()
     assigned = payload.assigned or ([{"personId": payload.personId, "personName": payload.personName}] if payload.personId else [])
     sync_participants(db, "duty", item.id, assigned)
+    record_activity(db, user, mode="create", module=MODULE, record_name=item.person_name or item.type,
+                    entity="duty", after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_duty(db, item)
 
 
 @router.put("/{item_id}", response_model=DutyRead)
-def update_duty(item_id: str, payload: DutyUpdate, db: DB, _: Editor):
+def update_duty(item_id: str, payload: DutyUpdate, db: DB, user: Editor):
     item = require_model(db, DutyModel, item_id)
+    before = _snapshot(item)
     apply_duty(item, payload)
     assigned = payload.assigned or ([{"personId": payload.personId, "personName": payload.personName}] if payload.personId else [])
     sync_participants(db, "duty", item_id, assigned)
+    record_activity(db, user, mode="update", module=MODULE, record_name=item.person_name or item.type,
+                    entity="duty", before=before, after=_snapshot(item))
     db.commit()
     db.refresh(item)
     return serialize_duty(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_duty(item_id: str, db: DB, _: Editor):
+def delete_duty(item_id: str, db: DB, user: Editor):
     item = require_model(db, DutyModel, item_id)
+    record_activity(db, user, mode="delete", module=MODULE, record_name=item.person_name or item.type,
+                    entity="duty", before=_snapshot(item))
     sync_participants(db, "duty", item_id, [])
     db.delete(item)
     db.commit()

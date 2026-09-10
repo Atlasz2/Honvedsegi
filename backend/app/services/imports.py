@@ -10,14 +10,16 @@ from sqlalchemy.orm import Session
 
 from ..constants import IMPORT_DRAFT_TTL_MINUTES
 from ..appliers import apply_exercise, apply_person
+from ..audit import record_activity
 from ..core.time import utc_now
 from ..validation import normalize_sztsz
 from ..importers import ENTITY_CONFIG, ImportRow, parse_import
-from ..models import ExerciseModel, PersonModel
+from ..models import ExerciseModel, PersonModel, UserModel
 from ..schemas import ExerciseCreate, ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult, PersonCreate
 
 IMPORT_DRAFTS: dict[str, dict[str, Any]] = {}
 SUPPORTED_IMPORT_ENTITIES = {"personnel", "exercises"}
+ENTITY_LABELS = {"personnel": "Személyzet", "exercises": "Gyakorlatok"}
 
 
 def _save_draft(draft_id: str, entity: str, rows, operations, created, updated, skipped) -> str:
@@ -291,7 +293,7 @@ def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpd
     return _preview_response(preview, draft_id)
 
 
-def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfirmResult:
+def confirm_import_draft(entity: str, draft_id: str, db: Session, current_user: UserModel) -> ImportConfirmResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
 
@@ -324,6 +326,22 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfi
                 apply_exercise(item, dto)
                 db.add(item)
 
+    # Összesítő bejegyzés, nem soronkénti: egy import több száz rekordot érinthet,
+    # és a napló csak akkor használható, ha nem fullad zajba. A tételes tartalom
+    # a preview-ban látszik, a hatás itt.
+    record_activity(
+        db, current_user,
+        mode="create",
+        module="Import",
+        record_name=ENTITY_LABELS.get(entity, entity),
+        entity=f"import_{entity}",
+        after={
+            "entity": entity,
+            "created": draft["created"],
+            "updated": draft["updated"],
+            "skipped": draft["skipped"],
+        },
+    )
     db.commit()
     return ImportConfirmResult(
         draftId=draft_id,

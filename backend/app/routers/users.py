@@ -3,14 +3,28 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
+from ..audit import record_activity
 from ..constants import GOD_USERNAME, GOD_ROLE
 from ..core.auth import is_god_user, to_user_read
+from ..core.time import utc_now
 from ..core.dependencies import DB, Admin
 from ..models import SessionTokenModel, UserModel
 from ..schemas import UserCreate, UserRead, UserUpdate
 from ..security import assert_password_strength, hash_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+MODULE = "Felhasználók"
+
+
+def _user_snapshot(user: UserModel) -> dict:
+    """A napló soha nem tartalmaz jelszót vagy hasht — csak a jogosultsági állapotot."""
+    return {
+        "username": user.username,
+        "displayName": user.display_name,
+        "role": user.role,
+        "active": user.active,
+    }
 
 
 @router.get("", response_model=list[UserRead])
@@ -38,6 +52,9 @@ def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
         active=payload.active,
     )
     db.add(user)
+    db.flush()
+    record_activity(db, current_user, mode="create", module=MODULE, record_name=user.username,
+                    entity="user", after=_user_snapshot(user))
     db.commit()
     db.refresh(user)
     return to_user_read(user)
@@ -54,12 +71,22 @@ def update_user(username: str, payload: UserUpdate, db: DB, current_user: Admin)
         raise HTTPException(status_code=403, detail="A dev_master szint kizárólagos és nem módosítható")
     if current_user.role == "admin" and (user.role == GOD_ROLE or payload.role == GOD_ROLE):
         raise HTTPException(status_code=403, detail="Admin nem adhat fejlesztő szintet")
+    before = _user_snapshot(user)
     user.display_name = payload.display_name
     user.role = payload.role
     user.active = payload.active
-    if payload.password:
+    password_changed = bool(payload.password)
+    if password_changed:
         assert_password_strength(payload.password)
         user.password_hash = hash_password(payload.password)
+
+    after = _user_snapshot(user)
+    if password_changed:
+        # A jelszó tartalma nem naplózható, de a tény igen — ez auditnyom.
+        before["passwordChangedAt"] = ""
+        after["passwordChangedAt"] = utc_now().isoformat()
+    record_activity(db, current_user, mode="update", module=MODULE, record_name=user.username,
+                    entity="user", before=before, after=after)
     db.commit()
     db.refresh(user)
     return to_user_read(user)
@@ -76,6 +103,8 @@ def delete_user(username: str, db: DB, current_user: Admin):
         raise HTTPException(status_code=403, detail="A dev_master felhasználó nem törölhető")
     if current_user.role == "admin" and user.role == GOD_ROLE:
         raise HTTPException(status_code=403, detail="Admin nem törölhet fejlesztő szintű felhasználót")
+    record_activity(db, current_user, mode="delete", module=MODULE, record_name=user.username,
+                    entity="user", before=_user_snapshot(user))
     db.query(SessionTokenModel).filter(SessionTokenModel.user_id == user.id).delete()
     db.delete(user)
     db.commit()
