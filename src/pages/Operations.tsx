@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
 import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
@@ -1096,7 +1096,8 @@ export default function Operations() {
                   const rankLabel = String(a.rankShort ?? a.rank ?? "-");
                   const sztszLabel = String(a.sztsz ?? "-");
                   const att = String(a.attendance ?? "Tervezett");
-                  const role = String(a.role ?? "-");
+                  // Szerep csak a gyakorlat-beosztáson van; a fordító itt szűkít.
+                  const role = "role" in a ? a.role : "-";
                   return (
                     <tr key={`${personId}-${idx}`}>
                       <td>{name}</td>

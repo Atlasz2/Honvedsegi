@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
@@ -15,7 +15,8 @@ type ExportOption = {
   label: string;
   subtitle: string;
 };
-const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
+
+const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
   { value: "overview", label: "Összesített riport", description: "Gyakorlatok, kiképzések, események és szolgálatok egy PDF-ben." },
   { value: "operations", label: "Műveleti naptár", description: "Csak gyakorlatok és kiképzések az adott időszakra." },
   { value: "duties", label: "Szolgálati kivonat", description: "Szolgálatok időszak szerint szűrve." },

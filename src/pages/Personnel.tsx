@@ -69,6 +69,8 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
         <input
           type={type}
           maxLength={maxLength}
+          placeholder={placeholder}
+          inputMode={inputMode}
           value={form[field] as string}
           onChange={e => {
             const nextValue = field === 'phone' ? normalizeHungarianPhone(e.target.value) : e.target.value;

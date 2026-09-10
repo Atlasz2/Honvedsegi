@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Clock, CheckCircle2, RefreshCw } from "lucide-react";
 import { qualificationAlerts, alerts as alertsStore, documents as docStore, type UnexcusedAlert, type ReadinessGap, type ExpiringDocument } from "@/lib/store";

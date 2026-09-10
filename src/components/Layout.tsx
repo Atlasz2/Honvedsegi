@@ -52,7 +52,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const iv = setInterval(() => { void fetchAlertCount(); }, 5 * 60 * 1000);
     return () => clearInterval(iv);
   }, []);
-  const [devTapCount, setDevTapCount] = useState(0);
+  // A koppintás-számláló nem vezérel megjelenítést, ezért ref és nem state:
+  // így nem okoz felesleges újrarajzolást minden koppintásnál.
+  const devTapCountRef = useRef(0);
   const [showEasterEgg, setShowEasterEgg] = useState(false);
   const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eggHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,22 +68,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleDevNamesClick = () => {
-    setDevTapCount(prev => {
-      const next = prev + 1;
+    const next = devTapCountRef.current + 1;
+    devTapCountRef.current = next;
 
-      if (tapResetRef.current) clearTimeout(tapResetRef.current);
-      tapResetRef.current = setTimeout(() => setDevTapCount(0), 3000);
+    if (tapResetRef.current) clearTimeout(tapResetRef.current);
+    tapResetRef.current = setTimeout(() => { devTapCountRef.current = 0; }, 3000);
 
-      if (next >= 5) {
-        if (tapResetRef.current) clearTimeout(tapResetRef.current);
-        setShowEasterEgg(true);
-        if (eggHideRef.current) clearTimeout(eggHideRef.current);
-        eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
-        return 0;
-      }
-
-      return next;
-    });
+    if (next >= 5) {
+      devTapCountRef.current = 0;
+      clearTimeout(tapResetRef.current);
+      setShowEasterEgg(true);
+      if (eggHideRef.current) clearTimeout(eggHideRef.current);
+      eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
+    }
   };
 
   return (

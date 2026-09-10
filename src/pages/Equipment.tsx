@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { equipment as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Equipment as Eq, Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';

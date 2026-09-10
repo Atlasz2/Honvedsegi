@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supplies as store, logAction, getErrorMessage } from '@/lib/store';
 import { Supply } from '@/lib/types';
 import { useAuth } from '@/lib/auth';

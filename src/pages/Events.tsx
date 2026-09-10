@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Calendar, MapPin, Plus, Search, Trash2, Users, Pencil } from 'lucide-react';
 import { events, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';

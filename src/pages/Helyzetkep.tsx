@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { attendance, leave, getErrorMessage, AttendanceDay } from '@/lib/store';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
