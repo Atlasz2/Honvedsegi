@@ -346,9 +346,27 @@ export const series = {
 export type UnexcusedAlert = { personnelId: string; name: string; rank: string; unit: string; date: string; note: string };
 export type ReadinessGap = { personnelId: string; name: string; rank: string; unit: string };
 
+export type LeaveMinimumItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  takenDays: number; missingDays: number;
+};
+export type LeaveMinimumResult = { year: number; minDays: number; items: LeaveMinimumItem[] };
+export type BasicTrainingItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  joinDate: string; deadline: string | null; daysLeft: number | null;
+  completedModules: number; totalModules: number; missingModules: string[];
+};
+export type BasicTrainingResult = {
+  modules: { id: string; name: string }[];
+  deadlineDays: number;
+  items: BasicTrainingItem[];
+};
+
 export const alerts = {
   unexcused: (days = 30) => request<UnexcusedAlert[]>(`/alerts/unexcused?days=${days}`),
   readinessGaps: () => request<ReadinessGap[]>('/alerts/readiness-gaps'),
+  leaveMinimum: (year?: number) => request<LeaveMinimumResult>(`/alerts/leave-minimum${year ? `?year=${year}` : ''}`),
+  basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
 };
 
 export type PersonDocument = {

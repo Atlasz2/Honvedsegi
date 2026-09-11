@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Clock, CheckCircle2, RefreshCw } from "lucide-react";
-import { qualificationAlerts, alerts as alertsStore, documents as docStore, type UnexcusedAlert, type ReadinessGap, type ExpiringDocument } from "@/lib/store";
+import {
+  qualificationAlerts, alerts as alertsStore, documents as docStore,
+  type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
+  type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem,
+} from "@/lib/store";
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
 import { toast } from "sonner";
@@ -20,6 +24,19 @@ function urgencyLabel(a: QualificationAlert): string {
   return `${a.daysUntilExpiry} nap`;
 }
 
+function deadlineClass(item: BasicTrainingItem): string {
+  if (item.daysLeft === null) return "badge-planned";
+  if (item.daysLeft < 0) return "badge-cancelled";
+  if (item.daysLeft <= 60) return "badge-ongoing";
+  return "badge-planned";
+}
+
+function deadlineLabel(item: BasicTrainingItem): string {
+  if (item.daysLeft === null) return "nincs jogviszony-kezdet";
+  if (item.daysLeft < 0) return `Lejárt ${Math.abs(item.daysLeft)} napja`;
+  return `${item.daysLeft} nap`;
+}
+
 export default function Alerts() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState<QualificationAlert[]>([]);
@@ -27,24 +44,30 @@ export default function Alerts() {
   const [unexcused, setUnexcused] = useState<UnexcusedAlert[]>([]);
   const [gaps, setGaps] = useState<ReadinessGap[]>([]);
   const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
+  const [leaveMinimum, setLeaveMinimum] = useState<LeaveMinimumResult | null>(null);
+  const [basicTraining, setBasicTraining] = useState<BasicTrainingResult | null>(null);
   const [daysAhead, setDaysAhead] = useState<DaysAhead>(60);
   const [showExpired, setShowExpired] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData, unexcusedData, gapData, docData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
         alertsStore.unexcused(30),
         alertsStore.readinessGaps(),
         docStore.expiring(daysAhead),
+        alertsStore.leaveMinimum(),
+        alertsStore.basicTraining(),
       ]);
       setAlerts(alertData);
       setStats(statData);
       setUnexcused(unexcusedData);
       setGaps(gapData);
       setExpiringDocs(docData);
+      setLeaveMinimum(leaveData);
+      setBasicTraining(basicData);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -256,6 +279,77 @@ export default function Alerts() {
                     <td className="font-medium">{g.name}</td>
                     <td className="font-mono text-xs text-primary">{g.rank}</td>
                     <td className="text-muted-foreground text-xs">{g.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Alapkiképzés-határidő */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <Clock className="w-4 h-4 text-destructive" />
+          <h2 className="text-sm font-bold uppercase tracking-military">
+            Alapkiképzés-határidő — tartalékosok, akiknek nincs meg minden modul ({basicTraining?.items.length ?? 0})
+          </h2>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono mb-3">
+          Modul = „Alapkiképzés" kategóriájú képesítés-típus ({basicTraining?.modules.length ?? 0} db). Határidő: jogviszony kezdete + {basicTraining?.deadlineDays ?? 365} nap. Lejárt határidő = leszerelendő.
+        </p>
+        {!basicTraining || basicTraining.modules.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><AlertTriangle className="w-4 h-4 text-orange-500" /><span className="text-sm">Nincs „Alapkiképzés" kategóriájú képesítés-típus — a Műveletek → Képzettségek alatt hozd létre a modulokat.</span></div>
+        ) : basicTraining.items.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden tartalékosnak megvan az alapkiképzése</span></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full mil-table">
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Jogviszony kezdete</th><th>Határidő</th><th>Hátra</th><th>Modulok</th><th>Hiányzik</th></tr></thead>
+              <tbody>
+                {basicTraining.items.map((item) => (
+                  <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
+                    <td className="font-medium">{item.name}</td>
+                    <td className="font-mono text-xs text-primary">{item.rank}</td>
+                    <td className="text-muted-foreground text-xs">{item.unit}</td>
+                    <td className="font-mono text-xs">{item.joinDate || "—"}</td>
+                    <td className="font-mono text-xs">{item.deadline ?? "—"}</td>
+                    <td><span className={deadlineClass(item)}>{deadlineLabel(item)}</span></td>
+                    <td className="font-mono text-xs">{item.completedModules} / {item.totalModules}</td>
+                    <td className="text-muted-foreground text-xs">{item.missingModules.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Szabadság-minimum */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <Clock className="w-4 h-4 text-orange-500" />
+          <h2 className="text-sm font-bold uppercase tracking-military">
+            Szabadság-minimum {leaveMinimum?.year ?? ""} — aktívak {leaveMinimum?.minDays ?? 10} munkanap alatt ({leaveMinimum?.items.length ?? 0})
+          </h2>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono mb-3">
+          Jóváhagyott „Szabadság" típusú távollétek, hétfő–péntek napok (ünnepnap nélkül), az idei évből.
+        </p>
+        {!leaveMinimum || leaveMinimum.items.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden aktív katona elérte a minimumot</span></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full mil-table">
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Kivett</th><th>Hiányzik</th></tr></thead>
+              <tbody>
+                {leaveMinimum.items.map((item) => (
+                  <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
+                    <td className="font-medium">{item.name}</td>
+                    <td className="font-mono text-xs text-primary">{item.rank}</td>
+                    <td className="text-muted-foreground text-xs">{item.unit}</td>
+                    <td className="font-mono text-xs">{item.takenDays} nap</td>
+                    <td><span className={item.takenDays === 0 ? "badge-cancelled" : "badge-ongoing"}>{item.missingDays} nap</span></td>
                   </tr>
                 ))}
               </tbody>

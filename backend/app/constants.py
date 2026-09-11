@@ -59,3 +59,11 @@ LEAVE_TO_ATTENDANCE_STATUS = {
     "Kiküldetés": "Kiküldetés",
     "Egyéb": "Igazolt távollét",
 }
+
+# Tartalékos-specifikus riasztások (1. betekintés, 2026-09-11).
+# Az alapkiképzés moduljai = az ebbe a kategóriába tartozó képesítés-típusok.
+BASIC_TRAINING_CATEGORY = "Alapkiképzés"
+# A szerződéskötéstől (join_date) ennyi napon belül kell az alapkiképzést elvégezni.
+BASIC_TRAINING_DEADLINE_DAYS = 365
+# Az aktív állománynak évente legalább ennyi munkanap szabadságot ki kell vennie.
+LEAVE_MINIMUM_DAYS = 10
