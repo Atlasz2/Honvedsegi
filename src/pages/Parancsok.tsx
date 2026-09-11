@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, FileDown, FileText, PenLine, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   orders as store,
   personnel as personnelStore,
@@ -24,7 +24,6 @@ import DatePickerInput from '@/components/DatePickerInput';
 // záró aláírás (2–3 illetékes parancsnok). A backend ORDER_RESPONSIBLES párja.
 const RESPONSIBLES = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy'] as const;
 const ORDER_STATUSES: OrderStatus[] = ['Előkészítés', 'Aláírásra vár', 'Kiadva', 'Visszavonva'];
-const CHAPTER_STATUSES: OrderChapterStatus[] = ['Nincs elkezdve', 'Folyamatban', 'Kész', 'Nem szükséges'];
 const PLACEHOLDERS = ['{{név}}', '{{rendfokozat}}', '{{sztsz}}', '{{alegység}}', '{{tárgy}}', '{{dátum}}', '{{parancsszám}}'];
 
 const orderStatusClass: Record<OrderStatus, string> = {
@@ -211,30 +210,42 @@ export default function Parancsok() {
   );
 }
 
-// ── Parancs részlete: szerkesztő + dokumentum ─────────────────────────────
-
-type DetailTab = 'szerkeszto' | 'dokumentum';
+// ── Parancs részlete: a dokumentum egyben, a fejezetek a helyükön írhatók ──
+//
+// Egyetlen nézet: a parancs úgy látszik, ahogy kiadva fog kinézni. Minden
+// fejezet a saját helyén szerkeszthető. A még el nem fogadott (sablonból jött
+// vagy folyamatban lévő) szöveg FÉLKÖVÉR, az elfogadott (Kész) normál
+// vastagságú — így ránézésre látszik, mi van még hátra. A margón fejezetenként
+// ott van a részleg, ki nyúlt hozzá utoljára és mikor.
 
 function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
   order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void;
 }) {
-  const [tab, setTab] = useState<DetailTab>('szerkeszto');
+  const [metaOpen, setMetaOpen] = useState(false);
   const [status, setStatus] = useState<OrderStatus>(order.status);
   const [number, setNumber] = useState(order.number);
   const [issuer, setIssuer] = useState(order.issuer);
   const [dueDate, setDueDate] = useState(order.dueDate);
   const [issuedDate, setIssuedDate] = useState(order.issuedDate);
   const [notes, setNotes] = useState(order.notes);
+  const [signatures, setSignatures] = useState<OrderSignature[]>(order.signatures);
 
   useEffect(() => {
     setStatus(order.status); setNumber(order.number); setIssuer(order.issuer);
     setDueDate(order.dueDate); setIssuedDate(order.issuedDate); setNotes(order.notes);
+    setSignatures(order.signatures);
   }, [order]);
 
-  const saveOrder = async () => {
+  const metaDirty = status !== order.status || number !== order.number || issuer !== order.issuer
+    || dueDate !== order.dueDate || issuedDate !== order.issuedDate || notes !== order.notes;
+  const signaturesDirty = JSON.stringify(signatures) !== JSON.stringify(order.signatures);
+  const visible = order.chapters.filter((ch) => ch.status !== 'Nem szükséges');
+  const skipped = order.chapters.filter((ch) => ch.status === 'Nem szükséges');
+
+  const saveMeta = async () => {
     try {
       onChanged(await store.update(order.id, { subject: order.subject, status, number, issuer, dueDate, issuedDate, notes }));
-      toast.success('Parancs mentve.');
+      toast.success('Parancs adatai mentve.');
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -254,6 +265,15 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
     }
   };
 
+  const saveSignatures = async () => {
+    try {
+      onChanged(await store.updateSignatures(order.id, signatures.map(({ role, name, signed }) => ({ role, name, signed }))));
+      toast.success('Aláírások mentve.');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   const download = async (format: 'docx' | 'pdf') => {
     try {
       await (format === 'docx' ? store.exportDocx(order.id, order.number) : store.exportPdf(order.id, order.number));
@@ -265,45 +285,26 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
   return (
     <Modal open onClose={onClose} title={`${order.number ? `${order.number} — ` : ''}${order.subject}`} wide>
       <div className="space-y-4">
+        {/* Állapotsor + műveletek */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex gap-4 border-b border-border">
-            {([['szerkeszto', 'Fejezetek (szerkesztő)'], ['dokumentum', 'Dokumentum']] as const).map(([key, label]) => (
-              <button key={key} onClick={() => setTab(key)} className={`pb-2 text-xs uppercase tracking-military font-mono transition-colors ${tab === key ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-                {label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+            <span className={orderStatusClass[order.status]}>{order.status}</span>
+            <span className="text-muted-foreground">{order.typeName}</span>
+            {order.personName && <span className="text-muted-foreground">· {order.personName}</span>}
+            <span className="text-muted-foreground">· fejezet {order.doneChapters}/{order.totalChapters} · aláírás {order.signedCount}/{order.signatures.length}</span>
+            {order.pendingResponsibles.length > 0
+              ? <span className="text-amber-400">még dolgozik rajta: {order.pendingResponsibles.join(', ')}</span>
+              : <span className="text-emerald-400">minden fejezet elfogadva</span>}
           </div>
           <div className="flex gap-2">
+            <button onClick={() => setMetaOpen((v) => !v)} className="btn-mil-secondary text-xs flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" />Adatok</button>
             <button onClick={() => { void download('docx'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />Word</button>
             <button onClick={() => { void download('pdf'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />PDF</button>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mt-1">{order.typeName}</p></div>
-          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Érintett</span><p className="mt-1">{order.personName || '—'}</p></div>
-          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Állapot</span><p className="mt-1"><span className={orderStatusClass[order.status]}>{order.status}</span></p></div>
-          <div>
-            <span className="text-muted-foreground text-xs uppercase tracking-military">Még dolgozik rajta</span>
-            <p className="mt-1">
-              {order.pendingResponsibles.length > 0
-                ? <span className="text-amber-400 font-mono">{order.pendingResponsibles.join(', ')}</span>
-                : <span className="text-emerald-400 font-mono">minden fejezet kész</span>}
-            </p>
-          </div>
-        </div>
-
-        {tab === 'szerkeszto' ? (
-          <div className="space-y-3">
-            {order.chapters.map((ch) => (
-              <ChapterEditor key={ch.id} chapter={ch} canEdit={canEdit} onSave={(patch) => saveChapter(ch, patch)} />
-            ))}
-
-            <div className="flex items-center gap-3 pt-2">
-              <div className="h-px flex-1 bg-primary/30" />
-              <span className="text-xs uppercase tracking-military text-primary font-mono">Parancs adatai</span>
-              <div className="h-px flex-1 bg-primary/30" />
-            </div>
+        {metaOpen && (
+          <div className="border border-border p-3 space-y-3" style={radius}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Parancs száma</label>
@@ -334,195 +335,174 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
             </div>
             {canEdit && (
               <div className="flex justify-end">
-                <button onClick={() => { void saveOrder(); }} className="btn-mil-secondary text-xs">Parancs adatainak mentése</button>
+                <button onClick={() => { void saveMeta(); }} disabled={!metaDirty} className="btn-mil-primary text-xs">Adatok mentése</button>
               </div>
             )}
           </div>
-        ) : (
-          <DocumentView order={order} canEdit={canEdit} onChanged={onChanged} />
         )}
 
-        <div className="flex justify-between pt-2">
-          <button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button>
-          {canEdit && (
-            <button onClick={onDelete} className="btn-mil-danger text-xs flex items-center gap-1.5">
-              <Trash2 className="w-3.5 h-3.5" />
-              Törlés
-            </button>
+        <p className="text-[11px] font-mono text-muted-foreground">
+          <span className="font-bold text-foreground">Félkövér</span> = még nem elfogadott szöveg (sablon vagy folyamatban); normál = a részleg elfogadta. A fejezetbe kattintva a helyén írható át.
+        </p>
+
+        {/* Az irat egyben */}
+        <div className="bg-background border border-border px-6 py-8 md:px-12 md:py-10 text-sm leading-relaxed" style={radius}>
+          <div className="flex justify-between text-xs font-mono mb-6">
+            <span className="font-semibold">{order.issuer}</span>
+            <span>Nyt. szám: {order.number || '________'}</span>
+          </div>
+          <h2 className="text-center font-bold text-base uppercase tracking-wide mb-4">
+            {order.number ? `${order.number}. számú ` : ''}{order.typeName}
+          </h2>
+          <p className="mb-1"><span className="font-semibold">Tárgy:</span> {order.subject}</p>
+          {order.personName && <p className="mb-4"><span className="font-semibold">Érintett:</span> {order.personName}</p>}
+
+          <div className="mt-4">
+            {visible.map((ch, index) => (
+              <InlineChapter key={ch.id} index={index + 1} chapter={ch} canEdit={canEdit} onSave={(patch) => saveChapter(ch, patch)} />
+            ))}
+          </div>
+
+          {skipped.length > 0 && (
+            <p className="mt-4 text-[11px] font-mono text-muted-foreground">
+              Nem szükséges ebben a parancsban: {skipped.map((ch) => ch.name).join(', ')}
+              {canEdit && (
+                <>
+                  {' — '}
+                  {skipped.map((ch) => (
+                    <button key={ch.id} onClick={() => { void saveChapter(ch, { status: 'Nincs elkezdve' }); }} className="underline hover:text-foreground mr-2">
+                      {ch.name} visszavétele
+                    </button>
+                  ))}
+                </>
+              )}
+            </p>
           )}
+
+          <p className="mt-8 font-mono text-xs">{order.issuedDate ? `Kelt: ${order.issuedDate}` : 'Kelt: ____________________'}</p>
+
+          <div className="mt-8 grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(1, signatures.length)}, minmax(0, 1fr))` }}>
+            {signatures.map((sig, i) => (
+              <div key={sig.role} className="text-center text-xs">
+                <div className="border-t border-foreground/60 mx-4 mb-2" />
+                {canEdit ? (
+                  <input
+                    value={sig.name}
+                    onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)))}
+                    placeholder="(név)"
+                    className="w-full bg-transparent border-b border-dashed border-border px-2 py-1 text-xs text-center font-semibold focus:outline-none focus:border-primary"
+                  />
+                ) : (
+                  <p className="font-semibold">{sig.name || '(név)'}</p>
+                )}
+                <p className="text-muted-foreground mt-1">{sig.role}</p>
+                <label className={`mt-2 inline-flex items-center gap-1.5 font-mono ${sig.signed ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                  <input
+                    type="checkbox"
+                    checked={sig.signed}
+                    disabled={!canEdit || !order.readyToSign}
+                    onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, signed: e.target.checked } : s)))}
+                  />
+                  {sig.signed ? `aláírva ${sig.signedAt ? sig.signedAt.slice(0, 10) : ''}` : 'aláírás'}
+                </label>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-mono text-muted-foreground">
+            {order.readyToSign
+              ? `Minden kötelező fejezet elfogadva — aláírható (${order.signedCount}/${order.signatures.length}).`
+              : `Aláírásra akkor kerülhet, ha minden kötelező fejezet elfogadott (még: ${order.pendingResponsibles.join(', ')}).`}
+          </p>
+          <div className="flex gap-2">
+            {canEdit && <button onClick={() => { void saveSignatures(); }} disabled={!signaturesDirty} className="btn-mil-primary text-xs">Aláírások mentése</button>}
+            <button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button>
+            {canEdit && (
+              <button onClick={onDelete} className="btn-mil-danger text-xs flex items-center gap-1.5">
+                <Trash2 className="w-3.5 h-3.5" />
+                Törlés
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </Modal>
   );
 }
 
-function ChapterEditor({ chapter, canEdit, onSave }: {
-  chapter: OrderChapter; canEdit: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>;
+/** Egy fejezet a dokumentumban: a szöveg a helyén írható, a margón a részleg és a nyoma. */
+function InlineChapter({ index, chapter, canEdit, onSave }: {
+  index: number; chapter: OrderChapter; canEdit: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>;
 }) {
   const [content, setContent] = useState(chapter.content);
-  const [assignee, setAssignee] = useState(chapter.assignee);
-  const [note, setNote] = useState(chapter.note);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setContent(chapter.content); setAssignee(chapter.assignee); setNote(chapter.note); }, [chapter]);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => setContent(chapter.content), [chapter]);
+  // A szövegdoboz a tartalomhoz nő, hogy irat maradjon, ne űrlap.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [content]);
 
-  const dirty = content !== chapter.content || assignee !== chapter.assignee || note !== chapter.note;
-  const done = chapter.status === 'Kész' || chapter.status === 'Nem szükséges';
+  const accepted = chapter.status === 'Kész';
+  const dirty = content !== chapter.content;
+  const trace = chapter.updatedAt ? `${chapter.updatedBy} · ${chapter.updatedAt.slice(0, 10)}` : 'még senki nem nyúlt hozzá';
 
-  const save = async (patch: Partial<OrderChapter> = {}) => {
+  const run = async (patch: Partial<OrderChapter>) => {
     setSaving(true);
     try {
-      await onSave({ content, assignee, note, ...patch });
+      await onSave({ content, ...patch });
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className={`border p-3 space-y-2 ${done ? 'border-border' : 'border-amber-400/40 bg-amber-400/5'}`} style={radius}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">{chapter.position + 1}.</span>
-          <span className="font-medium">{chapter.name}</span>
-          <span className="mono-chip">{chapter.responsible}</span>
-          {!chapter.required && <span className="text-[10px] font-mono text-muted-foreground uppercase">opcionális</span>}
-        </div>
-        <div className="flex items-center gap-2">
-          {canEdit ? (
-            <select value={chapter.status} onChange={(e) => { void save({ status: e.target.value as OrderChapterStatus }); }} className={`bg-input border border-border px-2 py-1 text-xs ${chapterStatusClass[chapter.status]}`} style={radius}>
-              {CHAPTER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          ) : (
-            <span className={`text-xs ${chapterStatusClass[chapter.status]}`}>{chapter.status}</span>
-          )}
-        </div>
+    <div className={`grid grid-cols-1 md:grid-cols-[1fr_11rem] gap-x-4 gap-y-1 py-2 -mx-2 px-2 ${accepted ? '' : 'bg-amber-400/5'}`} style={radius}>
+      <div>
+        <p className="font-semibold mb-1">{index}. {chapter.name}</p>
+        {canEdit ? (
+          <textarea
+            ref={ref}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onBlur={() => { if (dirty) void run({ status: accepted ? 'Folyamatban' : chapter.status }); }}
+            placeholder={`[${chapter.responsible} — a fejezet még üres]`}
+            spellCheck={false}
+            className={`w-full resize-none overflow-hidden bg-transparent border-l-2 pl-3 py-0.5 text-sm leading-relaxed focus:outline-none focus:border-primary ${accepted ? 'font-normal border-transparent' : 'font-bold border-amber-400/60'}`}
+          />
+        ) : (
+          <p className={`whitespace-pre-wrap border-l-2 pl-3 ${accepted ? 'font-normal border-transparent' : 'font-bold border-amber-400/60'}`}>
+            {chapter.content.trim() || <span className="italic text-muted-foreground">[A fejezet még nem készült el.]</span>}
+          </p>
+        )}
       </div>
-      <textarea
-        value={content}
-        disabled={!canEdit || chapter.status === 'Nem szükséges'}
-        onChange={(e) => setContent(e.target.value)}
-        rows={Math.min(14, Math.max(3, content.split('\n').length + 1))}
-        placeholder={`A(z) ${chapter.responsible} részleg fejezete…`}
-        className="w-full bg-input border border-border px-3 py-2 text-sm leading-relaxed"
-        style={radius}
-      />
-      <div className="flex flex-wrap items-end gap-2">
-        <div>
-          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Ki dolgozik rajta</label>
-          <input value={assignee} disabled={!canEdit} onChange={(e) => setAssignee(e.target.value)} placeholder="név" className="w-36 bg-input border border-border px-2 py-1 text-xs" style={radius} />
-        </div>
-        <div>
-          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
-          {canEdit ? <DatePickerInput value={chapter.dueDate} onChange={(v) => { void save({ dueDate: v }); }} className="w-36" /> : <span className="font-mono text-xs">{chapter.dueDate || '—'}</span>}
-        </div>
-        <div className="flex-1 min-w-[10rem]">
-          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Belső megjegyzés</label>
-          <input value={note} disabled={!canEdit} onChange={(e) => setNote(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-xs" style={radius} />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {chapter.updatedAt ? `${chapter.updatedBy} · ${chapter.updatedAt.slice(0, 10)}` : 'még nem szerkesztették'}
-          </span>
-          {canEdit && (
-            <button onClick={() => { void save(); }} disabled={!dirty || saving} className="btn-mil-primary text-xs flex items-center gap-1.5">
-              <PenLine className="w-3.5 h-3.5" />
-              {saving ? 'Mentés…' : dirty ? 'Fejezet mentése' : 'Mentve'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DocumentView({ order, canEdit, onChanged }: { order: Order; canEdit: boolean; onChanged: (o: Order) => void }) {
-  const [signatures, setSignatures] = useState<OrderSignature[]>(order.signatures);
-  useEffect(() => setSignatures(order.signatures), [order]);
-  const dirty = JSON.stringify(signatures) !== JSON.stringify(order.signatures);
-  const visible = order.chapters.filter((ch) => ch.status !== 'Nem szükséges');
-
-  const saveSignatures = async () => {
-    try {
-      onChanged(await store.updateSignatures(order.id, signatures.map(({ role, name, signed }) => ({ role, name, signed }))));
-      toast.success('Aláírások mentve.');
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Összeállított dokumentum — ugyanaz a felépítés, mint a Word/PDF export */}
-      <div className="bg-background border border-border p-6 md:p-10 text-sm leading-relaxed" style={radius}>
-        <div className="flex justify-between text-xs font-mono mb-6">
-          <span className="font-semibold">{order.issuer}</span>
-          <span>Nyt. szám: {order.number || '________'}</span>
-        </div>
-        <h2 className="text-center font-bold text-base uppercase tracking-wide mb-4">
-          {order.number ? `${order.number}. számú ` : ''}{order.typeName}
-        </h2>
-        <p className="mb-1"><span className="font-semibold">Tárgy:</span> {order.subject}</p>
-        {order.personName && <p className="mb-4"><span className="font-semibold">Érintett:</span> {order.personName}</p>}
-
-        <div className="space-y-4 mt-4">
-          {visible.map((ch, index) => {
-            const missing = !ch.content.trim();
-            const pending = ch.status !== 'Kész';
-            return (
-              <div key={ch.id} className={pending ? 'border-l-2 border-amber-400/60 pl-3' : ''}>
-                <p className="font-semibold">
-                  {index + 1}. {ch.name}
-                  <span className="ml-2 text-[10px] font-mono text-muted-foreground uppercase">
-                    {ch.responsible}{pending ? ` · ${ch.status}` : ''}
-                  </span>
-                </p>
-                {missing
-                  ? <p className="text-muted-foreground italic">[A fejezet még nem készült el.]</p>
-                  : <p className="whitespace-pre-wrap">{ch.content}</p>}
-              </div>
-            );
-          })}
-        </div>
-
-        <p className="mt-8 font-mono text-xs">{order.issuedDate ? `Kelt: ${order.issuedDate}` : 'Kelt: ____________________'}</p>
-
-        <div className="mt-8 grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(1, signatures.length)}, minmax(0, 1fr))` }}>
-          {signatures.map((sig, i) => (
-            <div key={sig.role} className="text-center text-xs">
-              <div className="border-t border-foreground/60 mx-4 mb-2" />
-              {canEdit ? (
-                <input
-                  value={sig.name}
-                  onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)))}
-                  placeholder="(név)"
-                  className="w-full bg-input border border-border px-2 py-1 text-xs text-center font-semibold"
-                  style={radius}
-                />
-              ) : (
-                <p className="font-semibold">{sig.name || '(név)'}</p>
-              )}
-              <p className="text-muted-foreground mt-1">{sig.role}</p>
-              <label className={`mt-2 inline-flex items-center gap-1.5 font-mono ${sig.signed ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                <input
-                  type="checkbox"
-                  checked={sig.signed}
-                  disabled={!canEdit}
-                  onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, signed: e.target.checked } : s)))}
-                />
-                {sig.signed ? `aláírva ${sig.signedAt ? sig.signedAt.slice(0, 10) : ''}` : 'aláírás'}
-              </label>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-mono text-muted-foreground">
-          {order.readyToSign
-            ? `Minden kötelező fejezet kész — aláírás: ${order.signedCount}/${order.signatures.length}.`
-            : `Aláírásra akkor kerülhet, ha minden kötelező fejezet kész (még: ${order.pendingResponsibles.join(', ')}).`}
-        </p>
+      <div className="text-[11px] font-mono text-muted-foreground md:pt-6 space-y-1">
+        <p><span className="mono-chip">{chapter.responsible}</span>{!chapter.required && <span className="ml-1 uppercase">opcionális</span>}</p>
+        <p className={chapterStatusClass[chapter.status]}>{chapter.status}</p>
+        <p>{trace}</p>
+        {chapter.assignee && <p>dolgozik rajta: {chapter.assignee}</p>}
+        {chapter.dueDate && <p>határidő: {chapter.dueDate}</p>}
         {canEdit && (
-          <button onClick={() => { void saveSignatures(); }} disabled={!dirty} className="btn-mil-primary text-xs">Aláírások mentése</button>
+          <div className="flex flex-wrap gap-1 pt-1">
+            {dirty && (
+              <button onClick={() => { void run({ status: accepted ? 'Folyamatban' : chapter.status }); }} disabled={saving} className="btn-mil-secondary text-[11px] px-2 py-0.5">
+                {saving ? '…' : 'Mentés'}
+              </button>
+            )}
+            {!accepted ? (
+              <button onClick={() => { void run({ status: 'Kész' }); }} disabled={saving} className="btn-mil-primary text-[11px] px-2 py-0.5">Elfogadom</button>
+            ) : (
+              <button onClick={() => { void run({ status: 'Folyamatban' }); }} disabled={saving} className="btn-mil-secondary text-[11px] px-2 py-0.5">Visszanyitás</button>
+            )}
+            {!accepted && !chapter.required && (
+              <button onClick={() => { void run({ status: 'Nem szükséges' }); }} disabled={saving} className="btn-mil-secondary text-[11px] px-2 py-0.5">Nem kell</button>
+            )}
+          </div>
         )}
       </div>
     </div>
