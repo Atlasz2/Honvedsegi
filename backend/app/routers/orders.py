@@ -1,23 +1,29 @@
-"""Parancs-műhely (I5): parancstípusok fejezet-sablonnal, parancsok fejezetenkénti
-állapottal, és a „ki tartja fel" áttekintő.
+"""Parancs-műhely (I5): a parancs a részlegek fejezeteiből áll össze.
 
-Szándékosan NEM generál parancs-szöveget. A mai fájdalom (1. betekintés): a
-fejezetek e-mailben járnak körbe, nem látszik, ki mivel hol tart, és a
-személyügy megcsinálja mások részét is. Itt minden fejezetnek van felelőse és
-állapota, a parancs pedig megmutatja, kinél áll.
+A mai fájdalom (1. betekintés): egy régi parancsot formálnak át, a fejezetek
+e-mailben járnak körbe, nem látszik, ki mivel hol tart. Itt:
+
+- a parancstípus adja a fejezeteket (melyik részlegé, kötelező-e, kiinduló
+  szöveg helyőrzőkkel) és a záró aláírók szerepeit;
+- a részlegek EGYMÁSTÓL FÜGGETLENÜL írják a saját fejezetüket a belső
+  szerkesztőben; az áttekintő mutatja, kinél van még nyitott fejezet;
+- ha minden kötelező fejezet kész, a parancs „Aláírásra vár"; a 2–3 illetékes
+  parancsnok aláírása után „Kiadva";
+- a dokumentum bármikor összeállítható és exportálható (DOCX/PDF).
 """
 from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 
 from ..audit import record_activity
-from ..constants import ORDER_RESPONSIBLES
+from ..constants import ORDER_DEFAULT_ISSUER, ORDER_RESPONSIBLES
 from ..core.dependencies import DB, Editor, Reader
 from ..core.time import utc_now
 from ..models import OrderChapterModel, OrderModel, OrderTypeModel, PersonModel, new_id
+from ..order_export import build_docx, build_pdf
 from ..schemas import (
     OrderChapterRead,
     OrderChapterUpdate,
@@ -25,6 +31,8 @@ from ..schemas import (
     OrderOverview,
     OrderRead,
     OrderResponsibleSummary,
+    OrderSignature,
+    OrderSignaturesUpdate,
     OrderTypeCreate,
     OrderTypeRead,
     OrderTypeUpdate,
@@ -36,6 +44,7 @@ router = APIRouter(prefix="/api/orders", tags=["orders"])
 MODULE = "Parancsok"
 _OPEN_ORDER_STATUSES = ("Előkészítés", "Aláírásra vár")
 _CHAPTER_DONE = ("Kész", "Nem szükséges")
+_DOCX_MEDIA = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 # ── Parancstípusok ───────────────────────────────────────────────────────────
@@ -50,7 +59,14 @@ def _validate_chapters(chapters) -> list[dict]:
             raise HTTPException(status_code=400, detail="A fejezet neve nem lehet üres")
         if ch.responsible not in ORDER_RESPONSIBLES:
             raise HTTPException(status_code=400, detail=f"Ismeretlen felelős: {ch.responsible}")
-        cleaned.append({"name": name, "responsible": ch.responsible, "required": ch.required})
+        cleaned.append({"name": name, "responsible": ch.responsible, "required": ch.required, "template": ch.template})
+    return cleaned
+
+
+def _validate_signers(signers: list[str]) -> list[str]:
+    cleaned = [s.strip() for s in signers if s.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Legalább egy aláíró szerep kell (pl. Parancsnok)")
     return cleaned
 
 
@@ -61,7 +77,7 @@ def _order_counts(db) -> dict[str, int]:
 
 def _serialize_type(item: OrderTypeModel, order_count: int) -> OrderTypeRead:
     return OrderTypeRead(id=item.id, name=item.name, description=item.description,
-                         chapters=item.chapters or [], orderCount=order_count)
+                         chapters=item.chapters or [], signers=item.signers or [], orderCount=order_count)
 
 
 @router.get("/types", response_model=list[OrderTypeRead])
@@ -79,7 +95,7 @@ def create_type(payload: OrderTypeCreate, db: DB, user: Editor):
     if db.scalar(select(OrderTypeModel).where(OrderTypeModel.name == name)):
         raise HTTPException(status_code=409, detail="Már van ilyen nevű parancstípus")
     item = OrderTypeModel(id=new_id(), name=name, description=payload.description,
-                          chapters=_validate_chapters(payload.chapters))
+                          chapters=_validate_chapters(payload.chapters), signers=_validate_signers(payload.signers))
     db.add(item)
     record_activity(db, user, mode="create", module=MODULE, record_name=name, entity="order_type",
                     after={"id": item.id, "name": name, "chapters": len(item.chapters)})
@@ -101,6 +117,7 @@ def update_type(type_id: str, payload: OrderTypeUpdate, db: DB, user: Editor):
     item.name = name
     item.description = payload.description
     item.chapters = _validate_chapters(payload.chapters)
+    item.signers = _validate_signers(payload.signers)
     record_activity(db, user, mode="update", module=MODULE, record_name=name, entity="order_type",
                     before=before, after={"id": item.id, "name": name, "chapters": len(item.chapters)})
     db.commit()
@@ -141,18 +158,24 @@ def _chapters_by_order(db, order_ids: list[str]) -> dict[str, list[OrderChapterM
     return grouped
 
 
-def _blocked_by(chapters: list[OrderChapterModel]) -> str:
-    """A sorrendben első, még nem kész kötelező fejezet felelőse."""
+def _pending_responsibles(chapters: list[OrderChapterModel]) -> list[str]:
+    """Részlegek, amelyeknek még van el nem készült kötelező fejezete (a
+    dokumentum sorrendjében, ismétlés nélkül). A részlegek függetlenek."""
+    seen: dict[str, None] = {}
     for ch in chapters:
         if ch.required and ch.status not in _CHAPTER_DONE:
-            return ch.responsible
-    return ""
+            seen.setdefault(ch.responsible, None)
+    return list(seen)
+
+
+def _signatures(order: OrderModel) -> list[OrderSignature]:
+    return [OrderSignature(**s) for s in (order.signatures or [])]
 
 
 def _serialize_chapter(ch: OrderChapterModel) -> OrderChapterRead:
     return OrderChapterRead(
         id=ch.id, position=ch.position, name=ch.name, responsible=ch.responsible, required=ch.required,
-        status=ch.status, assignee=ch.assignee, dueDate=ch.due_date, note=ch.note,
+        content=ch.content or "", status=ch.status, assignee=ch.assignee, dueDate=ch.due_date, note=ch.note,
         updatedBy=ch.updated_by, updatedAt=ch.updated_at,
     )
 
@@ -160,20 +183,57 @@ def _serialize_chapter(ch: OrderChapterModel) -> OrderChapterRead:
 def _serialize_order(order: OrderModel, chapters: list[OrderChapterModel], today: str, with_chapters: bool) -> OrderRead:
     done = sum(1 for ch in chapters if ch.status in _CHAPTER_DONE)
     is_open = order.status in _OPEN_ORDER_STATUSES
+    pending = _pending_responsibles(chapters) if is_open else []
+    signatures = _signatures(order)
     return OrderRead(
-        id=order.id, orderTypeId=order.order_type_id, typeName=order.type_name, subject=order.subject,
+        id=order.id, orderTypeId=order.order_type_id, typeName=order.type_name,
+        number=order.number or "", issuer=order.issuer or "", subject=order.subject,
         personnelId=order.personnel_id, personName=order.person_name, status=order.status,
-        dueDate=order.due_date, notes=order.notes, createdBy=order.created_by, createdAt=order.created_at,
+        dueDate=order.due_date, issuedDate=order.issued_date or "", notes=order.notes,
+        createdBy=order.created_by, createdAt=order.created_at,
         doneChapters=done, totalChapters=len(chapters),
-        blockedBy=_blocked_by(chapters) if is_open else "",
+        pendingResponsibles=pending,
+        readyToSign=bool(chapters) and not _pending_responsibles(chapters),
+        signedCount=sum(1 for s in signatures if s.signed),
         isOverdue=bool(is_open and order.due_date and order.due_date < today),
+        signatures=signatures,
         chapters=[_serialize_chapter(ch) for ch in chapters] if with_chapters else [],
     )
 
 
 def _order_snapshot(order: OrderModel) -> dict:
-    return {"id": order.id, "subject": order.subject, "status": order.status,
-            "dueDate": order.due_date, "notes": order.notes}
+    return {"id": order.id, "subject": order.subject, "status": order.status, "number": order.number,
+            "dueDate": order.due_date, "issuedDate": order.issued_date, "notes": order.notes}
+
+
+def _fill_template(template: str, values: dict[str, str]) -> str:
+    text = template or ""
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+def _placeholder_values(order: OrderModel, person: PersonModel | None) -> dict[str, str]:
+    return {
+        "név": person.name if person else "",
+        "rendfokozat": person.rank if person else "",
+        "sztsz": person.sztsz if person else "",
+        "alegység": person.unit if person else "",
+        "tárgy": order.subject,
+        "dátum": date.today().isoformat(),
+        "parancsszám": order.number or "",
+    }
+
+
+def _advance_status(order: OrderModel, chapters: list[OrderChapterModel]) -> None:
+    """Automatikus lépések: minden kötelező fejezet kész → Aláírásra vár;
+    minden aláírás megvan → Kiadva. Visszalépést nem csinál (az kézi döntés)."""
+    if order.status == "Előkészítés" and chapters and not _pending_responsibles(chapters):
+        order.status = "Aláírásra vár"
+    signatures = order.signatures or []
+    if order.status == "Aláírásra vár" and signatures and all(s.get("signed") for s in signatures):
+        order.status = "Kiadva"
+        order.issued_date = order.issued_date or date.today().isoformat()
 
 
 @router.get("", response_model=list[OrderRead])
@@ -191,8 +251,8 @@ def list_orders(db: DB, _: Reader, status_filter: str = Query("", alias="status"
 
 @router.get("/overview", response_model=OrderOverview)
 def overview(db: DB, _: Reader):
-    """Felelősönként: hány nyitott fejezet, ebből hány lejárt, és hány parancsot
-    tart fel éppen. A vezetőnek ez az egy képernyő mondja meg, hol torlódik."""
+    """Részlegenként: hány nyitott fejezet, ebből hány lejárt, és hány parancs
+    vár még rá. Egy képernyőn látszik, hol torlódik a munka."""
     today = date.today().isoformat()
     orders = db.scalars(select(OrderModel).where(OrderModel.status.in_(_OPEN_ORDER_STATUSES))).all()
     chapters = _chapters_by_order(db, [o.id for o in orders])
@@ -203,9 +263,8 @@ def overview(db: DB, _: Reader):
         order_chapters = chapters.get(order.id, [])
         if order.due_date and order.due_date < today:
             overdue_orders += 1
-        blocker = _blocked_by(order_chapters)
-        if blocker:
-            summary.setdefault(blocker, {"open": 0, "overdue": 0, "blocking": 0})["blocking"] += 1
+        for responsible in _pending_responsibles(order_chapters):
+            summary.setdefault(responsible, {"open": 0, "overdue": 0, "blocking": 0})["blocking"] += 1
         for ch in order_chapters:
             if ch.status in _CHAPTER_DONE:
                 continue
@@ -231,24 +290,27 @@ def create_order(payload: OrderCreate, db: DB, user: Editor):
     subject = payload.subject.strip()
     if not subject:
         raise HTTPException(status_code=400, detail="A tárgy kötelező")
-    person_name = ""
+    person = None
     if payload.personnelId:
         person = db.get(PersonModel, payload.personnelId)
         if not person:
             raise HTTPException(status_code=404, detail="A személy nem található")
-        person_name = person.name
 
     order = OrderModel(
         id=new_id(), order_type_id=order_type.id, type_name=order_type.name, subject=subject,
-        personnel_id=payload.personnelId, person_name=person_name,
+        number=payload.number.strip(), issuer=payload.issuer.strip() or ORDER_DEFAULT_ISSUER,
+        personnel_id=payload.personnelId, person_name=person.name if person else "",
         due_date=payload.dueDate, notes=payload.notes, created_by=user.username,
+        signatures=[{"role": role, "name": "", "signed": False, "signedAt": "", "signedBy": ""} for role in (order_type.signers or [])],
     )
     db.add(order)
-    # Pillanatkép a típus fejezeteiről: a típus későbbi módosítása ezt nem érinti.
+    # Pillanatkép a típus fejezeteiről, a sablon-szöveg helyőrzői kitöltve.
+    values = _placeholder_values(order, person)
     for position, ch in enumerate(order_type.chapters or []):
         db.add(OrderChapterModel(
             id=new_id(), order_id=order.id, position=position,
             name=ch["name"], responsible=ch["responsible"], required=bool(ch.get("required", True)),
+            content=_fill_template(ch.get("template", ""), values),
         ))
     db.flush()
     record_activity(db, user, mode="create", module=MODULE, record_name=subject, entity="order",
@@ -257,26 +319,32 @@ def create_order(payload: OrderCreate, db: DB, user: Editor):
     return _serialize_order(order, _chapters_of(db, order.id), date.today().isoformat(), with_chapters=True)
 
 
-@router.get("/{order_id}", response_model=OrderRead)
-def get_order(order_id: str, db: DB, _: Reader):
+def _require_order(db, order_id: str) -> OrderModel:
     order = db.get(OrderModel, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="A parancs nem található")
+    return order
+
+
+@router.get("/{order_id}", response_model=OrderRead)
+def get_order(order_id: str, db: DB, _: Reader):
+    order = _require_order(db, order_id)
     return _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
 
 
 @router.put("/{order_id}", response_model=OrderRead)
 def update_order(order_id: str, payload: OrderUpdate, db: DB, user: Editor):
-    order = db.get(OrderModel, order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="A parancs nem található")
+    order = _require_order(db, order_id)
     subject = payload.subject.strip()
     if not subject:
         raise HTTPException(status_code=400, detail="A tárgy kötelező")
     before = _order_snapshot(order)
     order.subject = subject
     order.status = payload.status
+    order.number = payload.number.strip()
+    order.issuer = payload.issuer.strip() or ORDER_DEFAULT_ISSUER
     order.due_date = payload.dueDate
+    order.issued_date = payload.issuedDate
     order.notes = payload.notes
     record_activity(db, user, mode="update", module=MODULE, record_name=subject, entity="order",
                     before=before, after=_order_snapshot(order))
@@ -286,9 +354,7 @@ def update_order(order_id: str, payload: OrderUpdate, db: DB, user: Editor):
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_order(order_id: str, db: DB, user: Editor):
-    order = db.get(OrderModel, order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="A parancs nem található")
+    order = _require_order(db, order_id)
     record_activity(db, user, mode="delete", module=MODULE, record_name=order.subject, entity="order",
                     before=_order_snapshot(order))
     for ch in _chapters_of(db, order_id):
@@ -299,20 +365,72 @@ def delete_order(order_id: str, db: DB, user: Editor):
 
 @router.put("/{order_id}/chapters/{chapter_id}", response_model=OrderRead)
 def update_chapter(order_id: str, chapter_id: str, payload: OrderChapterUpdate, db: DB, user: Editor):
-    order = db.get(OrderModel, order_id)
+    order = _require_order(db, order_id)
     chapter = db.get(OrderChapterModel, chapter_id)
-    if not order or not chapter or chapter.order_id != order_id:
+    if not chapter or chapter.order_id != order_id:
         raise HTTPException(status_code=404, detail="A fejezet nem található")
-    before = {"status": chapter.status, "assignee": chapter.assignee, "dueDate": chapter.due_date, "note": chapter.note}
+    before = {"status": chapter.status, "assignee": chapter.assignee, "dueDate": chapter.due_date,
+              "note": chapter.note, "contentLength": len(chapter.content or "")}
     chapter.status = payload.status
+    chapter.content = payload.content
     chapter.assignee = payload.assignee.strip()
     chapter.due_date = payload.dueDate
     chapter.note = payload.note
     chapter.updated_by = user.username
     chapter.updated_at = utc_now()
+    chapters = _chapters_of(db, order_id)
+    _advance_status(order, chapters)
     record_activity(
         db, user, mode="update", module=MODULE, record_name=f"{order.subject} / {chapter.name}", entity="order_chapter",
-        before=before, after={"status": chapter.status, "assignee": chapter.assignee, "dueDate": chapter.due_date, "note": chapter.note},
+        before=before, after={"status": chapter.status, "assignee": chapter.assignee, "dueDate": chapter.due_date,
+                              "note": chapter.note, "contentLength": len(chapter.content or "")},
     )
     db.commit()
-    return _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
+    return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
+
+
+@router.put("/{order_id}/signatures", response_model=OrderRead)
+def update_signatures(order_id: str, payload: OrderSignaturesUpdate, db: DB, user: Editor):
+    """Az aláírók neve és az aláírás ténye. Az újonnan aláírt tételre a rendszer
+    rögzíti, ki és mikor jelölte be — ez a nyoma annak, hogy ki adta ki."""
+    order = _require_order(db, order_id)
+    previous = {s.get("role"): s for s in (order.signatures or [])}
+    now = utc_now().isoformat(timespec="seconds")
+    updated = []
+    for sig in payload.signatures:
+        old = previous.get(sig.role, {})
+        signed_at, signed_by = old.get("signedAt", ""), old.get("signedBy", "")
+        if sig.signed and not old.get("signed"):
+            signed_at, signed_by = now, user.username
+        if not sig.signed:
+            signed_at, signed_by = "", ""
+        updated.append({"role": sig.role.strip(), "name": sig.name.strip(), "signed": sig.signed,
+                        "signedAt": signed_at, "signedBy": signed_by})
+    before = {"signed": sum(1 for s in (order.signatures or []) if s.get("signed"))}
+    order.signatures = updated
+    chapters = _chapters_of(db, order_id)
+    _advance_status(order, chapters)
+    record_activity(db, user, mode="update", module=MODULE, record_name=order.subject, entity="order_signatures",
+                    before=before, after={"signed": sum(1 for s in updated if s["signed"]), "status": order.status})
+    db.commit()
+    return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
+
+
+@router.get("/{order_id}/export.docx")
+def export_docx(order_id: str, db: DB, _: Reader):
+    order = _require_order(db, order_id)
+    plan = _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
+    return Response(
+        content=build_docx(plan), media_type=_DOCX_MEDIA,
+        headers={"Content-Disposition": f"attachment; filename=parancs-{order_id[:8]}.docx"},
+    )
+
+
+@router.get("/{order_id}/export.pdf")
+def export_pdf(order_id: str, db: DB, _: Reader):
+    order = _require_order(db, order_id)
+    plan = _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
+    return Response(
+        content=build_pdf(plan), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=parancs-{order_id[:8]}.pdf"},
+    )

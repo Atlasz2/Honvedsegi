@@ -76,6 +76,11 @@ ALERT_WARN_DAYS = 30
 
 # Parancs-műhely: a fejezetekért felelős szervezeti egységek (a felhasználó
 # által leírt sorrendben) és az állapotok.
-ORDER_RESPONSIBLES: tuple[str, ...] = ("Ügyvitel", "Jog", "Kiképzés", "Személyügy", "Pénzügy", "Ellenjegyzés")
+# Az ellenjegyzés nem részleg, hanem a záró aláírás (2-3 illetékes parancsnok).
+ORDER_RESPONSIBLES: tuple[str, ...] = ("Ügyvitel", "Jog", "Kiképzés", "Személyügy", "Pénzügy")
 ORDER_STATUSES: tuple[str, ...] = ("Előkészítés", "Aláírásra vár", "Kiadva", "Visszavonva")
 ORDER_CHAPTER_STATUSES: tuple[str, ...] = ("Nincs elkezdve", "Folyamatban", "Kész", "Nem szükséges")
+# A kiadó szerv alapértelmezett neve a dokumentum fejlécében (a parancson felülírható).
+ORDER_DEFAULT_ISSUER = "MH (alakulat neve — beállítandó)"
+# A fejezet-sablonokban használható helyőrzők.
+ORDER_PLACEHOLDERS: tuple[str, ...] = ("név", "rendfokozat", "sztsz", "alegység", "tárgy", "dátum", "parancsszám")

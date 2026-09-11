@@ -889,16 +889,20 @@ OrderChapterStatus = Literal["Nincs elkezdve", "Folyamatban", "Kész", "Nem szü
 
 
 class OrderChapterTemplate(BaseModel):
-    """Egy fejezet a parancstípus sablonjában."""
+    """Egy fejezet a parancstípus sablonjában; a `template` a kiinduló szöveg
+    {{név}}, {{rendfokozat}}, {{sztsz}}, {{alegység}}, {{tárgy}}, {{dátum}}, {{parancsszám}} helyőrzőkkel."""
     name: str
     responsible: str
     required: bool = True
+    template: str = ""
 
 
 class OrderTypeBase(BaseModel):
     name: str
     description: str = ""
     chapters: list[OrderChapterTemplate] = []
+    # A záró aláírók szerepei (pl. „Parancsnok", „Törzsfőnök").
+    signers: list[str] = []
 
 
 class OrderTypeCreate(OrderTypeBase):
@@ -920,6 +924,7 @@ class OrderChapterRead(BaseModel):
     name: str
     responsible: str
     required: bool
+    content: str
     status: OrderChapterStatus
     assignee: str
     dueDate: str
@@ -930,14 +935,29 @@ class OrderChapterRead(BaseModel):
 
 class OrderChapterUpdate(BaseModel):
     status: OrderChapterStatus
+    content: str = ""
     assignee: str = ""
     dueDate: str = ""
     note: str = ""
 
 
+class OrderSignature(BaseModel):
+    role: str
+    name: str = ""
+    signed: bool = False
+    signedAt: str = ""
+    signedBy: str = ""
+
+
+class OrderSignaturesUpdate(BaseModel):
+    signatures: list[OrderSignature]
+
+
 class OrderCreate(BaseModel):
     orderTypeId: str
     subject: str
+    number: str = ""
+    issuer: str = ""
     personnelId: str = ""
     dueDate: str = ""
     notes: str = ""
@@ -946,7 +966,10 @@ class OrderCreate(BaseModel):
 class OrderUpdate(BaseModel):
     subject: str
     status: OrderStatus
+    number: str = ""
+    issuer: str = ""
     dueDate: str = ""
+    issuedDate: str = ""
     notes: str = ""
 
 
@@ -954,19 +977,25 @@ class OrderRead(BaseModel):
     id: str
     orderTypeId: str
     typeName: str
+    number: str
+    issuer: str
     subject: str
     personnelId: str
     personName: str
     status: OrderStatus
     dueDate: str
+    issuedDate: str
     notes: str
     createdBy: str
     createdAt: datetime
     doneChapters: int
     totalChapters: int
-    # A sorrendben első, még el nem készült kötelező fejezet felelőse — „ki tartja fel".
-    blockedBy: str
+    # Részlegek, amelyeknek még van el nem készült kötelező fejezete — ők tartják fel.
+    pendingResponsibles: list[str]
+    readyToSign: bool
+    signedCount: int
     isOverdue: bool
+    signatures: list[OrderSignature] = []
     chapters: list[OrderChapterRead] = []
 
 

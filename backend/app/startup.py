@@ -85,6 +85,19 @@ def _ensure_extended_schema(db: Session) -> None:
     if "extra" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN extra JSON"))
 
+    # Parancs-műhely 2. kör: fejezet-szöveg, aláírások, parancsszám.
+    for table, columns in (
+        ("order_types", {"signers": "JSON"}),
+        ("orders", {"number": "TEXT DEFAULT ''", "issuer": "TEXT DEFAULT ''", "issued_date": "TEXT DEFAULT ''", "signatures": "JSON"}),
+        ("order_chapters", {"content": "TEXT DEFAULT ''"}),
+    ):
+        existing = {row[1] for row in db.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if not existing:
+            continue  # a táblát a create_all hozza létre a teljes sémával
+        for column, ddl in columns.items():
+            if column not in existing:
+                db.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
     trainings_cols = {row[1] for row in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
     if "qualification_id" not in trainings_cols:
         db.execute(text("ALTER TABLE trainings ADD COLUMN qualification_id TEXT"))

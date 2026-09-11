@@ -1012,37 +1012,46 @@ export const operationDocuments = {
 
 export type OrderStatus = 'Előkészítés' | 'Aláírásra vár' | 'Kiadva' | 'Visszavonva';
 export type OrderChapterStatus = 'Nincs elkezdve' | 'Folyamatban' | 'Kész' | 'Nem szükséges';
-export type OrderChapterTemplate = { name: string; responsible: string; required: boolean };
-export type OrderType = { id: string; name: string; description: string; chapters: OrderChapterTemplate[]; orderCount: number };
+export type OrderChapterTemplate = { name: string; responsible: string; required: boolean; template: string };
+export type OrderType = {
+  id: string; name: string; description: string; chapters: OrderChapterTemplate[]; signers: string[]; orderCount: number;
+};
 export type OrderChapter = {
-  id: string; position: number; name: string; responsible: string; required: boolean;
+  id: string; position: number; name: string; responsible: string; required: boolean; content: string;
   status: OrderChapterStatus; assignee: string; dueDate: string; note: string; updatedBy: string; updatedAt: string | null;
 };
+export type OrderSignature = { role: string; name: string; signed: boolean; signedAt: string; signedBy: string };
 export type Order = {
-  id: string; orderTypeId: string; typeName: string; subject: string; personnelId: string; personName: string;
-  status: OrderStatus; dueDate: string; notes: string; createdBy: string; createdAt: string;
-  doneChapters: number; totalChapters: number; blockedBy: string; isOverdue: boolean; chapters: OrderChapter[];
+  id: string; orderTypeId: string; typeName: string; number: string; issuer: string; subject: string;
+  personnelId: string; personName: string; status: OrderStatus; dueDate: string; issuedDate: string; notes: string;
+  createdBy: string; createdAt: string; doneChapters: number; totalChapters: number;
+  pendingResponsibles: string[]; readyToSign: boolean; signedCount: number; isOverdue: boolean;
+  signatures: OrderSignature[]; chapters: OrderChapter[];
 };
 export type OrderOverview = {
   openOrders: number; overdueOrders: number;
   byResponsible: { responsible: string; openChapters: number; overdueChapters: number; blockingOrders: number }[];
 };
 
+type OrderTypePayload = { name: string; description?: string; chapters: OrderChapterTemplate[]; signers: string[] };
+
 export const orders = {
   types: () => request<OrderType[]>('/orders/types'),
-  createType: (payload: { name: string; description?: string; chapters: OrderChapterTemplate[] }) =>
-    request<OrderType>('/orders/types', { method: 'POST', body: JSON.stringify(payload) }),
-  updateType: (id: string, payload: { name: string; description?: string; chapters: OrderChapterTemplate[] }) =>
-    request<OrderType>(`/orders/types/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createType: (payload: OrderTypePayload) => request<OrderType>('/orders/types', { method: 'POST', body: JSON.stringify(payload) }),
+  updateType: (id: string, payload: OrderTypePayload) => request<OrderType>(`/orders/types/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   removeType: (id: string) => request<void>(`/orders/types/${id}`, { method: 'DELETE' }),
   list: (openOnly: boolean) => request<Order[]>(`/orders${openOnly ? '?open_only=true' : ''}`),
   overview: () => request<OrderOverview>('/orders/overview'),
   get: (id: string) => request<Order>(`/orders/${id}`),
-  create: (payload: { orderTypeId: string; subject: string; personnelId?: string; dueDate?: string; notes?: string }) =>
+  create: (payload: { orderTypeId: string; subject: string; number?: string; issuer?: string; personnelId?: string; dueDate?: string; notes?: string }) =>
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
-  update: (id: string, payload: { subject: string; status: OrderStatus; dueDate?: string; notes?: string }) =>
+  update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
     request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
-  updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; assignee?: string; dueDate?: string; note?: string }) =>
+  updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>
     request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  updateSignatures: (orderId: string, signatures: { role: string; name: string; signed: boolean }[]) =>
+    request<Order>(`/orders/${orderId}/signatures`, { method: 'PUT', body: JSON.stringify({ signatures }) }),
+  exportDocx: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.docx`, `parancs-${number || orderId.slice(0, 8)}.docx`),
+  exportPdf: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.pdf`, `parancs-${number || orderId.slice(0, 8)}.pdf`),
 };

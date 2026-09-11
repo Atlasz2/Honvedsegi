@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, FileDown, FileText, PenLine, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   orders as store,
   personnel as personnelStore,
@@ -10,6 +10,7 @@ import {
   type OrderChapterStatus,
   type OrderChapterTemplate,
   type OrderOverview,
+  type OrderSignature,
   type OrderStatus,
   type OrderType,
 } from '@/lib/store';
@@ -19,11 +20,12 @@ import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DatePickerInput from '@/components/DatePickerInput';
 
-// A felhasználó által leírt munkafolyamat-sorrend: ügyvitel → jog → kiképzés/
-// személyügy → pénzügy → ellenjegyzés. A backend ORDER_RESPONSIBLES párja.
-const RESPONSIBLES = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy', 'Ellenjegyzés'] as const;
+// A részlegek, amelyek fejezetet írnak. Az ellenjegyzés nem részleg, hanem a
+// záró aláírás (2–3 illetékes parancsnok). A backend ORDER_RESPONSIBLES párja.
+const RESPONSIBLES = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy'] as const;
 const ORDER_STATUSES: OrderStatus[] = ['Előkészítés', 'Aláírásra vár', 'Kiadva', 'Visszavonva'];
 const CHAPTER_STATUSES: OrderChapterStatus[] = ['Nincs elkezdve', 'Folyamatban', 'Kész', 'Nem szükséges'];
+const PLACEHOLDERS = ['{{név}}', '{{rendfokozat}}', '{{sztsz}}', '{{alegység}}', '{{tárgy}}', '{{dátum}}', '{{parancsszám}}'];
 
 const orderStatusClass: Record<OrderStatus, string> = {
   'Előkészítés': 'badge-planned',
@@ -42,7 +44,7 @@ const inputClass = 'w-full bg-input border border-border px-3 py-2 text-foregrou
 const radius = { borderRadius: '2px' } as const;
 
 function emptyChapter(): OrderChapterTemplate {
-  return { name: '', responsible: 'Ügyvitel', required: true };
+  return { name: '', responsible: 'Ügyvitel', required: true, template: '' };
 }
 
 export default function Parancsok() {
@@ -98,7 +100,7 @@ export default function Parancsok() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Parancsok</h1>
-          <p className="text-xs text-muted-foreground font-mono mt-1">Ki melyik fejezetért felel, hol tart, mi tartja fel a parancsot</p>
+          <p className="text-xs text-muted-foreground font-mono mt-1">A részlegek a saját fejezetüket írják; a parancs ezekből áll össze, a végén az aláírásokkal</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setTypesOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
@@ -114,9 +116,9 @@ export default function Parancsok() {
         </div>
       </div>
 
-      {/* Felelősönkénti áttekintő — hol torlódik */}
+      {/* Részlegenkénti áttekintő — kinél áll még munka */}
       {overview && (
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
           <div className="stats-card border-l-2 border-l-primary">
             <div className="stats-number">{overview.openOrders}</div>
             <div className="stats-label">Nyitott parancs</div>
@@ -128,7 +130,7 @@ export default function Parancsok() {
           {overview.byResponsible.map((r) => (
             <div key={r.responsible} className={`stats-card border-l-2 ${r.blockingOrders ? 'border-l-amber-400' : 'border-l-border'}`}>
               <div className="stats-number">{r.blockingOrders}</div>
-              <div className="stats-label">{r.responsible} tartja fel</div>
+              <div className="stats-label">{r.responsible} — vár rá</div>
               <div className="text-[11px] font-mono text-muted-foreground mt-1">
                 {r.openChapters} nyitott fejezet{r.overdueChapters ? ` · ${r.overdueChapters} lejárt` : ''}
               </div>
@@ -151,28 +153,33 @@ export default function Parancsok() {
         <div className="bg-card border border-border p-6 text-center" style={radius}>
           <FileText className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
           <p className="text-sm text-muted-foreground">
-            {types.length === 0 ? 'Először hozz létre egy parancstípust a fejezeteivel.' : 'Nincs parancs a szűrésben.'}
+            {types.length === 0 ? 'Először hozz létre egy parancstípust a fejezeteivel és az aláíróival.' : 'Nincs parancs a szűrésben.'}
           </p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full mil-table">
             <thead>
-              <tr><th>Tárgy</th><th>Típus</th><th>Személy</th><th>Határidő</th><th>Állapot</th><th>Fejezetek</th><th>Feltartja</th></tr>
+              <tr><th>Szám</th><th>Tárgy</th><th>Típus</th><th>Határidő</th><th>Állapot</th><th>Fejezetek</th><th>Aláírás</th><th>Még dolgozik rajta</th></tr>
             </thead>
             <tbody>
               {list.map((o) => (
                 <tr key={o.id} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => { void openDetail(o); }}>
+                  <td className="font-mono text-xs">{o.number || '—'}</td>
                   <td className="font-medium">{o.subject}</td>
                   <td className="text-xs text-muted-foreground">{o.typeName}</td>
-                  <td className="text-xs">{o.personName || '—'}</td>
                   <td className="font-mono text-xs">
                     {o.dueDate || '—'}
                     {o.isOverdue && <AlertTriangle className="inline w-3.5 h-3.5 ml-1 text-destructive" />}
                   </td>
                   <td><span className={orderStatusClass[o.status]}>{o.status}</span></td>
                   <td className="font-mono text-xs">{o.doneChapters} / {o.totalChapters}</td>
-                  <td className="text-xs">{o.blockedBy ? <span className="text-amber-400 font-mono">{o.blockedBy}</span> : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="font-mono text-xs">{o.signedCount} / {o.signatures.length}</td>
+                  <td className="text-xs">
+                    {o.pendingResponsibles.length > 0
+                      ? <span className="text-amber-400 font-mono">{o.pendingResponsibles.join(', ')}</span>
+                      : <span className="text-muted-foreground">—</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -198,26 +205,35 @@ export default function Parancsok() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => { void remove(); }}
-        message={`Törlöd a parancsot: „${deleteTarget?.subject}"? A fejezet-állapotok is elvesznek.`}
+        message={`Törlöd a parancsot: „${deleteTarget?.subject}"? A fejezetek szövege is elvész.`}
       />
     </div>
   );
 }
 
-// ── Parancs részlete: fejezetek állapota ──────────────────────────────────
+// ── Parancs részlete: szerkesztő + dokumentum ─────────────────────────────
+
+type DetailTab = 'szerkeszto' | 'dokumentum';
 
 function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
   order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void;
 }) {
+  const [tab, setTab] = useState<DetailTab>('szerkeszto');
   const [status, setStatus] = useState<OrderStatus>(order.status);
+  const [number, setNumber] = useState(order.number);
+  const [issuer, setIssuer] = useState(order.issuer);
   const [dueDate, setDueDate] = useState(order.dueDate);
+  const [issuedDate, setIssuedDate] = useState(order.issuedDate);
   const [notes, setNotes] = useState(order.notes);
 
-  useEffect(() => { setStatus(order.status); setDueDate(order.dueDate); setNotes(order.notes); }, [order]);
+  useEffect(() => {
+    setStatus(order.status); setNumber(order.number); setIssuer(order.issuer);
+    setDueDate(order.dueDate); setIssuedDate(order.issuedDate); setNotes(order.notes);
+  }, [order]);
 
   const saveOrder = async () => {
     try {
-      onChanged(await store.update(order.id, { subject: order.subject, status, dueDate, notes }));
+      onChanged(await store.update(order.id, { subject: order.subject, status, number, issuer, dueDate, issuedDate, notes }));
       toast.success('Parancs mentve.');
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -228,6 +244,7 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
     try {
       onChanged(await store.updateChapter(order.id, chapter.id, {
         status: patch.status ?? chapter.status,
+        content: patch.content ?? chapter.content,
         assignee: patch.assignee ?? chapter.assignee,
         dueDate: patch.dueDate ?? chapter.dueDate,
         note: patch.note ?? chapter.note,
@@ -237,59 +254,93 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
     }
   };
 
+  const download = async (format: 'docx' | 'pdf') => {
+    try {
+      await (format === 'docx' ? store.exportDocx(order.id, order.number) : store.exportPdf(order.id, order.number));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   return (
-    <Modal open onClose={onClose} title={order.subject} wide>
+    <Modal open onClose={onClose} title={`${order.number ? `${order.number} — ` : ''}${order.subject}`} wide>
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex gap-4 border-b border-border">
+            {([['szerkeszto', 'Fejezetek (szerkesztő)'], ['dokumentum', 'Dokumentum']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setTab(key)} className={`pb-2 text-xs uppercase tracking-military font-mono transition-colors ${tab === key ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { void download('docx'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />Word</button>
+            <button onClick={() => { void download('pdf'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />PDF</button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mt-1">{order.typeName}</p></div>
-          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Személy</span><p className="mt-1">{order.personName || '—'}</p></div>
-          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Létrehozta</span><p className="mt-1 font-mono text-xs">{order.createdBy} · {order.createdAt.slice(0, 10)}</p></div>
+          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Érintett</span><p className="mt-1">{order.personName || '—'}</p></div>
+          <div><span className="text-muted-foreground text-xs uppercase tracking-military">Állapot</span><p className="mt-1"><span className={orderStatusClass[order.status]}>{order.status}</span></p></div>
           <div>
-            <span className="text-muted-foreground text-xs uppercase tracking-military">Feltartja</span>
-            <p className="mt-1">{order.blockedBy ? <span className="text-amber-400 font-mono">{order.blockedBy}</span> : <span className="text-muted-foreground">—</span>}</p>
+            <span className="text-muted-foreground text-xs uppercase tracking-military">Még dolgozik rajta</span>
+            <p className="mt-1">
+              {order.pendingResponsibles.length > 0
+                ? <span className="text-amber-400 font-mono">{order.pendingResponsibles.join(', ')}</span>
+                : <span className="text-emerald-400 font-mono">minden fejezet kész</span>}
+            </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Állapot</label>
-            <select value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value as OrderStatus)} className={inputClass} style={radius}>
-              {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+        {tab === 'szerkeszto' ? (
+          <div className="space-y-3">
+            {order.chapters.map((ch) => (
+              <ChapterEditor key={ch.id} chapter={ch} canEdit={canEdit} onSave={(patch) => saveChapter(ch, patch)} />
+            ))}
+
+            <div className="flex items-center gap-3 pt-2">
+              <div className="h-px flex-1 bg-primary/30" />
+              <span className="text-xs uppercase tracking-military text-primary font-mono">Parancs adatai</span>
+              <div className="h-px flex-1 bg-primary/30" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Parancs száma</label>
+                <input value={number} disabled={!canEdit} onChange={(e) => setNumber(e.target.value)} placeholder="pl. 12/2026" className={inputClass} style={radius} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kiadó (fejléc)</label>
+                <input value={issuer} disabled={!canEdit} onChange={(e) => setIssuer(e.target.value)} className={inputClass} style={radius} />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Állapot</label>
+                <select value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value as OrderStatus)} className={inputClass} style={radius}>
+                  {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
+                {canEdit ? <DatePickerInput value={dueDate} onChange={setDueDate} /> : <p className="font-mono text-sm py-2">{dueDate || '—'}</p>}
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kelt (kiadás dátuma)</label>
+                {canEdit ? <DatePickerInput value={issuedDate} onChange={setIssuedDate} /> : <p className="font-mono text-sm py-2">{issuedDate || '—'}</p>}
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belső megjegyzés (nem kerül a dokumentumba)</label>
+                <input value={notes} disabled={!canEdit} onChange={(e) => setNotes(e.target.value)} className={inputClass} style={radius} />
+              </div>
+            </div>
+            {canEdit && (
+              <div className="flex justify-end">
+                <button onClick={() => { void saveOrder(); }} className="btn-mil-secondary text-xs">Parancs adatainak mentése</button>
+              </div>
+            )}
           </div>
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
-            {canEdit ? <DatePickerInput value={dueDate} onChange={setDueDate} /> : <p className="font-mono text-sm py-2">{dueDate || '—'}</p>}
-          </div>
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjegyzés</label>
-            <input value={notes} disabled={!canEdit} onChange={(e) => setNotes(e.target.value)} className={inputClass} style={radius} />
-          </div>
-        </div>
-        {canEdit && (
-          <div className="flex justify-end">
-            <button onClick={() => { void saveOrder(); }} className="btn-mil-secondary text-xs">Parancs mentése</button>
-          </div>
+        ) : (
+          <DocumentView order={order} canEdit={canEdit} onChanged={onChanged} />
         )}
-
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1 bg-primary/30" />
-          <span className="text-xs uppercase tracking-military text-primary font-mono">Fejezetek ({order.doneChapters}/{order.totalChapters})</span>
-          <div className="h-px flex-1 bg-primary/30" />
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full mil-table">
-            <thead>
-              <tr><th>#</th><th>Fejezet</th><th>Felelős</th><th>Állapot</th><th>Ki dolgozik rajta</th><th>Határidő</th><th>Megjegyzés</th><th>Utoljára</th></tr>
-            </thead>
-            <tbody>
-              {order.chapters.map((ch) => (
-                <ChapterRow key={ch.id} chapter={ch} canEdit={canEdit} isBlocker={ch.responsible === order.blockedBy && ch.status !== 'Kész' && ch.status !== 'Nem szükséges'} onSave={(patch) => saveChapter(ch, patch)} />
-              ))}
-            </tbody>
-          </table>
-        </div>
 
         <div className="flex justify-between pt-2">
           <button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button>
@@ -305,51 +356,176 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
   );
 }
 
-function ChapterRow({ chapter, canEdit, isBlocker, onSave }: {
-  chapter: OrderChapter; canEdit: boolean; isBlocker: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>;
+function ChapterEditor({ chapter, canEdit, onSave }: {
+  chapter: OrderChapter; canEdit: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>;
 }) {
+  const [content, setContent] = useState(chapter.content);
   const [assignee, setAssignee] = useState(chapter.assignee);
   const [note, setNote] = useState(chapter.note);
-  useEffect(() => { setAssignee(chapter.assignee); setNote(chapter.note); }, [chapter]);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setContent(chapter.content); setAssignee(chapter.assignee); setNote(chapter.note); }, [chapter]);
 
-  const commitText = () => {
-    if (assignee !== chapter.assignee || note !== chapter.note) void onSave({ assignee, note });
+  const dirty = content !== chapter.content || assignee !== chapter.assignee || note !== chapter.note;
+  const done = chapter.status === 'Kész' || chapter.status === 'Nem szükséges';
+
+  const save = async (patch: Partial<OrderChapter> = {}) => {
+    setSaving(true);
+    try {
+      await onSave({ content, assignee, note, ...patch });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <tr className={isBlocker ? 'bg-amber-400/5' : ''}>
-      <td className="font-mono text-xs text-muted-foreground">{chapter.position + 1}</td>
-      <td className="font-medium">
-        {chapter.name}
-        {!chapter.required && <span className="ml-2 text-[10px] font-mono text-muted-foreground uppercase">opcionális</span>}
-      </td>
-      <td className="font-mono text-xs text-primary">{chapter.responsible}</td>
-      <td>
-        {canEdit ? (
-          <select value={chapter.status} onChange={(e) => { void onSave({ status: e.target.value as OrderChapterStatus }); }} className={`bg-input border border-border px-2 py-1 text-xs ${chapterStatusClass[chapter.status]}`} style={radius}>
-            {CHAPTER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        ) : (
-          <span className={`text-xs ${chapterStatusClass[chapter.status]}`}>{chapter.status}</span>
+    <div className={`border p-3 space-y-2 ${done ? 'border-border' : 'border-amber-400/40 bg-amber-400/5'}`} style={radius}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-muted-foreground">{chapter.position + 1}.</span>
+          <span className="font-medium">{chapter.name}</span>
+          <span className="mono-chip">{chapter.responsible}</span>
+          {!chapter.required && <span className="text-[10px] font-mono text-muted-foreground uppercase">opcionális</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          {canEdit ? (
+            <select value={chapter.status} onChange={(e) => { void save({ status: e.target.value as OrderChapterStatus }); }} className={`bg-input border border-border px-2 py-1 text-xs ${chapterStatusClass[chapter.status]}`} style={radius}>
+              {CHAPTER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          ) : (
+            <span className={`text-xs ${chapterStatusClass[chapter.status]}`}>{chapter.status}</span>
+          )}
+        </div>
+      </div>
+      <textarea
+        value={content}
+        disabled={!canEdit || chapter.status === 'Nem szükséges'}
+        onChange={(e) => setContent(e.target.value)}
+        rows={Math.min(14, Math.max(3, content.split('\n').length + 1))}
+        placeholder={`A(z) ${chapter.responsible} részleg fejezete…`}
+        className="w-full bg-input border border-border px-3 py-2 text-sm leading-relaxed"
+        style={radius}
+      />
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Ki dolgozik rajta</label>
+          <input value={assignee} disabled={!canEdit} onChange={(e) => setAssignee(e.target.value)} placeholder="név" className="w-36 bg-input border border-border px-2 py-1 text-xs" style={radius} />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
+          {canEdit ? <DatePickerInput value={chapter.dueDate} onChange={(v) => { void save({ dueDate: v }); }} className="w-36" /> : <span className="font-mono text-xs">{chapter.dueDate || '—'}</span>}
+        </div>
+        <div className="flex-1 min-w-[10rem]">
+          <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Belső megjegyzés</label>
+          <input value={note} disabled={!canEdit} onChange={(e) => setNote(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-xs" style={radius} />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {chapter.updatedAt ? `${chapter.updatedBy} · ${chapter.updatedAt.slice(0, 10)}` : 'még nem szerkesztették'}
+          </span>
+          {canEdit && (
+            <button onClick={() => { void save(); }} disabled={!dirty || saving} className="btn-mil-primary text-xs flex items-center gap-1.5">
+              <PenLine className="w-3.5 h-3.5" />
+              {saving ? 'Mentés…' : dirty ? 'Fejezet mentése' : 'Mentve'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocumentView({ order, canEdit, onChanged }: { order: Order; canEdit: boolean; onChanged: (o: Order) => void }) {
+  const [signatures, setSignatures] = useState<OrderSignature[]>(order.signatures);
+  useEffect(() => setSignatures(order.signatures), [order]);
+  const dirty = JSON.stringify(signatures) !== JSON.stringify(order.signatures);
+  const visible = order.chapters.filter((ch) => ch.status !== 'Nem szükséges');
+
+  const saveSignatures = async () => {
+    try {
+      onChanged(await store.updateSignatures(order.id, signatures.map(({ role, name, signed }) => ({ role, name, signed }))));
+      toast.success('Aláírások mentve.');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Összeállított dokumentum — ugyanaz a felépítés, mint a Word/PDF export */}
+      <div className="bg-background border border-border p-6 md:p-10 text-sm leading-relaxed" style={radius}>
+        <div className="flex justify-between text-xs font-mono mb-6">
+          <span className="font-semibold">{order.issuer}</span>
+          <span>Nyt. szám: {order.number || '________'}</span>
+        </div>
+        <h2 className="text-center font-bold text-base uppercase tracking-wide mb-4">
+          {order.number ? `${order.number}. számú ` : ''}{order.typeName}
+        </h2>
+        <p className="mb-1"><span className="font-semibold">Tárgy:</span> {order.subject}</p>
+        {order.personName && <p className="mb-4"><span className="font-semibold">Érintett:</span> {order.personName}</p>}
+
+        <div className="space-y-4 mt-4">
+          {visible.map((ch, index) => {
+            const missing = !ch.content.trim();
+            const pending = ch.status !== 'Kész';
+            return (
+              <div key={ch.id} className={pending ? 'border-l-2 border-amber-400/60 pl-3' : ''}>
+                <p className="font-semibold">
+                  {index + 1}. {ch.name}
+                  <span className="ml-2 text-[10px] font-mono text-muted-foreground uppercase">
+                    {ch.responsible}{pending ? ` · ${ch.status}` : ''}
+                  </span>
+                </p>
+                {missing
+                  ? <p className="text-muted-foreground italic">[A fejezet még nem készült el.]</p>
+                  : <p className="whitespace-pre-wrap">{ch.content}</p>}
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="mt-8 font-mono text-xs">{order.issuedDate ? `Kelt: ${order.issuedDate}` : 'Kelt: ____________________'}</p>
+
+        <div className="mt-8 grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(1, signatures.length)}, minmax(0, 1fr))` }}>
+          {signatures.map((sig, i) => (
+            <div key={sig.role} className="text-center text-xs">
+              <div className="border-t border-foreground/60 mx-4 mb-2" />
+              {canEdit ? (
+                <input
+                  value={sig.name}
+                  onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)))}
+                  placeholder="(név)"
+                  className="w-full bg-input border border-border px-2 py-1 text-xs text-center font-semibold"
+                  style={radius}
+                />
+              ) : (
+                <p className="font-semibold">{sig.name || '(név)'}</p>
+              )}
+              <p className="text-muted-foreground mt-1">{sig.role}</p>
+              <label className={`mt-2 inline-flex items-center gap-1.5 font-mono ${sig.signed ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                <input
+                  type="checkbox"
+                  checked={sig.signed}
+                  disabled={!canEdit}
+                  onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, signed: e.target.checked } : s)))}
+                />
+                {sig.signed ? `aláírva ${sig.signedAt ? sig.signedAt.slice(0, 10) : ''}` : 'aláírás'}
+              </label>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-mono text-muted-foreground">
+          {order.readyToSign
+            ? `Minden kötelező fejezet kész — aláírás: ${order.signedCount}/${order.signatures.length}.`
+            : `Aláírásra akkor kerülhet, ha minden kötelező fejezet kész (még: ${order.pendingResponsibles.join(', ')}).`}
+        </p>
+        {canEdit && (
+          <button onClick={() => { void saveSignatures(); }} disabled={!dirty} className="btn-mil-primary text-xs">Aláírások mentése</button>
         )}
-      </td>
-      <td>
-        <input value={assignee} disabled={!canEdit} onChange={(e) => setAssignee(e.target.value)} onBlur={commitText} placeholder="név" className="w-32 bg-input border border-border px-2 py-1 text-xs" style={radius} />
-      </td>
-      <td>
-        {canEdit ? (
-          <DatePickerInput value={chapter.dueDate} onChange={(v) => { void onSave({ dueDate: v }); }} className="w-36" />
-        ) : (
-          <span className="font-mono text-xs">{chapter.dueDate || '—'}</span>
-        )}
-      </td>
-      <td>
-        <input value={note} disabled={!canEdit} onChange={(e) => setNote(e.target.value)} onBlur={commitText} className="w-40 bg-input border border-border px-2 py-1 text-xs" style={radius} />
-      </td>
-      <td className="font-mono text-[11px] text-muted-foreground">
-        {chapter.updatedAt ? `${chapter.updatedBy} · ${chapter.updatedAt.slice(0, 10)}` : '—'}
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 }
 
@@ -360,8 +536,8 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
 }) {
   const [typeId, setTypeId] = useState('');
   const [subject, setSubject] = useState('');
+  const [number, setNumber] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [notes, setNotes] = useState('');
   const [personSearch, setPersonSearch] = useState('');
   const [matches, setMatches] = useState<Person[]>([]);
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
@@ -384,15 +560,15 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
     return () => { active = false; clearTimeout(handle); };
   }, [personSearch, selected]);
 
-  const reset = () => { setSubject(''); setDueDate(''); setNotes(''); setPersonSearch(''); setMatches([]); setSelected(null); };
+  const reset = () => { setSubject(''); setNumber(''); setDueDate(''); setPersonSearch(''); setMatches([]); setSelected(null); };
 
   const submit = async () => {
     if (!typeId) { toast.error('Válassz parancstípust.'); return; }
     if (!subject.trim()) { toast.error('A tárgy kötelező.'); return; }
     setSubmitting(true);
     try {
-      await store.create({ orderTypeId: typeId, subject: subject.trim(), personnelId: selected?.id ?? '', dueDate, notes });
-      toast.success('Parancs létrehozva a típus fejezeteivel.');
+      await store.create({ orderTypeId: typeId, subject: subject.trim(), number: number.trim(), personnelId: selected?.id ?? '', dueDate });
+      toast.success('Parancs létrehozva — a fejezetek a sablonból kitöltve, szerkeszthetők.');
       reset();
       await onCreated();
     } catch (error) {
@@ -415,16 +591,22 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
           </select>
           {selectedType && (
             <p className="text-[11px] font-mono text-muted-foreground mt-1">
-              Fejezetek: {selectedType.chapters.map((c) => `${c.name} (${c.responsible})`).join(' → ')}
+              Fejezetek: {selectedType.chapters.map((c) => `${c.name} (${c.responsible})`).join(' · ')} — aláírók: {selectedType.signers.join(', ')}
             </p>
           )}
         </div>
-        <div>
-          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tárgy *</label>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="pl. Kiss Béla leszerelése" className={inputClass} style={radius} />
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_10rem] gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tárgy *</label>
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="pl. Kiss Béla leszerelése" className={inputClass} style={radius} />
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Parancs száma</label>
+            <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="12/2026" className={inputClass} style={radius} />
+          </div>
         </div>
         <div className="relative">
-          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Érintett személy</label>
+          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Érintett személy (a sablon helyőrzőit ebből tölti ki)</label>
           <div className="relative">
             <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -446,15 +628,9 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
             </div>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
-            <DatePickerInput value={dueDate} onChange={setDueDate} />
-          </div>
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjegyzés</label>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} style={radius} />
-          </div>
+        <div>
+          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
+          <DatePickerInput value={dueDate} onChange={setDueDate} />
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={() => { reset(); onClose(); }} className="btn-mil-secondary text-xs">Mégsem</button>
@@ -476,13 +652,14 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [chapters, setChapters] = useState<OrderChapterTemplate[]>([emptyChapter()]);
+  const [signers, setSigners] = useState<string[]>(['Parancsnok']);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<OrderType | null>(null);
 
   const startEdit = (t: OrderType | 'new') => {
     setEditing(t);
-    if (t === 'new') { setName(''); setDescription(''); setChapters([emptyChapter()]); }
-    else { setName(t.name); setDescription(t.description); setChapters(t.chapters.map((c) => ({ ...c }))); }
+    if (t === 'new') { setName(''); setDescription(''); setChapters([emptyChapter()]); setSigners(['Parancsnok']); }
+    else { setName(t.name); setDescription(t.description); setChapters(t.chapters.map((c) => ({ ...c }))); setSigners([...t.signers]); }
   };
 
   const updateChapter = (index: number, patch: Partial<OrderChapterTemplate>) =>
@@ -497,9 +674,10 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
     });
 
   const save = async () => {
-    const payload = { name: name.trim(), description, chapters: chapters.filter((c) => c.name.trim()) };
+    const payload = { name: name.trim(), description, chapters: chapters.filter((c) => c.name.trim()), signers: signers.filter((s) => s.trim()) };
     if (!payload.name) { toast.error('A név kötelező.'); return; }
     if (payload.chapters.length === 0) { toast.error('Legalább egy fejezet kell.'); return; }
+    if (payload.signers.length === 0) { toast.error('Legalább egy aláíró szerep kell.'); return; }
     setSaving(true);
     try {
       if (editing === 'new') await store.createType(payload);
@@ -540,31 +718,44 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            A fejezetek sorrendje a munkafolyamat sorrendje — a rendszer a sorrendben első, még el nem készült kötelező fejezet felelősét mutatja mint „feltartja".
+            A fejezetek sorrendje a dokumentum sorrendje; a részlegek egymástól függetlenül írják őket. A sablon-szövegben helyőrzők használhatók: {PLACEHOLDERS.join(' ')}.
           </p>
-          <table className="w-full mil-table">
-            <thead><tr><th>#</th><th>Fejezet</th><th>Felelős</th><th>Kötelező</th><th></th></tr></thead>
-            <tbody>
-              {chapters.map((c, i) => (
-                <tr key={i}>
-                  <td className="font-mono text-xs text-muted-foreground">{i + 1}</td>
-                  <td><input value={c.name} onChange={(e) => updateChapter(i, { name: e.target.value })} placeholder="pl. Jogi rész" className="w-full bg-input border border-border px-2 py-1 text-xs" style={radius} /></td>
-                  <td>
-                    <select value={c.responsible} onChange={(e) => updateChapter(i, { responsible: e.target.value })} className="bg-input border border-border px-2 py-1 text-xs" style={radius}>
-                      {RESPONSIBLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </td>
-                  <td><input type="checkbox" checked={c.required} onChange={(e) => updateChapter(i, { required: e.target.checked })} /></td>
-                  <td className="whitespace-nowrap">
-                    <button onClick={() => moveChapter(i, -1)} className="text-xs text-muted-foreground hover:text-foreground px-1" title="Feljebb">▲</button>
-                    <button onClick={() => moveChapter(i, 1)} className="text-xs text-muted-foreground hover:text-foreground px-1" title="Lejjebb">▼</button>
-                    <button onClick={() => setChapters((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-destructive hover:underline px-1">Törlés</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-2">
+            {chapters.map((c, i) => (
+              <div key={i} className="border border-border p-2 space-y-2" style={radius}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs text-muted-foreground">{i + 1}.</span>
+                  <input value={c.name} onChange={(e) => updateChapter(i, { name: e.target.value })} placeholder="Fejezet neve, pl. Jogi rész" className="flex-1 min-w-[10rem] bg-input border border-border px-2 py-1 text-xs" style={radius} />
+                  <select value={c.responsible} onChange={(e) => updateChapter(i, { responsible: e.target.value })} className="bg-input border border-border px-2 py-1 text-xs" style={radius}>
+                    {RESPONSIBLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-xs font-mono text-muted-foreground">
+                    <input type="checkbox" checked={c.required} onChange={(e) => updateChapter(i, { required: e.target.checked })} />
+                    kötelező
+                  </label>
+                  <button onClick={() => moveChapter(i, -1)} className="text-xs text-muted-foreground hover:text-foreground px-1" title="Feljebb">▲</button>
+                  <button onClick={() => moveChapter(i, 1)} className="text-xs text-muted-foreground hover:text-foreground px-1" title="Lejjebb">▼</button>
+                  <button onClick={() => setChapters((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-destructive hover:underline px-1">Törlés</button>
+                </div>
+                <textarea value={c.template} onChange={(e) => updateChapter(i, { template: e.target.value })} rows={3} placeholder="Sablon-szöveg (a parancs létrehozásakor ez kerül a fejezetbe, helyőrzőkkel kitöltve)" className="w-full bg-input border border-border px-2 py-1 text-xs" style={radius} />
+              </div>
+            ))}
+          </div>
           <button onClick={() => setChapters((prev) => [...prev, emptyChapter()])} className="btn-mil-secondary text-xs">+ Fejezet</button>
+
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Aláírók (illetékes parancsnokok szerepe, a dokumentum végén)</label>
+            <div className="flex flex-wrap gap-2">
+              {signers.map((s, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <input value={s} onChange={(e) => setSigners((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))} placeholder="pl. Parancsnok" className="w-40 bg-input border border-border px-2 py-1 text-xs" style={radius} />
+                  <button onClick={() => setSigners((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-destructive hover:underline px-1">×</button>
+                </div>
+              ))}
+              <button onClick={() => setSigners((prev) => [...prev, ''])} className="btn-mil-secondary text-xs">+ Aláíró</button>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={() => setEditing(null)} className="btn-mil-secondary text-xs">Mégsem</button>
             <button onClick={() => { void save(); }} disabled={saving} className="btn-mil-primary text-xs">{saving ? 'Mentés…' : 'Mentés'}</button>
@@ -573,15 +764,16 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
       ) : (
         <div className="space-y-3">
           {types.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Még nincs parancstípus. Az első lépés: a típus és a fejezetei, felelősökkel.</p>
+            <p className="text-sm text-muted-foreground">Még nincs parancstípus. Az első lépés: a típus, a fejezetei (részleg + sablon-szöveg) és az aláírói.</p>
           ) : (
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Fejezetek</th><th>Parancsok</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Név</th><th>Fejezetek</th><th>Aláírók</th><th>Parancsok</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
                 {types.map((t) => (
                   <tr key={t.id}>
                     <td className="font-medium">{t.name}{t.description && <span className="block text-xs text-muted-foreground">{t.description}</span>}</td>
-                    <td className="text-xs text-muted-foreground">{t.chapters.map((c) => `${c.name} (${c.responsible})`).join(' → ')}</td>
+                    <td className="text-xs text-muted-foreground">{t.chapters.map((c) => `${c.name} (${c.responsible})`).join(' · ')}</td>
+                    <td className="text-xs text-muted-foreground">{t.signers.join(', ')}</td>
                     <td className="font-mono text-xs">{t.orderCount}</td>
                     {canEdit && (
                       <td className="whitespace-nowrap">
