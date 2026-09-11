@@ -876,3 +876,104 @@ class ImportConfirmResult(BaseModel):
     skipped: int
 
 
+
+
+# ── Parancs-műhely (I5) ─────────────────────────────────────────────────────
+
+OrderStatus = Literal["Előkészítés", "Aláírásra vár", "Kiadva", "Visszavonva"]
+OrderChapterStatus = Literal["Nincs elkezdve", "Folyamatban", "Kész", "Nem szükséges"]
+
+
+class OrderChapterTemplate(BaseModel):
+    """Egy fejezet a parancstípus sablonjában."""
+    name: str
+    responsible: str
+    required: bool = True
+
+
+class OrderTypeBase(BaseModel):
+    name: str
+    description: str = ""
+    chapters: list[OrderChapterTemplate] = []
+
+
+class OrderTypeCreate(OrderTypeBase):
+    pass
+
+
+class OrderTypeUpdate(OrderTypeBase):
+    pass
+
+
+class OrderTypeRead(OrderTypeBase):
+    id: str
+    orderCount: int = 0
+
+
+class OrderChapterRead(BaseModel):
+    id: str
+    position: int
+    name: str
+    responsible: str
+    required: bool
+    status: OrderChapterStatus
+    assignee: str
+    dueDate: str
+    note: str
+    updatedBy: str
+    updatedAt: datetime | None = None
+
+
+class OrderChapterUpdate(BaseModel):
+    status: OrderChapterStatus
+    assignee: str = ""
+    dueDate: str = ""
+    note: str = ""
+
+
+class OrderCreate(BaseModel):
+    orderTypeId: str
+    subject: str
+    personnelId: str = ""
+    dueDate: str = ""
+    notes: str = ""
+
+
+class OrderUpdate(BaseModel):
+    subject: str
+    status: OrderStatus
+    dueDate: str = ""
+    notes: str = ""
+
+
+class OrderRead(BaseModel):
+    id: str
+    orderTypeId: str
+    typeName: str
+    subject: str
+    personnelId: str
+    personName: str
+    status: OrderStatus
+    dueDate: str
+    notes: str
+    createdBy: str
+    createdAt: datetime
+    doneChapters: int
+    totalChapters: int
+    # A sorrendben első, még el nem készült kötelező fejezet felelőse — „ki tartja fel".
+    blockedBy: str
+    isOverdue: bool
+    chapters: list[OrderChapterRead] = []
+
+
+class OrderResponsibleSummary(BaseModel):
+    responsible: str
+    openChapters: int
+    overdueChapters: int
+    blockingOrders: int
+
+
+class OrderOverview(BaseModel):
+    openOrders: int
+    overdueOrders: int
+    byResponsible: list[OrderResponsibleSummary]

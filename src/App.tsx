@@ -24,6 +24,7 @@ const ActivityLogPage = lazy(() => import("@/pages/ActivityLogPage"));
 const Alerts = lazy(() => import("@/pages/Alerts"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Leave = lazy(() => import("@/pages/Leave"));
+const Parancsok = lazy(() => import("@/pages/Parancsok"));
 const Helyzetkep = lazy(() => import("@/pages/Helyzetkep"));
 const Availability = lazy(() => import("@/pages/Availability"));
 const Kovetelmenyek = lazy(() => import("@/pages/Kovetelmenyek"));
@@ -52,6 +53,7 @@ function AppRoutes() {
           <Route path="/personnel" element={<Personnel />} />
           <Route path="/letszam" element={<Attendance />} />
           <Route path="/szabadsag" element={<Leave />} />
+          <Route path="/parancsok" element={<Parancsok />} />
           <Route path="/helyzetkep" element={<Helyzetkep />} />
           <Route path="/foglaltsag" element={<Availability />} />
           <Route path="/kovetelmenyek" element={<Kovetelmenyek />} />

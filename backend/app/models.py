@@ -393,3 +393,57 @@ class OperationDocumentModel(Base):
     uploaded_by: Mapped[str] = mapped_column(String, default="")
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+# ── Parancs-műhely (I5) ───────────────────────────────────────────────────────
+
+class OrderTypeModel(Base):
+    """Parancstípus (pl. leszerelési, vezénylési, behívó) a fejezet-sablonjával.
+
+    A `chapters` JSON-lista: [{key, name, responsible, required}] — a sorrend a
+    munkafolyamat sorrendje (ügyvitel → jog → … → ellenjegyzés). Egy parancs
+    létrehozásakor ebből PILLANATKÉP készül (OrderChapterModel), így a típus
+    későbbi módosítása nem írja át a folyamatban lévő parancsokat."""
+    __tablename__ = "order_types"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    chapters: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class OrderModel(Base):
+    """Egy konkrét parancs (pl. „Kiss Béla leszerelése"), fejezetenkénti állapottal.
+    Nem tárol parancs-szöveget: a cél az átláthatóság, ki mivel hol tart."""
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    order_type_id: Mapped[str] = mapped_column(String, index=True)
+    type_name: Mapped[str] = mapped_column(String, default="")
+    subject: Mapped[str] = mapped_column(String, index=True)
+    personnel_id: Mapped[str] = mapped_column(String, default="", index=True)
+    person_name: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, index=True, default="Előkészítés")
+    due_date: Mapped[str] = mapped_column(String, default="", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class OrderChapterModel(Base):
+    """A parancs egy fejezete: ki felel érte, hol tart, mikorra kell."""
+    __tablename__ = "order_chapters"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    order_id: Mapped[str] = mapped_column(String, index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String)
+    responsible: Mapped[str] = mapped_column(String, index=True)
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String, index=True, default="Nincs elkezdve")
+    assignee: Mapped[str] = mapped_column(String, default="")
+    due_date: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

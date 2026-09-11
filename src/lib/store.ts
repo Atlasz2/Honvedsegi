@@ -997,3 +997,42 @@ export const operationDocuments = {
   view: (operationId: string, docId: string, originalName: string) =>
     downloadBlob(`/operations/${operationId}/documents/${docId}/view`, originalName),
 };
+
+// ── Parancs-műhely (I5) ─────────────────────────────────────────────────────
+
+export type OrderStatus = 'Előkészítés' | 'Aláírásra vár' | 'Kiadva' | 'Visszavonva';
+export type OrderChapterStatus = 'Nincs elkezdve' | 'Folyamatban' | 'Kész' | 'Nem szükséges';
+export type OrderChapterTemplate = { name: string; responsible: string; required: boolean };
+export type OrderType = { id: string; name: string; description: string; chapters: OrderChapterTemplate[]; orderCount: number };
+export type OrderChapter = {
+  id: string; position: number; name: string; responsible: string; required: boolean;
+  status: OrderChapterStatus; assignee: string; dueDate: string; note: string; updatedBy: string; updatedAt: string | null;
+};
+export type Order = {
+  id: string; orderTypeId: string; typeName: string; subject: string; personnelId: string; personName: string;
+  status: OrderStatus; dueDate: string; notes: string; createdBy: string; createdAt: string;
+  doneChapters: number; totalChapters: number; blockedBy: string; isOverdue: boolean; chapters: OrderChapter[];
+};
+export type OrderOverview = {
+  openOrders: number; overdueOrders: number;
+  byResponsible: { responsible: string; openChapters: number; overdueChapters: number; blockingOrders: number }[];
+};
+
+export const orders = {
+  types: () => request<OrderType[]>('/orders/types'),
+  createType: (payload: { name: string; description?: string; chapters: OrderChapterTemplate[] }) =>
+    request<OrderType>('/orders/types', { method: 'POST', body: JSON.stringify(payload) }),
+  updateType: (id: string, payload: { name: string; description?: string; chapters: OrderChapterTemplate[] }) =>
+    request<OrderType>(`/orders/types/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  removeType: (id: string) => request<void>(`/orders/types/${id}`, { method: 'DELETE' }),
+  list: (openOnly: boolean) => request<Order[]>(`/orders${openOnly ? '?open_only=true' : ''}`),
+  overview: () => request<OrderOverview>('/orders/overview'),
+  get: (id: string) => request<Order>(`/orders/${id}`),
+  create: (payload: { orderTypeId: string; subject: string; personnelId?: string; dueDate?: string; notes?: string }) =>
+    request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (id: string, payload: { subject: string; status: OrderStatus; dueDate?: string; notes?: string }) =>
+    request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
+  updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; assignee?: string; dueDate?: string; note?: string }) =>
+    request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+};

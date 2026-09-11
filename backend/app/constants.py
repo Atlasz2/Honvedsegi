@@ -67,3 +67,9 @@ BASIC_TRAINING_CATEGORY = "Alapkiképzés"
 BASIC_TRAINING_DEADLINE_DAYS = 365
 # Az aktív állománynak évente legalább ennyi munkanap szabadságot ki kell vennie.
 LEAVE_MINIMUM_DAYS = 10
+
+# Parancs-műhely: a fejezetekért felelős szervezeti egységek (a felhasználó
+# által leírt sorrendben) és az állapotok.
+ORDER_RESPONSIBLES: tuple[str, ...] = ("Ügyvitel", "Jog", "Kiképzés", "Személyügy", "Pénzügy", "Ellenjegyzés")
+ORDER_STATUSES: tuple[str, ...] = ("Előkészítés", "Aláírásra vár", "Kiadva", "Visszavonva")
+ORDER_CHAPTER_STATUSES: tuple[str, ...] = ("Nincs elkezdve", "Folyamatban", "Kész", "Nem szükséges")
