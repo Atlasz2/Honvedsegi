@@ -92,6 +92,25 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 
 ---
 
+## I. A KGIR mellé — az 1. betekintés (2026-09-11) munkafolyamatai
+
+> Kontextus: a hivatalos törzsadat a **KGIR**-ben van (2 gép fér hozzá), abból
+> naponta Excel-export készül; a szabadságot a **BHD**-s rendszer kezeli; a
+> kiképzési nyilvántartás és a parancsok a **fájlkezelőben** vannak. A mi
+> rendszerünk *munkaszervező eszköz a KGIR mellett*: a napi export a bemenet,
+> a KGIR-be soha nem írunk vissza. A nyitott kérdések a repón kívül:
+> `..\Nyitott kérdések.md`.
+
+| # | Funkció | Méret | Leírás |
+|---|---------|-------|--------|
+| I1 | **Napi KGIR-export beemelése** ✅ | S | A meglévő személyzet-import (SZTSZ-upsert, fuzzy fejléc) + két védőháló: **„a nyilvántartásban van, de a fájlban nincs"** lista (leszereltek kivételével — leszerelés vagy hibás export jele) és a **nem felismert oszlopok** jelzése. `ImportPreviewResult.missing/missingCount/unknownColumns`. Hátra: a valós export fejlécei (B/1 kérdés) → alias-bővítés. |
+| I2 | **Szabadság-minimum riasztás** ✅ | S | `GET /api/alerts/leave-minimum?year=&min_days=10`: aktívak, akik idén nem érték el a 10 munkanap (H–P) jóváhagyott „Szabadság"-ot; a 0 naposak is. Forrás most az A2; ha a BHD/KGIR lesz a hiteles, csak a forrást kell átkötni. |
+| I3 | **Alapkiképzés-határidő riasztás** ✅ | S | `GET /api/alerts/basic-training`: tartalékosok, akiknek nincs meg minden modul; határidő = jogviszony kezdete + 365 nap, lejárt = leszerelendő. **Modul = „Alapkiképzés" kategóriájú képesítés-típus**, teljesítés = megszerzett képesítés (így a hadműveleti tiszt Excelje egyszerű képesítés-kiadás lesz, és a H2 auto-jóváírás is ezt tölti). Demo: `populate_basic_training.py`. |
+| I4 | **Kampányterv** | M | Gyakorlatra jelentkezők kézi rögzítése (SZTSZ) → a H1 eligibility mutatja, ki jogosult / mi hiányzik → export kampányterv-formátumban → behívó-tervezet. |
+| I5 | **Parancs-műhely (váz)** | L | Parancstípus → fejezetek (ügyvitel/jog/kiképzés/személyügy/pénzügy/ellenjegyzés), fejezetenként felelős + állapot + határidő, „ki tartja fel" áttekintő. **Nem generál szöveget** — átláthatóság. A sablon-tartalom a C/3-4 kérdésekre vár. |
+
+---
+
 ## Javasolt sorrend (vita tárgya)
 
 Kész: A1 ✅, A2 ✅, G1 ✅, G2 ✅, G8 ✅, felhasználó-törlés ✅, H1 ✅, H2 ✅, H4/1 ✅, H5 ✅ (képesítés-kiadás a Személyeknél), tevékenységnapló szerepkör-szűrés + naplózás ✅, modal dupla-katt védelem ✅, **napló mindenkinek (szerepkör-szűrt) ✅**, **szerkesztő import ✅**. Következő jelöltek:
