@@ -69,9 +69,16 @@ type EditForm = {
   status: OperationStatus;
 };
 
-const STATUSES: OperationStatus[] = ["Tervezett", "Folyamatban", "Befejezett", "Törölve"];
-const TRAINING_STATUSES: Array<Exclude<OperationStatus, "Törölve">> = ["Tervezett", "Folyamatban", "Befejezett"];
-const ATTENDANCE = ["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg"] as const;
+// Az időbeli állapotot (közelgő / folyamatban / lezajlott) a rendszer a dátumokból
+// számolja; a felhasználó csak lemondani tud. A tárolt értékek a régi nevek.
+const STATUSES: OperationStatus[] = ["Tervezett", "Folyamatban", "Befejezett", "Lemondva"];
+const STATUS_LABEL: Record<OperationStatus, string> = {
+  Tervezett: "Közelgő",
+  Folyamatban: "Folyamatban",
+  Befejezett: "Lezajlott",
+  Lemondva: "Lemondva",
+};
+const ATTENDANCE = ["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Visszamondta"] as const;
 
 const emptyCreateForm: CreateForm = {
   source: "exercise",
@@ -94,7 +101,7 @@ const statusClass: Record<OperationStatus, string> = {
   Tervezett: "badge-planned",
   Folyamatban: "badge-ongoing",
   Befejezett: "badge-completed",
-  Törölve: "badge-cancelled",
+  Lemondva: "badge-cancelled",
 };
 
 const typeMap: Record<string, string> = {
@@ -184,6 +191,7 @@ export default function Operations() {
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
   const [deleteTarget, setDeleteTarget] = useState<OperationItem | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<OperationItem | null>(null);
   const [addPersonId, setAddPersonId] = useState("");
   const [addPersonRole, setAddPersonRole] = useState("résztvevő");
   const [eligibilityMap, setEligibilityMap] = useState<Record<string, { eligible: boolean; missing: string[] }>>({});
@@ -284,7 +292,7 @@ export default function Operations() {
     Tervezett: 0,
     Folyamatban: 0,
     Befejezett: 0,
-    Törölve: 0,
+    Lemondva: 0,
   };
   data.forEach((item) => {
     if (statusCounts[item.status] !== undefined) {
@@ -411,7 +419,7 @@ export default function Operations() {
 
   const updateAttendance = async (personId: string, att: string) => {
     if (!detail) return;
-    const attendanceVal = att as "Jelentkezett" | "Tervezett" | "Megjelent" | "Hiányzott" | "Beteg";
+    const attendanceVal = att as TrainingAssignment["attendance"];
     try {
       if (detail.source === "exercise") {
         const raw = rawExercises.find((e) => e.id === detail.id);
@@ -472,13 +480,12 @@ export default function Operations() {
         });      } else {
         const raw = rawTrainings.find((t) => t.id === editing.id);
         if (!raw) return;
-        const trainingStatus = editForm.status === "Törölve" ? "Tervezett" : editForm.status;
         await trainings.update({
           ...raw, name: editForm.name, type: editForm.type,
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, organizer: editForm.organizer,
           maxPersonnel: editForm.maxPersonnel, description: editForm.description,
-          status: trainingStatus as Training["status"],
+          status: editForm.status,
         });      }
       toast.success("Sikeresen mentve");
       setEditing(null);
@@ -592,8 +599,7 @@ export default function Operations() {
       if (form.source === "exercise") {
         const created = await exercises.add({ ...common, status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
         await prerequisites.set("exercise", created.id, form.prerequisiteIds);      } else {
-        const trainingStatus = form.status === "Törölve" ? "Tervezett" : form.status;
-        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: trainingStatus, assigned: [], qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level });
+        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: form.status, assigned: [], qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level });
         await prerequisites.set("training", created.id, form.prerequisiteIds);      }
       toast.success("Művelet létrehozva");
       setCreating(false);
@@ -605,7 +611,25 @@ export default function Operations() {
     }
   };
 
-  const currentCreateStatuses = form.source === "exercise" ? STATUSES : TRAINING_STATUSES;
+  // Lemondás / visszavonás: a szerver a dátumból számolja vissza az állapotot.
+  const setCancelled = async (cancelled: boolean) => {
+    if (!detail) return;
+    const status: OperationStatus = cancelled ? "Lemondva" : "Tervezett";
+    try {
+      if (detail.source === "exercise") {
+        const raw = rawExercises.find((e) => e.id === detail.id);
+        if (raw) await exercises.update({ ...raw, status });
+      } else {
+        const raw = rawTrainings.find((t) => t.id === detail.id);
+        if (raw) await trainings.update({ ...raw, status });
+      }
+      toast.success(cancelled ? "Művelet lemondva — nem számít bele semmibe." : "Lemondás visszavonva.");
+      setCancelTarget(null);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
 
   return (
     <div>
@@ -646,10 +670,9 @@ export default function Operations() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="stats-card"><div className="stats-number">{statusCounts.Tervezett}</div><div className="stats-label">Tervezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Folyamatban}</div><div className="stats-label">Folyamatban</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Befejezett}</div><div className="stats-label">Befejezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Törölve}</div><div className="stats-label">Törölve</div></div>
+        {STATUSES.map((s) => (
+          <div key={s} className="stats-card"><div className="stats-number">{statusCounts[s]}</div><div className="stats-label">{STATUS_LABEL[s]}</div></div>
+        ))}
       </div>
 
       {seriesList.length > 0 && (
@@ -694,7 +717,7 @@ export default function Operations() {
         ))}
         {["Összes", ...STATUSES].map((s) => (
           <button key={s} onClick={() => { setFilter(s as "Összes" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`}>
-            {s}
+            {s === "Összes" ? s : STATUS_LABEL[s as OperationStatus]}
           </button>
         ))}
         <div>
@@ -720,7 +743,7 @@ export default function Operations() {
                   <h3 className="font-bold font-rajdhani text-lg">{item.name}</h3>
                   <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[item.status]}`} style={{ borderRadius: "2px" }}>
                     {item.status === "Folyamatban" && <span className="pulse-dot" />}
-                    {item.status}
+                    {STATUS_LABEL[item.status]}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 mb-2">
@@ -800,7 +823,7 @@ export default function Operations() {
                           <td className="px-3 py-1.5 font-rajdhani text-foreground">{o.name}</td>
                           <td className="px-3 py-1.5 text-muted-foreground">{o.level || "—"}</td>
                           <td className="px-3 py-1.5 text-muted-foreground text-xs">{formatDate(o.startDate)} → {formatDate(o.endDate)}</td>
-                          <td className="px-3 py-1.5"><span className={`px-2 py-0.5 text-xs uppercase font-mono ${statusClass[o.status]}`} style={{ borderRadius: "2px" }}>{o.status}</span></td>
+                          <td className="px-3 py-1.5"><span className={`px-2 py-0.5 text-xs uppercase font-mono ${statusClass[o.status]}`} style={{ borderRadius: "2px" }}>{STATUS_LABEL[o.status]}</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -912,11 +935,7 @@ export default function Operations() {
               value={form.source}
               onChange={(e) => {
                 const nextSource = e.target.value as OperationSource;
-                setForm((prev) => ({
-                  ...prev,
-                  source: nextSource,
-                  status: nextSource === "training" && prev.status === "Törölve" ? "Tervezett" : prev.status,
-                }));
+                setForm((prev) => ({ ...prev, source: nextSource }));
               }}
               className="w-full bg-input border border-border px-3 py-2 text-sm"
               style={{ borderRadius: "2px" }}
@@ -1003,13 +1022,6 @@ export default function Operations() {
           </div>
 
           <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as OperationStatus })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
-              {currentCreateStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mit ad teljesítéskor (képesítés)</label>
             <select value={form.qualificationId} onChange={(e) => setForm({ ...form, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
               <option value="">— nem ad képesítést —</option>
@@ -1066,7 +1078,7 @@ export default function Operations() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mono-chip mt-1">{typeMap[detail.type] || detail.type}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Forrás</span><p className="mono-chip mt-1">{detail.source === "exercise" ? "Gyakorlat" : "Kiképzés"}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${statusClass[detail.status]}`} style={{ borderRadius: "2px" }}>{detail.status}</p></div>
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${statusClass[detail.status]}`} style={{ borderRadius: "2px" }}>{STATUS_LABEL[detail.status]}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Időszak</span><p className="font-mono text-primary text-sm mt-1">{formatDate(detail.startDate)} → {formatDate(detail.endDate)}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Helyszín</span><p className="mt-1">{detail.location || "Nincs megadva"}</p></div>
             </div>
@@ -1208,6 +1220,11 @@ export default function Operations() {
               {canEdit && (
                 <div className="flex gap-2">
                   <button onClick={() => openEdit(detail)} className="btn-mil-secondary text-xs">Szerkesztés</button>
+                  {detail.status === "Lemondva" ? (
+                    <button onClick={() => { void setCancelled(false); }} className="btn-mil-secondary text-xs">Lemondás visszavonása</button>
+                  ) : (
+                    <button onClick={() => setCancelTarget(detail)} className="btn-mil-secondary text-xs text-warning">Lemondás</button>
+                  )}
                   <button onClick={() => setDeleteTarget(detail)} className="btn-mil-danger text-xs">Törlés</button>
                 </div>
               )}
@@ -1269,19 +1286,6 @@ export default function Operations() {
               <input type="number" value={editForm.maxPersonnel} onChange={(e) => setEditForm({ ...editForm, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
             </div>
 
-            <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
-              <select
-                value={editForm.status}
-                onChange={(e) => setEditForm({ ...editForm, status: e.target.value as OperationStatus })}
-                className="w-full bg-input border border-border px-3 py-2 text-sm"
-                style={{ borderRadius: "2px" }}
-              >
-                {(editing.source === "exercise" ? STATUSES : TRAINING_STATUSES).map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>
@@ -1296,6 +1300,12 @@ export default function Operations() {
         )}
       </Modal>
 
+      <ConfirmDialog
+        open={!!cancelTarget}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={() => { void setCancelled(true); }}
+        message={`Lemondod a műveletet: „${cancelTarget?.name}"? A lemondott művelet nem számít bele semmibe (képesítés, éves szolgálati napok), a beosztás megmarad.`}
+      />
       <ConfirmDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}

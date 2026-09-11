@@ -43,7 +43,7 @@ def create_exercise(payload: ExerciseCreate, db: DB, user: Editor):
     db.add(item)
     db.flush()
     sync_participants(db, "exercise", item.id, payload.assigned)
-    if item.status == "Befejezett":
+    if item.status != "Lemondva":
         grant_event_qualifications(db, "exercise", item.id, item.qualification_id)
     auto_chain_prerequisites(db, "exercise", item.id, item.series_id, item.level, item.name)
     record_activity(db, user, mode="create", module="Műveletek", record_name=item.name,
@@ -59,7 +59,7 @@ def update_exercise(item_id: str, payload: ExerciseUpdate, db: DB, user: Editor)
     before = _exercise_snapshot(item)
     apply_exercise(item, payload)
     sync_participants(db, "exercise", item_id, payload.assigned)
-    if item.status == "Befejezett":
+    if item.status != "Lemondva":
         grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
     auto_chain_prerequisites(db, "exercise", item_id, item.series_id, item.level, item.name)
     record_activity(db, user, mode="update", module="Műveletek", record_name=item.name,

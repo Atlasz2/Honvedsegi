@@ -309,7 +309,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                     "Objektumvédelmi és reagálási eljárások gyakorlása.",
                     "Parancsnoki döntési ciklus és törzsmunka gyakorlása.",
                 ]),
-                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
+                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]),
                 assigned=assigned,
             )
         )
@@ -376,7 +376,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                     "Állományt érintő szervezési és adminisztratív feladatok egyeztetése.",
                     "A tartalékos állomány részvételével végrehajtott esemény.",
                 ]),
-                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
+                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]),
                 assigned=assigned,
             )
         )

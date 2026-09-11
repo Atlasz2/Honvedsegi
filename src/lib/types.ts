@@ -59,7 +59,7 @@ export interface Exercise {
   location: string;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
   qualificationId?: string;
   seriesId?: string;
   level?: string;
@@ -74,7 +74,7 @@ export interface Series {
 }
 
 export interface TrainingAssignment extends PersonAssignment {
-  attendance: 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
+  attendance: 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Visszamondta';
   qualificationApproved?: boolean;
 }
 
@@ -89,7 +89,7 @@ export interface Training {
   qualificationId: string;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
   seriesId?: string;
   level?: string;
   assigned: TrainingAssignment[];
@@ -276,7 +276,7 @@ export interface QualificationStat {
 // ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 export type ParticipantStatus =
-  | 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva';
+  | 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva' | 'Visszamondta';
 
 export interface Participant {
   id: string;

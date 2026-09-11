@@ -26,7 +26,7 @@ const TRAINING_TYPE_TO_QUAL: Record<string, string> = {
 export function getPersonQualifications(personId: string, trainings: Training[]): Set<string> {
   const earned = new Set<string>();
   for (const training of trainings) {
-    if (training.status !== 'Befejezett') continue;
+    if (training.status === 'Lemondva') continue;
     const qualId = TRAINING_TYPE_TO_QUAL[training.type];
     if (!qualId) continue;
     const assignment = training.assigned.find(a => a.personId === personId);

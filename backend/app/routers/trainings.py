@@ -39,10 +39,11 @@ router = APIRouter(prefix="/api/trainings", tags=["trainings"])
 
 def _auto_grant_qualifications(db: Session, item: TrainingModel) -> None:
     """
-    Ha egy kiképzés 'Befejezett' állapotba kerül és van qualificationId-ja,
-    automatikusan létrehozza a személyi képesítés-bejegyzéseket az igazolt résztvevőknek.
+    Ha a kiképzésnek van qualificationId-ja és nincs lemondva, a „Megjelent" +
+    jóváhagyott résztvevők automatikusan megkapják a képesítést (idempotens).
+    A dátum-állapot nem számít: a megjelenés rögzítése a teljesítés.
     """
-    if item.status != "Befejezett" or not item.qualification_id:
+    if item.status == "Lemondva" or not item.qualification_id:
         return
     qt = db.get(QualificationTypeModel, item.qualification_id)
     if not qt:
@@ -197,9 +198,9 @@ def update_participant(item_id: str, participant_id: str, body: ParticipantUpdat
     p.notes = body.notes
     db.commit()
     db.refresh(p)
-    # Ha a kiképzés befejezett és az ember megjelent + jóváhagyott, megpróbáljuk automatikusan megadni a képesítést
+    # Megjelent + jóváhagyott → képesítés (ha a kiképzés nincs lemondva)
     training = db.get(TrainingModel, item_id)
-    if training and training.status == "Befejezett":
+    if training:
         _auto_grant_qualifications(db, training)
         db.commit()
     return ParticipantRead(

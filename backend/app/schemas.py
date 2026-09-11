@@ -9,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Role = Literal["reader", "editor", "admin", "fejleszto"]
 PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
-ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Törölve"]
-TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett"]
-TrainingAttendance = Literal["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg"]
+# Az időbeli állapotot (Tervezett/Folyamatban/Befejezett) a dátumokból a rendszer
+# számolja; a felhasználó csak lemondani tud. (A régi "Törölve" → "Lemondva".)
+ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
+TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
+TrainingAttendance = Literal["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Visszamondta"]
 EquipmentCondition = Literal["Jó", "Javítandó", "Selejtezendő"]
 VehicleStatus = Literal["Elérhető", "Használatban", "Szervizben", "Meghibásodott", "Selejtezett"]
 DutyStatus = Literal["Tervezett", "Teljesített", "Lemondva"]
@@ -758,7 +760,7 @@ class PersonnelQualificationRead(ORMModel):
 # ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 ParticipantStatus = Literal[
-    "Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva"
+    "Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva", "Visszamondta"
 ]
 
 

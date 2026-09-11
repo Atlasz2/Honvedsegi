@@ -12,6 +12,27 @@ from ..models import EventModel, ExerciseModel, PersonModel, TrainingModel
 PLANNED = "Tervezett"
 ONGOING = "Folyamatban"
 DONE = "Befejezett"
+CANCELLED = "Lemondva"
+
+
+def derive_temporal_status(start_date: str, end_date: str, *, today: date | None = None) -> str:
+    """A művelet időbeli állapota a dátumaiból. A felhasználó ezt nem állítja —
+    csak lemondani tud (CANCELLED), azt ez a függvény nem írja felül."""
+    today = today or date.today()
+    start = parse_iso_date(start_date)
+    end = parse_iso_date(end_date)
+    if not start or not end:
+        return PLANNED
+    if end < today:
+        return DONE
+    if start <= today:
+        return ONGOING
+    return PLANNED
+
+
+def apply_status(item: Any, requested: str) -> None:
+    """Mentéskor: lemondás megmarad, minden más a dátumból számolódik."""
+    item.status = CANCELLED if requested == CANCELLED else derive_temporal_status(item.start_date, item.end_date)
 
 
 def _today_iso() -> date:

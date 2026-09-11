@@ -366,6 +366,19 @@ def _migrate_rank_names(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _migrate_cancelled_status(db: Session) -> None:
+    """A gyakorlat „Törölve" státusza „Lemondva" lett (a kiképzés is kapta)."""
+    key = "v3_cancelled_status_lemondva"
+    if _migration_done(db, key):
+        return
+    for table in ("exercises", "trainings"):
+        result = db.execute(text(f"UPDATE {table} SET status = 'Lemondva' WHERE status = 'Törölve'"))
+        if result.rowcount:
+            log.info("%s: %d Törölve → Lemondva", table, result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
 def run_all(db: Session) -> None:
@@ -375,3 +388,4 @@ def run_all(db: Session) -> None:
     _migrate_qualifications(db)
     _migrate_qualifications_from_trainings(db)
     _migrate_rank_names(db)
+    _migrate_cancelled_status(db)

@@ -54,7 +54,7 @@ def check_conflicts(
             if exclude_type == event_type and exclude_id == item.id:
                 continue
             status = getattr(item, "status", "")
-            if status in ("Törölve", "Befejezett"):
+            if status in ("Törölve", "Lemondva", "Befejezett"):
                 continue
             name = getattr(item, "name", None) or f"{item.type} - {getattr(item, 'person_name', item.id)}"
             conflicts.append({

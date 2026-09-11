@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .services.lifecycle import apply_status
 from .models import (
     DutyModel, EquipmentModel, EventModel, EventPrerequisiteModel, ExerciseModel,
     ParticipantModel, PersonModel, PersonnelQualificationModel, QualificationTypeModel,
@@ -41,7 +42,7 @@ def apply_exercise(target: ExerciseModel, payload: ExerciseCreate | ExerciseUpda
     target.location = payload.location
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
-    target.status = payload.status
+    apply_status(target, payload.status)
     target.qualification_id = payload.qualificationId
     target.series_id = payload.seriesId
     target.level = payload.level
@@ -130,7 +131,7 @@ def apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpda
     target.qualification_id = payload.qualificationId
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
-    target.status = payload.status
+    apply_status(target, payload.status)
     target.series_id = payload.seriesId
     target.level = payload.level
     # assigned is managed via participants table; caller must call sync_participants
