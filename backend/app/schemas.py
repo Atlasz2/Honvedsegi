@@ -11,7 +11,7 @@ Role = Literal["reader", "editor", "admin", "fejleszto"]
 PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
 ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Törölve"]
 TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett"]
-TrainingAttendance = Literal["Tervezett", "Megjelent", "Hiányzott", "Beteg"]
+TrainingAttendance = Literal["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg"]
 EquipmentCondition = Literal["Jó", "Javítandó", "Selejtezendő"]
 VehicleStatus = Literal["Elérhető", "Használatban", "Szervizben", "Meghibásodott", "Selejtezett"]
 DutyStatus = Literal["Tervezett", "Teljesített", "Lemondva"]
@@ -129,6 +129,57 @@ class EligibilityPerson(BaseModel):
     unit: str
     eligible: bool
     missing: list[str]
+
+
+# ── Kampányterv (jelentkezők → jogosultság → behívandók) ───────────────────
+
+class ApplicantPasteRequest(BaseModel):
+    """Beillesztett jelentkező-lista: soronként SZTSZ vagy név (vagy „név; SZTSZ")."""
+    text: str
+
+
+class ApplicantMatch(BaseModel):
+    line: str
+    personnelId: str
+    name: str
+    sztsz: str
+
+
+class ApplicantAmbiguous(BaseModel):
+    line: str
+    candidates: list[ApplicantMatch]
+
+
+class ApplicantPasteResult(BaseModel):
+    added: list[ApplicantMatch] = []
+    alreadyPresent: list[ApplicantMatch] = []
+    unmatched: list[str] = []
+    ambiguous: list[ApplicantAmbiguous] = []
+
+
+class CampaignRow(BaseModel):
+    participantId: str
+    personnelId: str
+    name: str
+    rank: str
+    unit: str
+    sztsz: str
+    personStatus: str
+    status: str
+    role: str
+    eligible: bool
+    missing: list[str]
+
+
+class CampaignPlan(BaseModel):
+    eventType: str
+    eventId: str
+    eventName: str
+    startDate: str
+    endDate: str
+    location: str
+    requirements: list[str]
+    rows: list[CampaignRow]
 
 
 # ── Személyi okmányok / alkalmasság ─────────────────────────────────────────
@@ -707,7 +758,7 @@ class PersonnelQualificationRead(ORMModel):
 # ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 ParticipantStatus = Literal[
-    "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva"
+    "Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva"
 ]
 
 

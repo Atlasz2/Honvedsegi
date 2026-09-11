@@ -84,18 +84,20 @@ def set_prerequisites(event_type: str, event_id: str, payload: PrerequisiteSet, 
     return serialize_prereq(db, event_type, event_id)
 
 
-@router.get("/{event_type}/{event_id}/eligibility", response_model=list[EligibilityPerson])
-def eligibility(event_type: str, event_id: str, db: DB, _: Reader, unit: str = "", include_reserve: bool = False):
-    """Ki jogosult az eseményre (megvan minden, nem lejárt követelménye), és
-    kinek mi hiányzik. N+1 nélkül: a követelmény-képesítéseket egyben töltjük."""
-    _check_event_type(event_type)
-    prereq_ids = _prereq_ids(db, event_type, event_id)
-    name_by_id: dict[str, str] = {}
-    held_by_person: dict[str, set[str]] = {}
-    if prereq_ids:
-        name_by_id = {
+class RequirementCheck:
+    """Egy esemény követelményei és az, ki tartja őket (érvényesen).
+
+    Egyszer tölt (N+1 nélkül), utána bármely személyre olcsó a `missing`."""
+
+    def __init__(self, db: Session, event_type: str, event_id: str) -> None:
+        self.prereq_ids = _prereq_ids(db, event_type, event_id)
+        self.name_by_id: dict[str, str] = {}
+        self._held: dict[str, set[str]] = {}
+        if not self.prereq_ids:
+            return
+        self.name_by_id = {
             t.id: t.name
-            for t in db.scalars(select(QualificationTypeModel).where(QualificationTypeModel.id.in_(prereq_ids))).all()
+            for t in db.scalars(select(QualificationTypeModel).where(QualificationTypeModel.id.in_(self.prereq_ids))).all()
         }
         today = date_cls.today().isoformat()
         rows = db.execute(
@@ -103,12 +105,28 @@ def eligibility(event_type: str, event_id: str, db: DB, _: Reader, unit: str = "
                 PersonnelQualificationModel.personnel_id,
                 PersonnelQualificationModel.qual_type_id,
                 PersonnelQualificationModel.expiry_date,
-            ).where(PersonnelQualificationModel.qual_type_id.in_(prereq_ids))
+            ).where(PersonnelQualificationModel.qual_type_id.in_(self.prereq_ids))
         ).all()
         for personnel_id, qual_type_id, expiry in rows:
             if expiry and expiry[:10] < today:
                 continue  # lejárt képesítés nem számít
-            held_by_person.setdefault(personnel_id, set()).add(qual_type_id)
+            self._held.setdefault(personnel_id, set()).add(qual_type_id)
+
+    @property
+    def requirement_names(self) -> list[str]:
+        return [self.name_by_id.get(qid, qid) for qid in self.prereq_ids]
+
+    def missing(self, personnel_id: str) -> list[str]:
+        have = self._held.get(personnel_id, set())
+        return [self.name_by_id.get(qid, qid) for qid in self.prereq_ids if qid not in have]
+
+
+@router.get("/{event_type}/{event_id}/eligibility", response_model=list[EligibilityPerson])
+def eligibility(event_type: str, event_id: str, db: DB, _: Reader, unit: str = "", include_reserve: bool = False):
+    """Ki jogosult az eseményre (megvan minden, nem lejárt követelménye), és
+    kinek mi hiányzik."""
+    _check_event_type(event_type)
+    check = RequirementCheck(db, event_type, event_id)
 
     person_query = select(PersonModel).where(PersonModel.status != _DISCHARGED_STATUS)
     if not include_reserve:
@@ -119,8 +137,7 @@ def eligibility(event_type: str, event_id: str, db: DB, _: Reader, unit: str = "
 
     result: list[EligibilityPerson] = []
     for person in sorted(persons, key=lambda p: (p.name or "")):
-        have = held_by_person.get(person.id, set())
-        missing = [name_by_id.get(qid, qid) for qid in prereq_ids if qid not in have]
+        missing = check.missing(person.id)
         result.append(EligibilityPerson(
             personnelId=person.id, name=person.name, rank=person.rank,
             unit=person.unit, eligible=not missing, missing=missing,

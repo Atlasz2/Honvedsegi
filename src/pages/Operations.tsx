@@ -9,6 +9,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import DatePickerInput from "@/components/DatePickerInput";
 import DateTimePickerInput from "@/components/DateTimePickerInput";
 import OperationDetailTabs from "@/components/operations/OperationDetailTabs";
+import CampaignPanel from "@/components/operations/CampaignPanel";
 import { shortRank, rankWeight } from "@/lib/rank";
 import { toast } from "sonner";
 
@@ -70,7 +71,7 @@ type EditForm = {
 
 const STATUSES: OperationStatus[] = ["Tervezett", "Folyamatban", "Befejezett", "Törölve"];
 const TRAINING_STATUSES: Array<Exclude<OperationStatus, "Törölve">> = ["Tervezett", "Folyamatban", "Befejezett"];
-const ATTENDANCE = ["Tervezett", "Megjelent", "Hiányzott", "Beteg"] as const;
+const ATTENDANCE = ["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg"] as const;
 
 const emptyCreateForm: CreateForm = {
   source: "exercise",
@@ -410,7 +411,7 @@ export default function Operations() {
 
   const updateAttendance = async (personId: string, att: string) => {
     if (!detail) return;
-    const attendanceVal = att as "Tervezett" | "Megjelent" | "Hiányzott" | "Beteg";
+    const attendanceVal = att as "Jelentkezett" | "Tervezett" | "Megjelent" | "Hiányzott" | "Beteg";
     try {
       if (detail.source === "exercise") {
         const raw = rawExercises.find((e) => e.id === detail.id);
@@ -1077,6 +1078,8 @@ export default function Operations() {
               <div className="h-px flex-1 bg-primary/30" />
             </div>
 
+            <CampaignPanel source={detail.source} eventId={detail.id} eventName={detail.name} canEdit={canEdit} onChanged={refresh} />
+
             <table className="w-full mil-table">
               <thead>
                 <tr>
@@ -1098,9 +1101,17 @@ export default function Operations() {
                   const att = String(a.attendance ?? "Tervezett");
                   // Szerep csak a gyakorlat-beosztáson van; a fordító itt szűkít.
                   const role = "role" in a ? a.role : "-";
+                  const elig = eligibilityMap[personId];
                   return (
                     <tr key={`${personId}-${idx}`}>
-                      <td>{name}</td>
+                      <td>
+                        {name}
+                        {elig && !elig.eligible && (
+                          <span className="ml-2 text-warning text-xs font-mono" title={`Hiányzik: ${elig.missing.join(", ")}`}>
+                            ⚠ {elig.missing.join(", ")}
+                          </span>
+                        )}
+                      </td>
                       <td className="font-mono text-xs text-primary">{rankLabel} / {sztszLabel}</td>
                       <td>
                         {canEdit ? (

@@ -74,7 +74,7 @@ export interface Series {
 }
 
 export interface TrainingAssignment extends PersonAssignment {
-  attendance: 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
+  attendance: 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
   qualificationApproved?: boolean;
 }
 
@@ -276,7 +276,7 @@ export interface QualificationStat {
 // ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 export type ParticipantStatus =
-  | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva';
+  | 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva';
 
 export interface Participant {
   id: string;

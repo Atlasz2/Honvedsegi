@@ -369,6 +369,34 @@ export const alerts = {
   basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
 };
 
+export type ApplicantMatch = { line: string; personnelId: string; name: string; sztsz: string };
+export type ApplicantPasteResult = {
+  added: ApplicantMatch[];
+  alreadyPresent: ApplicantMatch[];
+  unmatched: string[];
+  ambiguous: { line: string; candidates: ApplicantMatch[] }[];
+};
+export type CampaignRow = {
+  participantId: string; personnelId: string; name: string; rank: string; unit: string; sztsz: string;
+  personStatus: string; status: string; role: string; eligible: boolean; missing: string[];
+};
+export type CampaignPlan = {
+  eventType: string; eventId: string; eventName: string; startDate: string; endDate: string; location: string;
+  requirements: string[]; rows: CampaignRow[];
+};
+
+type CampaignSource = 'exercise' | 'training';
+
+export const campaign = {
+  pasteApplicants: (source: CampaignSource, eventId: string, text: string) =>
+    request<ApplicantPasteResult>(`/campaign/${source}/${eventId}/applicants`, { method: 'POST', body: JSON.stringify({ text }) }),
+  plan: (source: CampaignSource, eventId: string) => request<CampaignPlan>(`/campaign/${source}/${eventId}/plan`),
+  exportXlsx: (source: CampaignSource, eventId: string) =>
+    downloadBlob(`/campaign/${source}/${eventId}/plan/export.xlsx`, 'kampanyterv.xlsx'),
+  exportPdf: (source: CampaignSource, eventId: string) =>
+    downloadBlob(`/campaign/${source}/${eventId}/plan/export.pdf`, 'kampanyterv.pdf'),
+};
+
 export type PersonDocument = {
   id: string;
   personnelId: string;
