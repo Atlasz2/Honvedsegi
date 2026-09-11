@@ -339,6 +339,19 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                     <p className="mt-1 text-muted-foreground">{person.notes}</p>
                   </div>
                 )}
+                {person.extra && Object.keys(person.extra).length > 0 && (
+                  <div className="border-t border-border pt-3">
+                    <span className="text-muted-foreground text-xs uppercase tracking-military">Importált adatok (KGIR-export)</span>
+                    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                      {Object.entries(person.extra).map(([key, value]) => (
+                        <div key={key} className="contents">
+                          <dt className="text-muted-foreground">{key}</dt>
+                          <dd className="font-mono">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
               </div>
             )}
 

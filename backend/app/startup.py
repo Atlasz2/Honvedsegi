@@ -82,6 +82,8 @@ def _ensure_extended_schema(db: Session) -> None:
         db.execute(text("ALTER TABLE personnel ADD COLUMN qualifications JSON"))
     if "beosztas" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN beosztas TEXT"))
+    if "extra" not in personnel_cols:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN extra JSON"))
 
     trainings_cols = {row[1] for row in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
     if "qualification_id" not in trainings_cols:

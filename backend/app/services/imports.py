@@ -202,7 +202,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                         created += 1
                     else:
                         updated += 1
-                    operations.append({"entity": entity, "action": action, "payload": payload.model_dump()})
+                    operations.append({"entity": entity, "action": action, "payload": payload.model_dump(), "extra": prev_unk})
                 except Exception as exc:
                     item_issues.extend(_extract_messages(exc))
 
@@ -233,7 +233,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
     if unknown_columns:
         issues.append({
             "line": 0,
-            "message": "Nem felismert oszlop(ok), az adatuk kimarad: " + ", ".join(unknown_columns),
+            "message": "Nem felismert oszlop(ok) — a személy „Importált adatok” részébe kerülnek: " + ", ".join(unknown_columns),
         })
 
     missing_count, missing = (0, [])
@@ -348,11 +348,12 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session, current_user: 
             dto = PersonCreate(**p)
             dto.sztsz = normalize_sztsz(dto.sztsz)
             existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == dto.sztsz))
-            if existing:
-                apply_person(existing, dto)
-            else:
-                item = PersonModel()
-                apply_person(item, dto)
+            item = existing or PersonModel()
+            apply_person(item, dto)
+            # A nem modellezett oszlopok (pl. anyja neve) is átjönnek — kulcsonként frissítve.
+            if op.get("extra"):
+                item.extra = {**(item.extra or {}), **op["extra"]}
+            if not existing:
                 db.add(item)
         else:
             dto = ExerciseCreate(**p)

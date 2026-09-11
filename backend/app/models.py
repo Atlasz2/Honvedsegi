@@ -70,6 +70,9 @@ class PersonModel(Base):
     join_date: Mapped[str] = mapped_column(String, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     qualifications: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # A KGIR-export olyan oszlopai, amiknek nincs saját mezőjük (pl. anyja neve).
+    # Csak az import írja; a felületen olvasható. Döntés (2026-09-11): mindent átemelünk.
+    extra: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
 
 
 class AttendanceModel(Base):

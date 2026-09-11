@@ -31,6 +31,8 @@ export interface Person {
   joinDate: string;
   notes: string;
   qualifications: string[];
+  /** Importból átemelt, nem modellezett oszlopok (KGIR-export). */
+  extra?: Record<string, string>;
 }
 
 /**

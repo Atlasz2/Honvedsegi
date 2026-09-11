@@ -32,6 +32,7 @@ def serialize_person(item: PersonModel) -> PersonRead:
         joinDate=item.join_date,
         notes=item.notes,
         qualifications=item.qualifications or [],
+        extra=item.extra or {},
     )
 
 
@@ -55,6 +56,7 @@ def serialize_person_with_quals(item: PersonModel, qualification_ids: list[str])
         joinDate=item.join_date,
         notes=item.notes,
         qualifications=qualification_ids,
+        extra=item.extra or {},
     )
 
 

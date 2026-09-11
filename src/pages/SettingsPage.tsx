@@ -505,9 +505,9 @@ export default function SettingsPage() {
 
             {importPreview.unknownColumns.length > 0 && (
               <div className="border border-warning/40 bg-warning/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
-                <p className="font-mono uppercase tracking-military text-warning">Nem felismert oszlopok — az adatuk kimarad</p>
+                <p className="font-mono uppercase tracking-military text-warning">Nem felismert oszlopok — a személy „Importált adatok" részébe kerülnek</p>
                 <p className="mt-1 text-muted-foreground">
-                  {importPreview.unknownColumns.join(', ')}. Ha ezek kellenek, szólj a fejlesztőnek, hogy vegye fel a mezőt.
+                  {importPreview.unknownColumns.join(', ')}. Ezekre nem lehet szűrni; ha saját mező kell belőlük, szólj a fejlesztőnek.
                 </p>
               </div>
             )}

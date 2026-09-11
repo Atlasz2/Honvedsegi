@@ -283,6 +283,8 @@ class PersonUpdate(PersonBase):
 
 class PersonRead(PersonBase):
     id: str
+    # Importból átemelt, nem modellezett oszlopok (KGIR-export); csak olvasható.
+    extra: dict[str, str] = Field(default_factory=dict)
 
 
 class ExerciseAssignment(BaseModel):
@@ -851,7 +853,7 @@ class ImportPreviewResult(BaseModel):
     skipped: int
     issues: list[ImportIssue] = []
     items: list[ImportPreviewItem] = []
-    # Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — az adatuk kimarad.
+    # Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — a személy `extra` mezőjébe kerülnek.
     unknownColumns: list[str] = []
     # Csak személyzetnél: akik a nyilvántartásban vannak, de a fájlban nem
     # (napi KGIR-exportnál ez a leszereltek / hibás export jelzője).

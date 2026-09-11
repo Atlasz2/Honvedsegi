@@ -87,7 +87,7 @@ export type ImportPreviewResult = {
   skipped: number;
   issues: ImportIssue[];
   items: ImportPreviewItem[];
-  /** Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — az adatuk kimarad. */
+  /** Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — a személy „Importált adatok" részébe kerülnek. */
   unknownColumns: string[];
   /** Csak személyzetnél: a nyilvántartásban vannak, de a fájlból hiányoznak. */
   missingCount: number;

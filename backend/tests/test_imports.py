@@ -183,3 +183,35 @@ def test_preview_reports_unrecognised_columns(client, admin_headers):
     assert body["created"] == 1, "az ismeretlen oszlop nem akadályozza a sort"
     assert body["unknownColumns"] == ["anyja neve"]
     assert any("anyja neve" in issue["message"] for issue in body["issues"] if issue["line"] == 0)
+
+
+def test_confirm_stores_unrecognised_columns_on_the_person(client, admin_headers):
+    """Döntés: a KGIR-exportból mindent átemelünk — a nem modellezett oszlop is."""
+    sztsz = _sztsz()
+    csv = (
+        "nev;sztsz;rendfokozat;szervezet;statusz;anyja neve;születési hely\n"
+        f"Extra Elek;{sztsz};Őrmester;31 TVZ;Aktív;Kiss Mária;Pápa\n"
+    ).encode("utf-8")
+    preview = _upload(client, admin_headers, "personnel", csv).json()
+    assert client.post(f"/api/import/personnel/confirm/{preview['draftId']}", headers=admin_headers).status_code == 200
+
+    person = next(p for p in client.get(f"/api/personnel/paged?q={sztsz}", headers=admin_headers).json()["items"] if p["sztsz"] == sztsz)
+    assert person["extra"] == {"anyja neve": "Kiss Mária", "születési hely": "Pápa"}
+
+    # Második import: új kulcs jön, a régi marad.
+    csv2 = ("nev;sztsz;rendfokozat;szervezet;statusz;TAJ\n" f"Extra Elek;{sztsz};Őrmester;31 TVZ;Aktív;123 456 789\n").encode("utf-8")
+    preview2 = _upload(client, admin_headers, "personnel", csv2).json()
+    client.post(f"/api/import/personnel/confirm/{preview2['draftId']}", headers=admin_headers)
+    person = next(p for p in client.get(f"/api/personnel/paged?q={sztsz}", headers=admin_headers).json()["items"] if p["sztsz"] == sztsz)
+    assert person["extra"]["anyja neve"] == "Kiss Mária" and person["extra"]["TAJ"] == "123 456 789"
+
+
+def test_kgir_style_headers_are_recognised(client, admin_headers):
+    csv = (
+        "Név;SZTSZ;Rendfokozata;Szervezeti egység;Státusz;Jogviszony kezdete;Születési idő;Lakcím;Telefonszám\n"
+        f"Fejléc Ferenc;{_sztsz()};Tizedes;83 TVZ;Tartalékos;2025-02-01;1990-05-05;Pápa, Fő u. 1.;+36 30 111 2222\n"
+    ).encode("utf-8")
+    body = _upload(client, admin_headers, "personnel", csv).json()
+    assert body["created"] == 1 and body["unknownColumns"] == []
+    data = body["items"][0]["data"]
+    assert data["joinDate"] == "2025-02-01" and data["birthDate"] == "1990-05-05" and data["phone"] == "+36 30 111 2222"
