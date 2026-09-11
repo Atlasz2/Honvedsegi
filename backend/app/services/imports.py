@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..constants import IMPORT_DRAFT_TTL_MINUTES
+from ..constants import IMPORT_DRAFT_TTL_MINUTES, IMPORT_MISSING_LIST_LIMIT
 from ..appliers import apply_exercise, apply_person
 from ..audit import record_activity
 from ..core.time import utc_now
@@ -124,6 +124,33 @@ def _fallback_identity(entity: str, line: int, data: dict, raw: dict) -> tuple[s
     return key, key
 
 
+def _collect_unknown_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """A fel nem ismert fejlécek, első előfordulás sorrendjében."""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for header in row["unknownData"]:
+            seen.setdefault(header, None)
+    return list(seen)
+
+
+def _find_missing_personnel(db: Session, operations: list[dict[str, Any]]) -> tuple[int, list[dict[str, str]]]:
+    """Akik a nyilvántartásban vannak, de az érvényes sorok között nem szerepelnek.
+
+    A leszerelteket nem számoljuk: ők jogosan hiányoznak egy aktuális exportból."""
+    present = {op["payload"]["sztsz"] for op in operations if op["entity"] == "personnel"}
+    stmt = (
+        select(PersonModel.id, PersonModel.name, PersonModel.sztsz, PersonModel.unit, PersonModel.status)
+        .where(PersonModel.status != "Leszerelt")
+        .order_by(PersonModel.name)
+    )
+    missing = [
+        {"id": pid, "name": name, "sztsz": sztsz, "unit": unit, "status": status}
+        for pid, name, sztsz, unit, status in db.execute(stmt)
+        if sztsz not in present
+    ]
+    return len(missing), missing[:IMPORT_MISSING_LIST_LIMIT]
+
+
 def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any]:
     created = updated = skipped = 0
     issues: list[dict[str, Any]] = []
@@ -202,6 +229,17 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
     if not rows:
         issues.append({"line": 0, "message": "Nem sikerült értelmezhető sort kiolvasni a fájlból."})
 
+    unknown_columns = _collect_unknown_columns(rows)
+    if unknown_columns:
+        issues.append({
+            "line": 0,
+            "message": "Nem felismert oszlop(ok), az adatuk kimarad: " + ", ".join(unknown_columns),
+        })
+
+    missing_count, missing = (0, [])
+    if entity == "personnel" and operations:
+        missing_count, missing = _find_missing_personnel(db, operations)
+
     return {
         "entity": entity,
         "totalRows": len(rows),
@@ -212,6 +250,9 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         "items": items,
         "operations": operations,
         "rows": rows,
+        "unknownColumns": unknown_columns,
+        "missingCount": missing_count,
+        "missing": missing,
     }
 
 
@@ -225,6 +266,9 @@ def _preview_response(payload: dict[str, Any], draft_id: str) -> ImportPreviewRe
         skipped=payload["skipped"],
         issues=payload["issues"],
         items=payload["items"],
+        unknownColumns=payload["unknownColumns"],
+        missingCount=payload["missingCount"],
+        missing=payload["missing"],
     )
 
 

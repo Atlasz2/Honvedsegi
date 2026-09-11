@@ -780,6 +780,15 @@ class ImportPreviewItem(BaseModel):
     issues: list[str] = []
 
 
+class ImportMissingPerson(BaseModel):
+    """A nyilvántartásban szereplő, de a feltöltött fájlból hiányzó személy."""
+    id: str
+    name: str
+    sztsz: str
+    unit: str
+    status: str
+
+
 class ImportPreviewResult(BaseModel):
     draftId: str
     entity: Literal["personnel", "exercises"]
@@ -789,6 +798,12 @@ class ImportPreviewResult(BaseModel):
     skipped: int
     issues: list[ImportIssue] = []
     items: list[ImportPreviewItem] = []
+    # Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — az adatuk kimarad.
+    unknownColumns: list[str] = []
+    # Csak személyzetnél: akik a nyilvántartásban vannak, de a fájlban nem
+    # (napi KGIR-exportnál ez a leszereltek / hibás export jelzője).
+    missingCount: int = 0
+    missing: list[ImportMissingPerson] = []
 
 
 class ImportDraftItemUpdate(BaseModel):

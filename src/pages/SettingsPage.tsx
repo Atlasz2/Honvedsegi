@@ -503,6 +503,43 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {importPreview.unknownColumns.length > 0 && (
+              <div className="border border-warning/40 bg-warning/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-warning">Nem felismert oszlopok — az adatuk kimarad</p>
+                <p className="mt-1 text-muted-foreground">
+                  {importPreview.unknownColumns.join(', ')}. Ha ezek kellenek, szólj a fejlesztőnek, hogy vegye fel a mezőt.
+                </p>
+              </div>
+            )}
+
+            {importPreview.entity === 'personnel' && importPreview.missingCount > 0 && (
+              <div className="border border-brass/40 bg-brass/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-brass">
+                  A nyilvántartásban van, de a fájlban nincs: {importPreview.missingCount} fő
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Napi teljes exportnál ez a leszereltek vagy a hibás export jele. Az import nem törli és nem módosítja őket.
+                </p>
+                <div className="mt-2 max-h-48 overflow-y-auto">
+                  <table className="w-full font-mono">
+                    <tbody>
+                      {importPreview.missing.map(person => (
+                        <tr key={person.id} className="border-t border-border/50">
+                          <td className="py-1 pr-3 text-foreground">{person.name}</td>
+                          <td className="py-1 pr-3 text-muted-foreground">{person.sztsz}</td>
+                          <td className="py-1 pr-3 text-muted-foreground">{person.unit}</td>
+                          <td className="py-1 text-muted-foreground">{person.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {importPreview.missingCount > importPreview.missing.length && (
+                    <p className="mt-1 text-muted-foreground">… és még {importPreview.missingCount - importPreview.missing.length} fő.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="border border-border p-4" style={{ borderRadius: '2px' }}>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>

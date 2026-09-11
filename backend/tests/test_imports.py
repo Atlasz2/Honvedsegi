@@ -145,3 +145,41 @@ def test_confirm_consumes_the_draft(client, admin_headers):
 
     assert first.status_code == 200
     assert second.status_code == 404, "a felhasznált draft nem alkalmazható újra"
+
+
+# ── Napi KGIR-export: hiányzók és ismeretlen oszlopok ─────────────────────
+
+def test_preview_lists_registered_people_missing_from_the_file(client, admin_headers):
+    # Egy személy már a nyilvántartásban van; a következő fájlból hiányzik.
+    known = _sztsz()
+    first = _upload(client, admin_headers, "personnel", _personnel_csv(f"Maradó Elek;{known};Őrmester;31 TVZ;Aktív")).json()
+    assert client.post(f"/api/import/personnel/confirm/{first['draftId']}", headers=admin_headers).status_code == 200
+
+    second = _upload(client, admin_headers, "personnel", _personnel_csv(f"Új Béla;{_sztsz()};Tizedes;83 TVZ;Aktív")).json()
+
+    assert second["missingCount"] >= 1
+    assert any(person["sztsz"] == known for person in second["missing"])
+    assert all(person["status"] != "Leszerelt" for person in second["missing"])
+
+
+def test_preview_does_not_report_people_present_in_the_file(client, admin_headers):
+    known = _sztsz()
+    first = _upload(client, admin_headers, "personnel", _personnel_csv(f"Jelen Elek;{known};Őrmester;31 TVZ;Aktív")).json()
+    assert client.post(f"/api/import/personnel/confirm/{first['draftId']}", headers=admin_headers).status_code == 200
+
+    again = _upload(client, admin_headers, "personnel", _personnel_csv(f"Jelen Elek;{known};Őrmester;31 TVZ;Aktív")).json()
+
+    assert again["updated"] == 1
+    assert all(person["sztsz"] != known for person in again["missing"])
+
+
+def test_preview_reports_unrecognised_columns(client, admin_headers):
+    csv = (
+        "nev;sztsz;rendfokozat;szervezet;statusz;anyja neve\n"
+        f"Oszlop Elek;{_sztsz()};Őrmester;31 TVZ;Aktív;Kiss Mária\n"
+    ).encode("utf-8")
+    body = _upload(client, admin_headers, "personnel", csv).json()
+
+    assert body["created"] == 1, "az ismeretlen oszlop nem akadályozza a sort"
+    assert body["unknownColumns"] == ["anyja neve"]
+    assert any("anyja neve" in issue["message"] for issue in body["issues"] if issue["line"] == 0)

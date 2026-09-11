@@ -12,6 +12,8 @@ GOD_ROLE = "fejleszto"
 BACKEND_ENV = os.getenv("BACKEND_ENV", "development").strip().lower()
 IS_PRODUCTION = BACKEND_ENV == "production"
 IMPORT_DRAFT_TTL_MINUTES = 30
+# Ennyi hiányzó személyt sorolunk fel az import-előnézetben (a darabszám teljes).
+IMPORT_MISSING_LIST_LIMIT = 200
 
 # ── Törzsadatok ───────────────────────────────────────────────────────────
 # Egy igazságforrás. Korábban az egységlista a Personnel.tsx-ben és a seed.py-ban

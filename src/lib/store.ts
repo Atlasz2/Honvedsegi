@@ -70,6 +70,14 @@ export type ImportPreviewItem = {
   issues: string[];
 };
 
+export type ImportMissingPerson = {
+  id: string;
+  name: string;
+  sztsz: string;
+  unit: string;
+  status: string;
+};
+
 export type ImportPreviewResult = {
   draftId: string;
   entity: ImportEntity;
@@ -79,6 +87,11 @@ export type ImportPreviewResult = {
   skipped: number;
   issues: ImportIssue[];
   items: ImportPreviewItem[];
+  /** Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — az adatuk kimarad. */
+  unknownColumns: string[];
+  /** Csak személyzetnél: a nyilvántartásban vannak, de a fájlból hiányoznak. */
+  missingCount: number;
+  missing: ImportMissingPerson[];
 };
 
 export type ImportDraftUpdateItem = {
