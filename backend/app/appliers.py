@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .basic_training import grant_if_complete
 from .services.lifecycle import apply_status
 from .models import (
     DutyModel, EquipmentModel, EventModel, EventPrerequisiteModel, ExerciseModel,
@@ -85,6 +86,8 @@ def grant_event_qualifications(db: Session, event_type: str, event_id: str, qual
             notes="Automatikus jóváírás (teljesített képzés)",
         ))
         granted += 1
+    if granted:
+        grant_if_complete(db, [p.personnel_id for p in participants])
     return granted
 
 

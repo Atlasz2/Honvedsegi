@@ -65,8 +65,14 @@ LEAVE_TO_ATTENDANCE_STATUS = {
 BASIC_TRAINING_CATEGORY = "Alapkiképzés"
 # A szerződéskötéstől (join_date) ennyi napon belül kell az alapkiképzést elvégezni.
 BASIC_TRAINING_DEADLINE_DAYS = 365
+# Az összesítő képesítés neve, amit minden modul teljesítésekor automatikusan kap a személy.
+BASIC_TRAINING_QUALIFICATION = "Alapkiképzés"
 # Az aktív állománynak évente legalább ennyi munkanap szabadságot ki kell vennie.
 LEAVE_MINIMUM_DAYS = 10
+# Jogszabály: a tartalékosnak évente legalább ennyi napot szolgálnia kell.
+SERVICE_MINIMUM_DAYS = 7
+# Ennyi nappal a határidő előtt jelezzük előre a riasztásokat.
+ALERT_WARN_DAYS = 30
 
 # Parancs-műhely: a fejezetekért felelős szervezeti egységek (a felhasználó
 # által leírt sorrendben) és az állapotok.

@@ -136,3 +136,76 @@ def test_basic_training_deadline_flags_incomplete_reservists(client, admin_heade
     # Sorrend: lejárt elöl, dátum nélküli a végén.
     ids = [i["personnelId"] for i in body["items"]]
     assert ids.index(overdue) < ids.index(on_track) < ids.index(no_date)
+
+
+# ── Évi 7 nap szolgálat ──────────────────────────────────────────────────
+
+def _exercise_with(client, headers, name, start, end, participants, status="Tervezett"):
+    r = client.post("/api/exercises", json={
+        "name": name, "type": "Gyakorlat", "startDate": start, "endDate": end, "location": "Bázis",
+        "maxPersonnel": 50, "description": "", "status": status, "qualificationId": "",
+        "assigned": [{"personId": pid, "personName": n, "role": "résztvevő", "attendance": att} for pid, n, att in participants],
+    }, headers=headers)
+    assert r.status_code == 201, r.text
+
+
+def test_service_minimum_counts_present_days_of_non_cancelled_events(client, admin_headers):
+    year = date.today().year
+    served = _reservist(client, admin_headers, "Szolgált Szilárd", "14600030", f"{year}-01-10")
+    partial = _reservist(client, admin_headers, "Részben Rezső", "14600031", f"{year}-01-10")
+    absent = _reservist(client, admin_headers, "Hiányzó Hugó", "14600032", f"{year}-01-10")
+    cancelled_only = _reservist(client, admin_headers, "Lemondott Lóránt", "14600033", f"{year}-01-10")
+
+    # 7 nap → teljesíti; 3 nap → részleges; hiányzott → 0; lemondott esemény → 0
+    _exercise_with(client, admin_headers, "Hét napos", f"{year}-03-01", f"{year}-03-07",
+                   [(served, "Szolgált Szilárd", "Megjelent"), (absent, "Hiányzó Hugó", "Hiányzott")])
+    _exercise_with(client, admin_headers, "Három napos", f"{year}-04-01", f"{year}-04-03",
+                   [(partial, "Részben Rezső", "Megjelent")])
+    _exercise_with(client, admin_headers, "Lefújt", f"{year}-05-01", f"{year}-05-10",
+                   [(cancelled_only, "Lemondott Lóránt", "Megjelent")], status="Lemondva")
+
+    body = client.get(f"/api/alerts/service-minimum?year={year}", headers=admin_headers).json()
+    by_id = {i["personnelId"]: i for i in body["items"]}
+
+    assert body["minDays"] == 7 and body["deadline"] == f"{year}-12-31"
+    assert served not in by_id
+    assert by_id[partial]["servedDays"] == 3 and by_id[partial]["missingDays"] == 4
+    assert by_id[absent]["servedDays"] == 0
+    assert by_id[cancelled_only]["servedDays"] == 0
+
+
+def test_service_minimum_clips_events_to_the_year(client, admin_headers):
+    year = date.today().year
+    pid = _reservist(client, admin_headers, "Évátlógó Ervin", "14600034", f"{year - 1}-06-01")
+    _exercise_with(client, admin_headers, "Szilveszteri", f"{year - 1}-12-30", f"{year}-01-02",
+                   [(pid, "Évátlógó Ervin", "Megjelent")])
+    body = client.get(f"/api/alerts/service-minimum?year={year}", headers=admin_headers).json()
+    item = next(i for i in body["items"] if i["personnelId"] == pid)
+    assert item["servedDays"] == 2
+
+
+# ── 11/11 modul → összesítő „Alapkiképzés" ────────────────────────────────
+
+def test_all_modules_grant_the_summary_qualification(client, admin_headers):
+    """Az alapkiképzési modulok (kategória) mind megvannak → automatikusan jár az
+    összesítő „Alapkiképzés" képesítés, és az illető kikerül a határidő-riasztásból."""
+    types = client.get("/api/qualifications/types", headers=admin_headers).json()
+    module_ids = [t["id"] for t in types if t["category"] == "Alapkiképzés"]
+    assert module_ids, "a korábbi teszt már létrehozott modulokat"
+    pid = _reservist(client, admin_headers, "Teljes Tódor", "14600040", (date.today() - timedelta(days=10)).isoformat())
+
+    for qual_id in module_ids:
+        _grant(client, admin_headers, pid, qual_id)
+
+    quals = client.get(f"/api/qualifications/personnel/{pid}", headers=admin_headers).json()
+    assert any(q["qualTypeName"] == "Alapkiképzés" for q in quals)
+    alerts = client.get("/api/alerts/basic-training", headers=admin_headers).json()
+    assert pid not in {i["personnelId"] for i in alerts["items"]}
+
+
+def test_basic_training_alert_flags_due_soon(client, admin_headers):
+    soon = _reservist(client, admin_headers, "Sürgős Soma", "14600041", (date.today() - timedelta(days=350)).isoformat())
+    body = client.get("/api/alerts/basic-training", headers=admin_headers).json()
+    item = next(i for i in body["items"] if i["personnelId"] == soon)
+    assert item["isDueSoon"] is True and item["isOverdue"] is False
+    assert body["warnDays"] == 30

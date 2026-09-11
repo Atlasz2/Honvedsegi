@@ -14,14 +14,17 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
-from ..constants import BASIC_TRAINING_CATEGORY, BASIC_TRAINING_DEADLINE_DAYS, LEAVE_MINIMUM_DAYS
+from ..basic_training import completion_map
+from ..constants import ALERT_WARN_DAYS, BASIC_TRAINING_DEADLINE_DAYS, LEAVE_MINIMUM_DAYS, SERVICE_MINIMUM_DAYS
 from ..core.dependencies import DB, Reader
 from ..models import (
     AttendanceModel,
+    ExerciseModel,
     LeaveRequestModel,
+    ParticipantModel,
     PersonModel,
     PersonnelQualificationModel,
-    QualificationTypeModel,
+    TrainingModel,
 )
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -129,7 +132,73 @@ def leave_minimum(
         for p in persons if taken[p.id] < min_days
     ]
     result.sort(key=lambda x: (x["takenDays"], x["unit"], x["name"].lower()))
-    return {"year": year, "minDays": min_days, "items": result}
+    return {"year": year, "minDays": min_days, **_year_deadline(year), "items": result}
+
+
+def _year_deadline(year: int) -> dict:
+    """Az éves kötelezettségek határideje dec. 31.; előre jelzünk ALERT_WARN_DAYS nappal."""
+    days_left = (date(year, 12, 31) - date.today()).days
+    return {"deadline": date(year, 12, 31).isoformat(), "daysLeft": days_left,
+            "warnDays": ALERT_WARN_DAYS, "isOverdue": days_left < 0, "isDueSoon": 0 <= days_left <= ALERT_WARN_DAYS}
+
+
+def _overlap_days(start: str, end: str, year_start: date, year_end: date) -> int:
+    try:
+        s, e = date.fromisoformat(start[:10]), date.fromisoformat(end[:10])
+    except ValueError:
+        return 0
+    s, e = max(s, year_start), min(e, year_end)
+    return (e - s).days + 1 if e >= s else 0
+
+
+@router.get("/service-minimum")
+def service_minimum(
+    db: DB,
+    _: Reader,
+    year: int | None = Query(None, ge=2000, le=2100),
+    min_days: int = Query(SERVICE_MINIMUM_DAYS, ge=1, le=366),
+):
+    """Tartalékosok, akik az adott évben még nem szolgáltak `min_days` napot.
+    Szolgált nap = gyakorlat/kiképzés napjai, ahol a résztvevő „Megjelent" vagy
+    „Teljesített" és az esemény nincs lemondva; az évre vágva, naptári nap."""
+    year = year or date.today().year
+    year_start, year_end = date(year, 1, 1), date(year, 12, 31)
+
+    events: dict[tuple[str, str], tuple[str, str]] = {}
+    for event_type, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+        rows = db.execute(
+            select(model.id, model.start_date, model.end_date).where(
+                model.status != "Lemondva",
+                model.start_date <= year_end.isoformat(),
+                model.end_date >= year_start.isoformat(),
+            )
+        ).all()
+        for event_id, start, end in rows:
+            events[(event_type, event_id)] = (start, end)
+
+    served: dict[str, int] = defaultdict(int)
+    if events:
+        parts = db.execute(
+            select(ParticipantModel.personnel_id, ParticipantModel.event_type, ParticipantModel.event_id).where(
+                ParticipantModel.event_id.in_([eid for _, eid in events]),
+                ParticipantModel.status.in_(("Megjelent", "Teljesített")),
+            )
+        ).all()
+        for personnel_id, event_type, event_id in parts:
+            span = events.get((event_type, event_id))
+            if span:
+                served[personnel_id] += _overlap_days(span[0], span[1], year_start, year_end)
+
+    persons = db.scalars(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS)).all()
+    result = [
+        {
+            "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
+            "servedDays": served[p.id], "missingDays": min_days - served[p.id],
+        }
+        for p in persons if served[p.id] < min_days
+    ]
+    result.sort(key=lambda x: (x["servedDays"], x["unit"], x["name"].lower()))
+    return {"year": year, "minDays": min_days, **_year_deadline(year), "items": result}
 
 
 @router.get("/basic-training")
@@ -138,34 +207,23 @@ def basic_training_deadline(
     _: Reader,
     deadline_days: int = Query(BASIC_TRAINING_DEADLINE_DAYS, ge=1, le=3650),
 ):
-    """Tartalékosok, akiknek nincs meg minden alapkiképzési modul. A határidő a
-    jogviszony kezdete (join_date) + `deadline_days`; lejárt határidő = leszerelendő.
+    """Tartalékosok, akiknek nincs meg az alapkiképzése. A határidő a jogviszony
+    kezdete (join_date) + `deadline_days`; lejárt határidő = leszerelendő, a
+    határidő előtti ALERT_WARN_DAYS napban „hamarosan lejár".
 
-    Modul = a BASIC_TRAINING_CATEGORY kategóriájú képesítés-típus; a teljesítés a
-    személy megszerzett képesítése (lejárat nem számít, az alapkiképzés nem évül)."""
-    modules = db.scalars(
-        select(QualificationTypeModel)
-        .where(QualificationTypeModel.category == BASIC_TRAINING_CATEGORY)
-        .order_by(QualificationTypeModel.name)
-    ).all()
+    Kész = megvan az összesítő „Alapkiképzés" képesítés VAGY minden modul
+    (lejárat nem számít, az alapkiképzés nem évül)."""
+    modules, completed, has_summary = completion_map(db)
     module_ids = [m.id for m in modules]
     module_names = {m.id: m.name for m in modules}
     if not module_ids:
-        return {"modules": [], "deadlineDays": deadline_days, "items": []}
-
-    completed: dict[str, set[str]] = defaultdict(set)
-    rows = db.execute(
-        select(PersonnelQualificationModel.personnel_id, PersonnelQualificationModel.qual_type_id)
-        .where(PersonnelQualificationModel.qual_type_id.in_(module_ids))
-    ).all()
-    for personnel_id, qual_type_id in rows:
-        completed[personnel_id].add(qual_type_id)
+        return {"modules": [], "deadlineDays": deadline_days, "warnDays": ALERT_WARN_DAYS, "items": []}
 
     today = date.today()
     items = []
     for p in db.scalars(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS)).all():
-        done = completed[p.id]
-        if len(done) >= len(module_ids):
+        done = completed.get(p.id, set())
+        if p.id in has_summary or len(done) >= len(module_ids):
             continue
         deadline = days_left = None
         if p.join_date:
@@ -176,6 +234,8 @@ def basic_training_deadline(
             "joinDate": p.join_date,
             "deadline": deadline.isoformat() if deadline else None,
             "daysLeft": days_left,
+            "isOverdue": days_left is not None and days_left < 0,
+            "isDueSoon": days_left is not None and 0 <= days_left <= ALERT_WARN_DAYS,
             "completedModules": len(done),
             "totalModules": len(module_ids),
             "missingModules": [module_names[m] for m in module_ids if m not in done],
@@ -185,5 +245,6 @@ def basic_training_deadline(
     return {
         "modules": [{"id": m.id, "name": m.name} for m in modules],
         "deadlineDays": deadline_days,
+        "warnDays": ALERT_WARN_DAYS,
         "items": items,
     }

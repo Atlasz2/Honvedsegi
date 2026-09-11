@@ -350,15 +350,24 @@ export type LeaveMinimumItem = {
   personnelId: string; name: string; rank: string; unit: string;
   takenDays: number; missingDays: number;
 };
-export type LeaveMinimumResult = { year: number; minDays: number; items: LeaveMinimumItem[] };
+/** Éves kötelezettség határideje (dec. 31.) és az előrejelzés állapota. */
+export type YearDeadline = { deadline: string; daysLeft: number; warnDays: number; isOverdue: boolean; isDueSoon: boolean };
+export type LeaveMinimumResult = YearDeadline & { year: number; minDays: number; items: LeaveMinimumItem[] };
+export type ServiceMinimumItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  servedDays: number; missingDays: number;
+};
+export type ServiceMinimumResult = YearDeadline & { year: number; minDays: number; items: ServiceMinimumItem[] };
 export type BasicTrainingItem = {
   personnelId: string; name: string; rank: string; unit: string;
   joinDate: string; deadline: string | null; daysLeft: number | null;
+  isOverdue: boolean; isDueSoon: boolean;
   completedModules: number; totalModules: number; missingModules: string[];
 };
 export type BasicTrainingResult = {
   modules: { id: string; name: string }[];
   deadlineDays: number;
+  warnDays: number;
   items: BasicTrainingItem[];
 };
 
@@ -367,6 +376,7 @@ export const alerts = {
   readinessGaps: () => request<ReadinessGap[]>('/alerts/readiness-gaps'),
   leaveMinimum: (year?: number) => request<LeaveMinimumResult>(`/alerts/leave-minimum${year ? `?year=${year}` : ''}`),
   basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
+  serviceMinimum: (year?: number) => request<ServiceMinimumResult>(`/alerts/service-minimum${year ? `?year=${year}` : ''}`),
 };
 
 export type ApplicantMatch = { line: string; personnelId: string; name: string; sztsz: string };

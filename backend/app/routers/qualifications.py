@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from ..basic_training import grant_if_complete
 from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..models import (
@@ -171,6 +172,7 @@ def add_qualification(person_id: str, body: PersonnelQualificationCreate, db: DB
     )
     db.add(pq)
     db.flush()
+    grant_if_complete(db, [person_id])  # 11/11 alapkiképzési modul → összesítő „Alapkiképzés"
     record_activity(db, user, mode="create", module=MODULE, record_name=person.name,
                     entity="personnel_qualification", after=_qual_snapshot(pq, qt.name))
     db.commit()

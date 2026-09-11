@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..basic_training import grant_if_complete
 from ..appliers import apply_training, auto_chain_prerequisites
 from ..core.dependencies import DB, Reader, Editor
 from ..participants import load_participants_by_event, sync_participants
@@ -83,6 +84,7 @@ def _auto_grant_qualifications(db: Session, item: TrainingModel) -> None:
             source_event_type="training",
             notes="",
         ))
+    grant_if_complete(db, [p.personnel_id for p in participants])
 
 
 @router.get("", response_model=list[TrainingRead])

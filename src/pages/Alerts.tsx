@@ -4,7 +4,7 @@ import { AlertTriangle, Clock, CheckCircle2, RefreshCw } from "lucide-react";
 import {
   qualificationAlerts, alerts as alertsStore, documents as docStore,
   type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
-  type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem,
+  type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem, type ServiceMinimumResult, type YearDeadline,
 } from "@/lib/store";
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
@@ -25,10 +25,20 @@ function urgencyLabel(a: QualificationAlert): string {
 }
 
 function deadlineClass(item: BasicTrainingItem): string {
-  if (item.daysLeft === null) return "badge-planned";
-  if (item.daysLeft < 0) return "badge-cancelled";
-  if (item.daysLeft <= 60) return "badge-ongoing";
+  if (item.isOverdue) return "badge-cancelled";
+  if (item.isDueSoon) return "badge-ongoing";
   return "badge-planned";
+}
+
+/** Az éves kötelezettség határidő-sora: dec. 31., és egy hónappal előtte figyelmeztet. */
+function YearDeadlineLine({ d }: { d: YearDeadline }) {
+  const cls = d.isOverdue ? "text-destructive" : d.isDueSoon ? "text-amber-400" : "text-muted-foreground";
+  const text = d.isOverdue
+    ? `Határidő lejárt: ${d.deadline} (${Math.abs(d.daysLeft)} napja)`
+    : d.isDueSoon
+      ? `Határidő ${d.deadline} — ${d.daysLeft} nap van hátra!`
+      : `Határidő ${d.deadline} — ${d.daysLeft} nap van hátra`;
+  return <p className={`text-xs font-mono mb-3 ${cls}`}>{text}</p>;
 }
 
 function deadlineLabel(item: BasicTrainingItem): string {
@@ -46,13 +56,14 @@ export default function Alerts() {
   const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
   const [leaveMinimum, setLeaveMinimum] = useState<LeaveMinimumResult | null>(null);
   const [basicTraining, setBasicTraining] = useState<BasicTrainingResult | null>(null);
+  const [serviceMinimum, setServiceMinimum] = useState<ServiceMinimumResult | null>(null);
   const [daysAhead, setDaysAhead] = useState<DaysAhead>(60);
   const [showExpired, setShowExpired] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
         alertsStore.unexcused(30),
@@ -60,7 +71,9 @@ export default function Alerts() {
         docStore.expiring(daysAhead),
         alertsStore.leaveMinimum(),
         alertsStore.basicTraining(),
+        alertsStore.serviceMinimum(),
       ]);
+      setServiceMinimum(serviceData);
       setAlerts(alertData);
       setStats(statData);
       setUnexcused(unexcusedData);
@@ -296,27 +309,72 @@ export default function Alerts() {
           </h2>
         </div>
         <p className="text-xs text-muted-foreground font-mono mb-3">
-          Modul = „Alapkiképzés" kategóriájú képesítés-típus ({basicTraining?.modules.length ?? 0} db). Határidő: jogviszony kezdete + {basicTraining?.deadlineDays ?? 365} nap. Lejárt határidő = leszerelendő.
+          Modul = „Alapkiképzés" kategóriájú képesítés-típus ({basicTraining?.modules.length ?? 0} db); mind megvan → automatikusan jár az „Alapkiképzés" képesítés. Határidő: jogviszony kezdete + {basicTraining?.deadlineDays ?? 365} nap; {basicTraining?.warnDays ?? 30} nappal előtte jelezzük. Lejárt határidő = leszerelendő.
         </p>
         {!basicTraining || basicTraining.modules.length === 0 ? (
           <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><AlertTriangle className="w-4 h-4 text-orange-500" /><span className="text-sm">Nincs „Alapkiképzés" kategóriájú képesítés-típus — a Műveletek → Képzettségek alatt hozd létre a modulokat.</span></div>
         ) : basicTraining.items.length === 0 ? (
           <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden tartalékosnak megvan az alapkiképzése</span></div>
         ) : (
+          <div className="space-y-4">
+            {([
+              ["Lejárt — leszerelendő", basicTraining.items.filter((i) => i.isOverdue), "text-destructive"],
+              [`Hamarosan lejár (${basicTraining.warnDays} napon belül)`, basicTraining.items.filter((i) => i.isDueSoon), "text-amber-400"],
+              ["Folyamatban", basicTraining.items.filter((i) => !i.isOverdue && !i.isDueSoon), "text-muted-foreground"],
+            ] as const).map(([title, items, cls]) => items.length === 0 ? null : (
+              <div key={title}>
+                <p className={`text-xs font-mono uppercase tracking-military mb-2 ${cls}`}>{title} ({items.length})</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full mil-table">
+                    <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Jogviszony kezdete</th><th>Határidő</th><th>Hátra</th><th>Modulok</th><th>Hiányzik</th></tr></thead>
+                    <tbody>
+                      {items.map((item) => (
+                        <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
+                          <td className="font-medium">{item.name}</td>
+                          <td className="font-mono text-xs text-primary">{item.rank}</td>
+                          <td className="text-muted-foreground text-xs">{item.unit}</td>
+                          <td className="font-mono text-xs">{item.joinDate || "—"}</td>
+                          <td className="font-mono text-xs">{item.deadline ?? "—"}</td>
+                          <td><span className={deadlineClass(item)}>{deadlineLabel(item)}</span></td>
+                          <td className="font-mono text-xs">{item.completedModules} / {item.totalModules}</td>
+                          <td className="text-muted-foreground text-xs">{item.missingModules.join(", ")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Évi 7 nap szolgálat */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <Clock className="w-4 h-4 text-orange-500" />
+          <h2 className="text-sm font-bold uppercase tracking-military">
+            Évi szolgálati minimum {serviceMinimum?.year ?? ""} — tartalékosok {serviceMinimum?.minDays ?? 7} nap alatt ({serviceMinimum?.items.length ?? 0})
+          </h2>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono mb-1">
+          Jogszabályi kötelezettség: minden tartalékos évente legalább {serviceMinimum?.minDays ?? 7} napot szolgál. Szolgált nap = gyakorlat/kiképzés napjai „Megjelent" jelenléttel; a lemondott művelet nem számít.
+        </p>
+        {serviceMinimum && <YearDeadlineLine d={serviceMinimum} />}
+        {!serviceMinimum || serviceMinimum.items.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden tartalékos teljesítette az éves szolgálati minimumot</span></div>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Jogviszony kezdete</th><th>Határidő</th><th>Hátra</th><th>Modulok</th><th>Hiányzik</th></tr></thead>
+              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Szolgált</th><th>Hiányzik</th></tr></thead>
               <tbody>
-                {basicTraining.items.map((item) => (
+                {serviceMinimum.items.map((item) => (
                   <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
                     <td className="font-medium">{item.name}</td>
                     <td className="font-mono text-xs text-primary">{item.rank}</td>
                     <td className="text-muted-foreground text-xs">{item.unit}</td>
-                    <td className="font-mono text-xs">{item.joinDate || "—"}</td>
-                    <td className="font-mono text-xs">{item.deadline ?? "—"}</td>
-                    <td><span className={deadlineClass(item)}>{deadlineLabel(item)}</span></td>
-                    <td className="font-mono text-xs">{item.completedModules} / {item.totalModules}</td>
-                    <td className="text-muted-foreground text-xs">{item.missingModules.join(", ")}</td>
+                    <td className="font-mono text-xs">{item.servedDays} nap</td>
+                    <td><span className={item.servedDays === 0 ? "badge-cancelled" : "badge-ongoing"}>{item.missingDays} nap</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -333,9 +391,10 @@ export default function Alerts() {
             Szabadság-minimum {leaveMinimum?.year ?? ""} — aktívak {leaveMinimum?.minDays ?? 10} munkanap alatt ({leaveMinimum?.items.length ?? 0})
           </h2>
         </div>
-        <p className="text-xs text-muted-foreground font-mono mb-3">
+        <p className="text-xs text-muted-foreground font-mono mb-1">
           Jóváhagyott „Szabadság" típusú távollétek, hétfő–péntek napok (ünnepnap nélkül), az idei évből.
         </p>
+        {leaveMinimum && <YearDeadlineLine d={leaveMinimum} />}
         {!leaveMinimum || leaveMinimum.items.length === 0 ? (
           <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden aktív katona elérte a minimumot</span></div>
         ) : (
