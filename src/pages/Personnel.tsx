@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Search } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, CheckSquare } from 'lucide-react';
 import DatePickerInput from '@/components/DatePickerInput';
 import PersonnelDetailModal from '@/components/PersonnelDetailModal';
 import { isValidHungarianPhone, normalizeHungarianPhone } from '@/lib/phone';
@@ -98,6 +98,13 @@ export default function Personnel() {
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [detailPerson, setDetailPerson] = useState<Person | null>(null);
+  // Tömeges műveletek: a kijelölés oldalváltást és szűrést is túlél.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkUnit, setBulkUnit] = useState('');
+  const [bulkQual, setBulkQual] = useState('');
+  const [bulkEarned, setBulkEarned] = useState(new Date().toISOString().slice(0, 10));
+  const [bulkBusy, setBulkBusy] = useState(false);
   // Más oldalról (riasztás, gyorskereső) érkezve a kért személy aktája rögtön megnyílik.
   const location = useLocation();
   useEffect(() => {
@@ -118,6 +125,34 @@ export default function Personnel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+
+  const runBulkUpdate = async () => {
+    setBulkBusy(true);
+    try {
+      const result = await store.bulkUpdate({ ids: [...selectedIds], status: (bulkStatus || undefined) as Person['status'] | undefined, unit: bulkUnit.trim() || undefined });
+      toast.success(`${result.changed} személy átállítva.`);
+      setBulkStatus(''); setBulkUnit('');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const runBulkGrant = async () => {
+    setBulkBusy(true);
+    try {
+      const result = await store.bulkGrant({ ids: [...selectedIds], qualTypeId: bulkQual, earnedDate: bulkEarned });
+      toast.success(`${result.granted} főnek kiadva${result.skipped ? `, ${result.skipped} főnek már megvolt` : ''}${result.summariesGranted ? `, ${result.summariesGranted} fő megkapta az összesítő Alapkiképzést` : ''}.`);
+      setBulkQual('');
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -298,9 +333,65 @@ export default function Personnel() {
 
       </div>
 
+      {canEdit && selectedIds.size > 0 && (
+        <div className="bg-card border border-primary/40 p-3 mb-3 flex flex-wrap items-end gap-3" style={{ borderRadius: '2px' }}>
+          <div className="flex items-center gap-2 text-xs font-mono text-primary">
+            <CheckSquare className="w-4 h-4" />
+            {selectedIds.size} kijelölt
+            <button onClick={() => setSelectedIds(new Set())} className="text-muted-foreground hover:underline ml-1">törlés</button>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
+            <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} className="bg-input border border-border px-2 py-1.5 text-xs" style={{ borderRadius: '2px' }}>
+              <option value="">— nem változik —</option>
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Alegység</label>
+            <input list="bulk-unit-options" value={bulkUnit} onChange={e => setBulkUnit(e.target.value)} placeholder="— nem változik —" className="bg-input border border-border px-2 py-1.5 text-xs w-44" style={{ borderRadius: '2px' }} />
+            <datalist id="bulk-unit-options">{units.map(u => <option key={u} value={u} />)}</datalist>
+          </div>
+          <button
+            onClick={() => { void runBulkUpdate(); }}
+            disabled={bulkBusy || (!bulkStatus && !bulkUnit.trim())}
+            className="btn-mil-primary text-xs"
+          >
+            Átállítás
+          </button>
+          <span className="text-muted-foreground text-xs">|</span>
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Képesítés kiadása</label>
+            <select value={bulkQual} onChange={e => setBulkQual(e.target.value)} className="bg-input border border-border px-2 py-1.5 text-xs" style={{ borderRadius: '2px' }}>
+              <option value="">— válassz —</option>
+              {qualTypeOptions.map(qt => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Megszerzés dátuma</label>
+            <DatePickerInput value={bulkEarned} onChange={setBulkEarned} className="px-2 py-1.5 text-xs" />
+          </div>
+          <button onClick={() => { void runBulkGrant(); }} disabled={bulkBusy || !bulkQual || !bulkEarned} className="btn-mil-primary text-xs">Kiadás mindenkinek</button>
+        </div>
+      )}
+
       <div className="bg-card border border-border overflow-hidden" style={{ borderRadius: '2px' }}>
         <table className="w-full mil-table">
           <thead><tr>
+            {canEdit && (
+              <th className="w-8">
+                <input
+                  type="checkbox"
+                  title="Az oldal összes sora"
+                  checked={data.length > 0 && data.every(p => selectedIds.has(p.id))}
+                  onChange={e => setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    data.forEach(p => e.target.checked ? next.add(p.id) : next.delete(p.id));
+                    return next;
+                  })}
+                />
+              </th>
+            )}
             <th><button onClick={() => handleSort('name')} className="text-left w-full">Név{sortIndicator('name')}</button></th>
             <th><button onClick={() => handleSort('sztsz')} className="text-left w-full">SZTSz{sortIndicator('sztsz')}</button></th>
             <th><button onClick={() => handleSort('rank')} className="text-left w-full">Rendfokozat{sortIndicator('rank')}</button></th>
@@ -312,9 +403,18 @@ export default function Personnel() {
             {canEdit && <th>Műveletek</th>}
           </tr></thead>
           <tbody>
-            {data.length === 0 && <tr><td colSpan={10} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
+            {data.length === 0 && <tr><td colSpan={11} className="text-center text-muted-foreground font-mono py-8">Nincs adat</td></tr>}
             {data.map(p => (
-              <tr key={p.id} className="cursor-pointer" onClick={() => setDetailPerson(p)}>
+              <tr key={p.id} className={`cursor-pointer ${selectedIds.has(p.id) ? 'bg-primary/5' : ''}`} onClick={() => setDetailPerson(p)}>
+                {canEdit && (
+                  <td onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(p.id)}
+                      onChange={e => setSelectedIds(prev => { const next = new Set(prev); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next; })}
+                    />
+                  </td>
+                )}
                 <td className="font-semibold">{p.name}</td>
                 <td className="font-mono text-primary text-xs">{p.sztsz}</td>
                 <td className="text-brass font-mono text-xs">{p.rank}</td>

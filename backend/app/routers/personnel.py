@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from ..appliers import apply_person
@@ -228,3 +228,84 @@ def delete_person(item_id: str, db: DB, user: Editor):
     record_activity(db, user, mode="delete", module="Személyek", record_name=record_name,
                     entity="personnel", before=before)
     db.commit()
+
+
+# ── Tömeges műveletek (G5): senki nem kattint 1500 sort ────────────────────────
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+from ..basic_training import grant_if_complete  # noqa: E402
+from ..models import PersonnelQualificationModel, QualificationTypeModel, new_id  # noqa: E402
+from ..schemas import PersonStatus  # noqa: E402
+
+
+class PersonnelBulkUpdate(_BaseModel):
+    ids: list[str]
+    status: PersonStatus | None = None
+    unit: str | None = None
+
+
+class PersonnelBulkGrant(_BaseModel):
+    ids: list[str]
+    qualTypeId: str
+    earnedDate: str
+
+
+def _bulk_targets(db, ids: list[str]) -> list[PersonModel]:
+    if not ids or len(ids) > 2000:
+        raise HTTPException(status_code=400, detail="1–2000 kijelölt személy kell")
+    return db.scalars(select(PersonModel).where(PersonModel.id.in_(ids))).all()
+
+
+@router.post("/bulk")
+def bulk_update(payload: PersonnelBulkUpdate, db: DB, user: Editor):
+    """Kijelölt személyek státusza és/vagy alegysége egy lépésben; személyenként naplózva."""
+    if payload.status is None and (payload.unit is None or not payload.unit.strip()):
+        raise HTTPException(status_code=400, detail="Add meg, mit állítunk át: státuszt vagy alegységet")
+    changed = 0
+    for person in _bulk_targets(db, payload.ids):
+        before = _person_snapshot(person)
+        if payload.status is not None:
+            person.status = payload.status
+        if payload.unit is not None and payload.unit.strip():
+            person.unit = payload.unit.strip()
+        after = _person_snapshot(person)
+        if before != after:
+            changed += 1
+            record_activity(db, user, mode="update", module="Személyek", record_name=person.name,
+                            entity="personnel", before={"id": person.id, **before}, after={"id": person.id, **after})
+    db.commit()
+    return {"changed": changed}
+
+
+@router.post("/bulk-grant")
+def bulk_grant(payload: PersonnelBulkGrant, db: DB, user: Editor):
+    """Egy képesítés kiadása sok személynek egyszerre (akinek már megvan, kimarad)."""
+    qual_type = db.get(QualificationTypeModel, payload.qualTypeId)
+    if not qual_type:
+        raise HTTPException(status_code=404, detail="Képesítés-típus nem található")
+    targets = _bulk_targets(db, payload.ids)
+    held = {pid for (pid,) in db.execute(
+        select(PersonnelQualificationModel.personnel_id).where(
+            PersonnelQualificationModel.qual_type_id == qual_type.id,
+            PersonnelQualificationModel.personnel_id.in_([p.id for p in targets]),
+        )
+    )}
+    expiry = None
+    if qual_type.validity_days:
+        from datetime import date as _date, timedelta as _timedelta
+        expiry = (_date.fromisoformat(payload.earnedDate) + _timedelta(days=qual_type.validity_days)).isoformat()
+    granted = []
+    for person in targets:
+        if person.id in held:
+            continue
+        db.add(PersonnelQualificationModel(
+            id=new_id(), personnel_id=person.id, qual_type_id=qual_type.id,
+            earned_date=payload.earnedDate, expiry_date=expiry, notes="Tömeges kiadás",
+        ))
+        granted.append(person.id)
+    summaries = grant_if_complete(db, granted)
+    record_activity(db, user, mode="create", module="Képesítések", record_name=qual_type.name,
+                    entity="bulk_grant", after={"granted": len(granted), "skipped": len(targets) - len(granted), "earnedDate": payload.earnedDate})
+    db.commit()
+    return {"granted": len(granted), "skipped": len(targets) - len(granted), "summariesGranted": summaries}

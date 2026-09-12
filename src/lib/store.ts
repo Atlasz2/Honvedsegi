@@ -248,6 +248,10 @@ export const search = {
 export const personnel = {
   ...createCrud<Person>('/personnel'),
   get: (id: string) => request<Person>(`/personnel/${id}`),
+  bulkUpdate: (payload: { ids: string[]; status?: Person['status']; unit?: string }) =>
+    request<{ changed: number }>('/personnel/bulk', { method: 'POST', body: JSON.stringify(payload) }),
+  bulkGrant: (payload: { ids: string[]; qualTypeId: string; earnedDate: string }) =>
+    request<{ granted: number; skipped: number; summariesGranted: number }>('/personnel/bulk-grant', { method: 'POST', body: JSON.stringify(payload) }),
   /** Könnyű lista a beosztó/kiadó felületeknek — a teljes akta helyett. */
   getLite: () => request<PersonLite[]>('/personnel/lite'),
   getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; qualification?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
