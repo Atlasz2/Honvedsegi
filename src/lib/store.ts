@@ -1080,6 +1080,8 @@ export const orders = {
   update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
     request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
+  copy: (id: string, payload: { subject: string; personnelId?: string; number?: string; dueDate?: string }) =>
+    request<Order>(`/orders/${id}/copy`, { method: 'POST', body: JSON.stringify(payload) }),
   updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>
     request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   addChapter: (orderId: string, payload: OrderChapterTemplate) =>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertTriangle, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, Copy, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   orders as store,
   personnel as personnelStore,
@@ -61,6 +61,7 @@ export default function Parancsok() {
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
   const [creating, setCreating] = useState(false);
   const [typesOpen, setTypesOpen] = useState(false);
+  const [copySource, setCopySource] = useState<Order | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -213,8 +214,15 @@ export default function Parancsok() {
           onClose={() => setDetail(null)}
           onChanged={(updated) => { setDetail(updated); void refresh(); }}
           onDelete={() => setDeleteTarget(detail)}
+          onCopy={() => setCopySource(detail)}
         />
       )}
+
+      <CopyOrderModal
+        source={copySource}
+        onClose={() => setCopySource(null)}
+        onCopied={async (created) => { setCopySource(null); setDetail(created); await refresh(); }}
+      />
 
       <NewOrderModal open={creating} types={types} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await refresh(); }} />
 
@@ -238,8 +246,8 @@ export default function Parancsok() {
 // vastagságú — így ránézésre látszik, mi van még hátra. A margón fejezetenként
 // ott van a részleg, ki nyúlt hozzá utoljára és mikor.
 
-function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
-  order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void;
+function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete, onCopy }: {
+  order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void; onCopy: () => void;
 }) {
   const [metaOpen, setMetaOpen] = useState(false);
   const [status, setStatus] = useState<OrderStatus>(order.status);
@@ -339,6 +347,7 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
               : <span className="text-emerald-400">minden fejezet elfogadva</span>}
           </div>
           <div className="flex gap-2">
+            {canEdit && <button onClick={onCopy} title="Ugyanez a parancs más személyre" className="btn-mil-secondary text-xs flex items-center gap-1.5"><Copy className="w-3.5 h-3.5" />Másolás</button>}
             <button onClick={() => setMetaOpen((v) => !v)} className="btn-mil-secondary text-xs flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" />Adatok</button>
             <button onClick={() => { void download('docx'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />Word</button>
             <button onClick={() => { void download('pdf'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />PDF</button>
@@ -597,6 +606,104 @@ function InlineChapter({ index, chapter, canEdit, onSave, onRemove }: {
         )}
       </div>
     </div>
+  );
+}
+
+// ── Másolás más személyre ──────────────────────────────────────────────────
+
+function CopyOrderModal({ source, onClose, onCopied }: { source: Order | null; onClose: () => void; onCopied: (o: Order) => Promise<void> }) {
+  const [subject, setSubject] = useState('');
+  const [number, setNumber] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [personSearch, setPersonSearch] = useState('');
+  const [matches, setMatches] = useState<Person[]>([]);
+  const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!source) return;
+    setSubject(''); setNumber(''); setDueDate(''); setPersonSearch(''); setMatches([]); setSelected(null);
+  }, [source]);
+
+  useEffect(() => {
+    if (selected || personSearch.trim().length < 2) { setMatches([]); return; }
+    let active = true;
+    const handle = setTimeout(async () => {
+      try {
+        const result = await personnelStore.getPaged({ page: 1, pageSize: 8, search: personSearch });
+        if (active) setMatches(result.items);
+      } catch {
+        if (active) setMatches([]);
+      }
+    }, 250);
+    return () => { active = false; clearTimeout(handle); };
+  }, [personSearch, selected]);
+
+  // A tárgyat az eredetiből képezzük: a régi nevet az újra cseréljük.
+  const pickPerson = (p: Person) => {
+    setSelected({ id: p.id, name: p.name });
+    setPersonSearch('');
+    setMatches([]);
+    if (!subject.trim() && source) {
+      setSubject(source.personName && source.subject.includes(source.personName) ? source.subject.replace(source.personName, p.name) : `${p.name} – ${source.subject}`);
+    }
+  };
+
+  const submit = async () => {
+    if (!source) return;
+    if (!subject.trim()) { toast.error('A tárgy kötelező.'); return; }
+    setSubmitting(true);
+    try {
+      const created = await store.copy(source.id, { subject: subject.trim(), personnelId: selected?.id ?? '', number: number.trim(), dueDate });
+      toast.success('Parancs lemásolva — a fejezetek szövege az új személyre igazítva, az állapotok nulláról indulnak.');
+      await onCopied(created);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal open={!!source} onClose={onClose} title={`Másolás: ${source?.subject ?? ''}`}>
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">Ugyanez a típus és fejezet-szerkezet, a szövegben az eredeti személy neve, rendfokozata és SZTSZ-e az újéra cserélve. Az elfogadások és aláírások nem másolódnak.</p>
+        <div className="relative">
+          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Új érintett személy</label>
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={selected ? selected.name : personSearch} onChange={(e) => { setSelected(null); setPersonSearch(e.target.value); }} placeholder="Név keresése…" className={`${inputClass} pl-8`} style={radius} />
+          </div>
+          {matches.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full bg-popover border border-border shadow-md max-h-56 overflow-auto" style={radius}>
+              {matches.map((p) => (
+                <button key={p.id} onClick={() => pickPerson(p)} className="w-full text-left px-3 py-1.5 text-sm hover:bg-secondary">
+                  <span className="text-foreground">{p.name}</span><span className="text-muted-foreground"> · {p.rank} · {p.unit}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_10rem] gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tárgy *</label>
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} className={inputClass} style={radius} />
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Parancs száma</label>
+            <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="13/2026" className={inputClass} style={radius} />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Határidő</label>
+          <DatePickerInput value={dueDate} onChange={setDueDate} />
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="btn-mil-secondary text-xs">Mégsem</button>
+          <button onClick={() => { void submit(); }} disabled={submitting} className="btn-mil-primary text-xs">{submitting ? 'Másolás…' : 'Másolat létrehozása'}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -28,6 +28,7 @@ from ..schemas import (
     OrderChapterRead,
     OrderChapterTemplate,
     OrderChapterUpdate,
+    OrderCopy,
     OrderCreate,
     OrderOverview,
     OrderRead,
@@ -327,6 +328,50 @@ def _require_order(db, order_id: str) -> OrderModel:
     if not order:
         raise HTTPException(status_code=404, detail="A parancs nem található")
     return order
+
+
+@router.post("/{order_id}/copy", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
+def copy_order(order_id: str, payload: OrderCopy, db: DB, user: Editor):
+    """Új parancs egy meglévőből: ugyanaz a típus és fejezet-szerkezet, a
+    szövegben az eredeti személy neve/rendfokozata/SZTSZ-e az újéra cserélve.
+    Ma ezt csinálják kézzel egy régi parancs átformálásával."""
+    source = _require_order(db, order_id)
+    subject = payload.subject.strip()
+    if not subject:
+        raise HTTPException(status_code=400, detail="A tárgy kötelező")
+    new_person = db.get(PersonModel, payload.personnelId) if payload.personnelId else None
+    if payload.personnelId and not new_person:
+        raise HTTPException(status_code=404, detail="A személy nem található")
+    old_person = db.get(PersonModel, source.personnel_id) if source.personnel_id else None
+
+    order = OrderModel(
+        id=new_id(), order_type_id=source.order_type_id, type_name=source.type_name, subject=subject,
+        number=payload.number.strip(), issuer=source.issuer,
+        personnel_id=new_person.id if new_person else "", person_name=new_person.name if new_person else "",
+        due_date=payload.dueDate, notes="", created_by=user.username,
+        signatures=[{"role": s.get("role", ""), "name": s.get("name", ""), "signed": False, "signedAt": "", "signedBy": ""} for s in (source.signatures or [])],
+    )
+    db.add(order)
+    # Név-csere a szövegben: a hosszabb kulcsok előbb, hogy a rész-egyezés ne rontson.
+    swaps: list[tuple[str, str]] = []
+    if old_person and new_person:
+        swaps = [(old_person.name, new_person.name), (old_person.sztsz, new_person.sztsz), (old_person.rank, new_person.rank)]
+        swaps = [(a, b) for a, b in swaps if a]
+        swaps.sort(key=lambda pair: -len(pair[0]))
+    swaps += [(source.subject, subject)] if source.subject else []
+    for ch in _chapters_of(db, order_id):
+        content = ch.content or ""
+        for old, new in swaps:
+            content = content.replace(old, new)
+        db.add(OrderChapterModel(
+            id=new_id(), order_id=order.id, position=ch.position, name=ch.name,
+            responsible=ch.responsible, required=ch.required, content=content,
+        ))
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=subject, entity="order",
+                    after={**_order_snapshot(order), "copiedFrom": source.subject})
+    db.commit()
+    return _serialize_order(order, _chapters_of(db, order.id), date.today().isoformat(), with_chapters=True)
 
 
 @router.get("/{order_id}", response_model=OrderRead)

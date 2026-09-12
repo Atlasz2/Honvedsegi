@@ -973,6 +973,15 @@ class OrderCreate(BaseModel):
     notes: str = ""
 
 
+class OrderCopy(BaseModel):
+    """„Ugyanezt a parancsot más személyre": a fejezetek szövege megy, a nevek
+    cserélődnek, az állapotok és aláírások nulláról indulnak."""
+    subject: str
+    personnelId: str = ""
+    number: str = ""
+    dueDate: str = ""
+
+
 class OrderUpdate(BaseModel):
     subject: str
     status: OrderStatus

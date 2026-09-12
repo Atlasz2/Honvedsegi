@@ -216,3 +216,23 @@ def test_order_deadline_alerts(client, admin_headers):
     assert chapter["isOverdue"] and chapter["responsible"] == "Jog" and chapter["assignee"] == "dr. Kiss"
     assert next(i for i in mine if i["kind"] == "order")["isDueSoon"]
     assert not any(i["orderId"] == other["id"] for i in body["items"]), "90 nap múlva még nem riaszt"
+
+
+def test_copy_order_to_another_person_swaps_names_and_resets_state(client, admin_headers):
+    order_type = _type(client, admin_headers)
+    old = _person(client, admin_headers, "Régi Rezső", "16100030")
+    new = _person(client, admin_headers, "Új Ubul", "16100031")
+    source = _order(client, admin_headers, order_type["id"], subject="Régi Rezső leszerelése", personnelId=old["id"], number="3/2026")
+    source = _set_chapter(client, admin_headers, source, 1, "Kész", content="Régi Rezső (16100030) jogi ügye.")
+    client.put(f"/api/orders/{source['id']}/signatures", json={"signatures": [{"role": "Parancsnok", "name": "Nagy ezredes", "signed": True}, {"role": "Törzsfőnök", "name": "", "signed": False}]}, headers=admin_headers)
+
+    r = client.post(f"/api/orders/{source['id']}/copy", json={"subject": "Új Ubul leszerelése", "personnelId": new["id"], "number": "4/2026"}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    copy = r.json()
+    assert copy["id"] != source["id"] and copy["typeName"] == source["typeName"]
+    assert copy["personName"] == "Új Ubul" and copy["number"] == "4/2026"
+    assert copy["chapters"][0]["content"] == "őrmester Új Ubul (16100031) ügyében."
+    assert copy["chapters"][1]["content"] == "Új Ubul (16100031) jogi ügye."
+    assert all(c["status"] == "Nincs elkezdve" for c in copy["chapters"])
+    assert copy["status"] == "Előkészítés" and copy["signedCount"] == 0
+    assert [s["name"] for s in copy["signatures"]] == ["Nagy ezredes", ""], "az aláíró neve marad, az aláírás nem"
