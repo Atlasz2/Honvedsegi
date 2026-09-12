@@ -52,6 +52,8 @@ export default function Parancsok() {
   const [overview, setOverview] = useState<OrderOverview | null>(null);
   const [types, setTypes] = useState<OrderType[]>([]);
   const [openOnly, setOpenOnly] = useState(true);
+  // A felső kártyák szűrőként működnek: 'overdue' vagy egy részleg neve.
+  const [cardFilter, setCardFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [detail, setDetail] = useState<Order | null>(null);
@@ -73,6 +75,9 @@ export default function Parancsok() {
   }, [openOnly]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  const visibleList = list.filter((o) =>
+    cardFilter === null ? true : cardFilter === 'overdue' ? o.isOverdue : o.pendingResponsibles.includes(cardFilter));
 
   const openDetail = async (order: Order) => {
     try {
@@ -115,25 +120,25 @@ export default function Parancsok() {
         </div>
       </div>
 
-      {/* Részlegenkénti áttekintő — kinél áll még munka */}
+      {/* Részlegenkénti áttekintő — kattintásra szűri a listát */}
       {overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
-          <div className="stats-card border-l-2 border-l-primary">
+          <button onClick={() => setCardFilter(null)} className={`stats-card border-l-2 border-l-primary text-left transition-colors hover:bg-secondary/40 ${cardFilter === null ? 'ring-1 ring-primary' : ''}`}>
             <div className="stats-number">{overview.openOrders}</div>
             <div className="stats-label">Nyitott parancs</div>
-          </div>
-          <div className={`stats-card border-l-2 ${overview.overdueOrders ? 'border-l-destructive' : 'border-l-border'}`}>
+          </button>
+          <button onClick={() => setCardFilter(cardFilter === 'overdue' ? null : 'overdue')} className={`stats-card border-l-2 text-left transition-colors hover:bg-secondary/40 ${overview.overdueOrders ? 'border-l-destructive' : 'border-l-border'} ${cardFilter === 'overdue' ? 'ring-1 ring-destructive' : ''}`}>
             <div className="stats-number">{overview.overdueOrders}</div>
             <div className="stats-label">Lejárt határidejű</div>
-          </div>
+          </button>
           {overview.byResponsible.map((r) => (
-            <div key={r.responsible} className={`stats-card border-l-2 ${r.blockingOrders ? 'border-l-amber-400' : 'border-l-border'}`}>
+            <button key={r.responsible} onClick={() => setCardFilter(cardFilter === r.responsible ? null : r.responsible)} className={`stats-card border-l-2 text-left transition-colors hover:bg-secondary/40 ${r.blockingOrders ? 'border-l-amber-400' : 'border-l-border'} ${cardFilter === r.responsible ? 'ring-1 ring-amber-400' : ''}`}>
               <div className="stats-number">{r.blockingOrders}</div>
               <div className="stats-label">{r.responsible} — vár rá</div>
               <div className="text-[11px] font-mono text-muted-foreground mt-1">
                 {r.openChapters} nyitott fejezet{r.overdueChapters ? ` · ${r.overdueChapters} lejárt` : ''}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -143,12 +148,17 @@ export default function Parancsok() {
           <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
           Csak a nyitottak
         </label>
-        <span className="text-xs font-mono text-muted-foreground">({list.length})</span>
+        <span className="text-xs font-mono text-muted-foreground">({visibleList.length})</span>
+        {cardFilter && (
+          <button onClick={() => setCardFilter(null)} className="text-xs font-mono text-primary hover:underline">
+            szűrés: {cardFilter === 'overdue' ? 'lejárt határidejű' : `${cardFilter} vár rá`} ×
+          </button>
+        )}
       </div>
 
       {loading ? (
         <p className="text-xs text-muted-foreground font-mono">Betöltés…</p>
-      ) : list.length === 0 ? (
+      ) : visibleList.length === 0 ? (
         <div className="bg-card border border-border p-6 text-center" style={radius}>
           <FileText className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
           <p className="text-sm text-muted-foreground">
@@ -162,7 +172,7 @@ export default function Parancsok() {
               <tr><th>Szám</th><th>Tárgy</th><th>Típus</th><th>Határidő</th><th>Állapot</th><th>Fejezetek</th><th>Aláírás</th><th>Még dolgozik rajta</th></tr>
             </thead>
             <tbody>
-              {list.map((o) => (
+              {visibleList.map((o) => (
                 <tr key={o.id} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => { void openDetail(o); }}>
                   <td className="font-mono text-xs">{o.number || '—'}</td>
                   <td className="font-medium">{o.subject}</td>
@@ -238,7 +248,6 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
 
   const metaDirty = status !== order.status || number !== order.number || issuer !== order.issuer
     || dueDate !== order.dueDate || issuedDate !== order.issuedDate || notes !== order.notes;
-  const signaturesDirty = JSON.stringify(signatures) !== JSON.stringify(order.signatures);
   const visible = order.chapters.filter((ch) => ch.status !== 'Nem szükséges');
   const skipped = order.chapters.filter((ch) => ch.status === 'Nem szükséges');
 
@@ -265,10 +274,11 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
     }
   };
 
-  const saveSignatures = async () => {
+  // Az aláírás egy kattintás: a jelölőnégyzet azonnal ment. A név kikattintáskor.
+  const saveSignatures = async (next: OrderSignature[]) => {
+    setSignatures(next);
     try {
-      onChanged(await store.updateSignatures(order.id, signatures.map(({ role, name, signed }) => ({ role, name, signed }))));
-      toast.success('Aláírások mentve.');
+      onChanged(await store.updateSignatures(order.id, next.map(({ role, name, signed }) => ({ role, name, signed }))));
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -389,6 +399,7 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
                   <input
                     value={sig.name}
                     onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)))}
+                    onBlur={() => { if (sig.name !== order.signatures[i]?.name) void saveSignatures(signatures); }}
                     placeholder="(név)"
                     className="w-full bg-transparent border-b border-dashed border-border px-2 py-1 text-xs text-center font-semibold focus:outline-none focus:border-primary"
                   />
@@ -401,9 +412,9 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
                     type="checkbox"
                     checked={sig.signed}
                     disabled={!canEdit || !order.readyToSign}
-                    onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, signed: e.target.checked } : s)))}
+                    onChange={(e) => { void saveSignatures(signatures.map((s, j) => (j === i ? { ...s, signed: e.target.checked } : s))); }}
                   />
-                  {sig.signed ? `aláírva ${sig.signedAt ? sig.signedAt.slice(0, 10) : ''}` : 'aláírás'}
+                  {sig.signed ? 'aláírva' : 'aláírás'}
                 </label>
               </div>
             ))}
@@ -417,7 +428,6 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
               : `Aláírásra akkor kerülhet, ha minden kötelező fejezet elfogadott (még: ${order.pendingResponsibles.join(', ')}).`}
           </p>
           <div className="flex gap-2">
-            {canEdit && <button onClick={() => { void saveSignatures(); }} disabled={!signaturesDirty} className="btn-mil-primary text-xs">Aláírások mentése</button>}
             <button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button>
             {canEdit && (
               <button onClick={onDelete} className="btn-mil-danger text-xs flex items-center gap-1.5">

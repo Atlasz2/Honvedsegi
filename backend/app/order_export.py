@@ -75,8 +75,6 @@ def build_docx(order: OrderRead) -> bytes:
         block.add_run("______________________________\n")
         block.add_run(sig.name or "(név)").bold = True
         block.add_run(f"\n{sig.role}")
-        if sig.signed:
-            block.add_run(f"\naláírva: {sig.signedAt[:10]}").italic = True
 
     buf = BytesIO()
     doc.save(buf)
@@ -139,8 +137,6 @@ def build_pdf(order: OrderRead) -> bytes:
         cells = []
         for sig in order.signatures:
             lines = ["______________________", f"<b>{esc(sig.name or '(név)')}</b>", esc(sig.role)]
-            if sig.signed:
-                lines.append(f"<i>aláírva: {esc(sig.signedAt[:10])}</i>")
             cells.append(Paragraph("<br/>".join(lines), ps("sig", size=10, leading=13, align=TA_CENTER)))
         table = Table([cells], colWidths=[width / len(cells)] * len(cells))
         table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
