@@ -202,7 +202,7 @@ Fontos: production módban a backend API dokumentáció (`/docs`, `/redoc`, `/op
   által sem.
 - **A neve a kódban nincs benne.** A `BACKEND_DEV_MASTER_USERNAME` környezeti
   változó adja; éles telepítésen egyedi, csak a telepítő által ismert értéket
-  állíts be. Alapérték fejlesztéshez: `dev_master`.
+  állíts be. Alapérték fejlesztéshez: `devmaster`.
 - **A műveletei naplózódnak**, de a tevékenységnaplóban csak god-szinten
   láthatók — az admin ezeket sem látja. (Elszámoltathatóság + rejtés együtt.)
 
@@ -231,7 +231,7 @@ Ezek után a teszt loginok:
 - `olvaso` / `olvaso123`
 - `szerkeszto` / `szerkeszto123`
 - `admin` / `Admin123`
-- `dev_master` / `Malnas123` (alkotó — az admin nem látja)
+- `devmaster` / `Malnas123` (alkotó — az admin nem látja)
 
 Ha a fiókok elromlottak vagy régi jelszóval vannak: `cd backend; ../.venv/Scripts/python.exe reset_users.py`
 kisöpri az összeset és ezt a négyet hozza létre. (Fejlesztés közben a jelszószabály laza: 8 karakter, betű+szám;

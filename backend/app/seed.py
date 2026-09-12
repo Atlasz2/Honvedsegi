@@ -521,10 +521,10 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         )
 
     logs: list[ActivityLogModel] = []
-    display_name_map = {"admin": "Rendszer Admin", "olvaso": "Teszt Olvasó", "szerkeszto": "Teszt Szerkesztő", "dev_master": "Fejlesztő Mester"}
+    display_name_map = {"admin": "Rendszer Admin", "olvaso": "Teszt Olvasó", "szerkeszto": "Teszt Szerkesztő", "devmaster": "Alkotó"}
     for index in range(1, 401):
         ts = base_date + timedelta(days=rng.randint(0, 365), hours=rng.randint(0, 23), minutes=rng.randint(0, 59))
-        log_user_id = rng.choice(["admin", "olvaso", "szerkeszto", "dev_master"])
+        log_user_id = rng.choice(["admin", "olvaso", "szerkeszto", "devmaster"])
         logs.append(
             ActivityLogModel(
                 id=f"al{index}",

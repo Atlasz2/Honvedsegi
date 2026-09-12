@@ -7,7 +7,7 @@ Futtatás a backend/ könyvtárból:
     admin       / Admin123        (admin)
     olvaso      / olvaso123       (olvasó)
     szerkeszto  / szerkeszto123   (szerkesztő)
-    dev_master  / Malnas123       (alkotó — az admin nem látja)
+    devmaster   / Malnas123       (alkotó — az admin nem látja)
 
 Kiadás előtt ezeket törölni kell, mindenki saját fiókot kap. A munkameneteket
 is törli, hogy senki ne maradjon bejelentkezve régi fiókkal.

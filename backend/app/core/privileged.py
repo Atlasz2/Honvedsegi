@@ -33,7 +33,7 @@ from .auth import get_current_user
 
 # Csak fejlesztői alapérték. Éles környezetben a BACKEND_DEV_MASTER_USERNAME
 # felülírja, és a valódi név nem kerül a kódba.
-_DEFAULT_GOD_USERNAME = "dev_master"
+_DEFAULT_GOD_USERNAME = "devmaster"
 
 
 @lru_cache(maxsize=1)
