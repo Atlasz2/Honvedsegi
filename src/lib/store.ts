@@ -1079,3 +1079,28 @@ export const tableExport = {
   xlsx: (title: string, headers: string[], rows: string[][], filename: string) =>
     downloadBlob('/reports/table.xlsx', filename, { title, headers, rows }),
 };
+
+// ── Alapkiképzés-tábla import (név/SZTSZ + modulonként egy oszlop) ──────────
+
+export type BasicTrainingImportPreview = {
+  draftId: string;
+  totalRows: number;
+  matchedPersons: number;
+  unmatched: { line: number; name: string; sztsz: string; problem: string; completedCount: number }[];
+  modules: { header: string; qualTypeId: string | null; known: boolean }[];
+  unknownModules: string[];
+  newGrants: number;
+  alreadyHeld: number;
+  items: { line: number; personnelId: string; name: string; sztsz: string; completedCount: number; newCount: number }[];
+};
+export type BasicTrainingImportResult = { granted: number; createdModules: string[]; skippedUnknownModules: number; summariesGranted: number };
+
+export const basicTrainingImport = {
+  preview: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request<BasicTrainingImportPreview>('/import/basic-training/preview', { method: 'POST', body: formData });
+  },
+  confirm: (draftId: string, createMissingModules: boolean) =>
+    request<BasicTrainingImportResult>(`/import/basic-training/confirm/${draftId}?create_missing_modules=${createMissingModules}`, { method: 'POST' }),
+};

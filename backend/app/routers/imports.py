@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, UploadFile
 
+from ..audit import record_activity
 from ..core.dependencies import DB, Editor
 from ..schemas import ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult
+from ..services.basic_training_import import confirm_basic_training, preview_basic_training
 from ..services.imports import (
     confirm_import_draft,
     preview_import_data,
@@ -19,6 +21,22 @@ from ..services.imports import (
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
+
+
+# ── Alapkiképzés-tábla (név/SZTSZ + modulonként egy oszlop) — a generikus
+# /{entity}/… útvonalak ELŐTT kell állnia, különben azok nyelik el.
+
+@router.post("/basic-training/preview")
+def preview_basic_training_table(db: DB, _: Editor, file: UploadFile = File(...)):
+    return preview_basic_training(file.filename or "", file.file.read(), db)
+
+
+@router.post("/basic-training/confirm/{draft_id}")
+def confirm_basic_training_table(draft_id: str, db: DB, user: Editor, create_missing_modules: bool = True):
+    result = confirm_basic_training(draft_id, create_missing_modules, db)
+    record_activity(db, user, mode="create", module="Import", record_name="Alapkiképzés-tábla", entity="import_basic_training", after=result)
+    db.commit()
+    return result
 
 
 @router.post("/{entity}/preview", response_model=ImportPreviewResult)

@@ -17,6 +17,7 @@ import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SystemStatusPanel from '@/components/SystemStatusPanel';
+import BasicTrainingImportPanel from '@/components/BasicTrainingImportPanel';
 import { useNavigate } from 'react-router-dom';
 
 type ImportFieldConfig = {
@@ -416,6 +417,8 @@ export default function SettingsPage() {
         </table>
       </div>
       </>)}
+
+      <BasicTrainingImportPanel />
 
       <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
