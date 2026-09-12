@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Crosshair, FileSignature, Search, User } from 'lucide-react';
 import { search as searchStore, type QuickSearchResult } from '@/lib/store';
 
+/** A fejléc keresőmezője ezzel nyitja meg — az ügyintézőnek nem kell billentyűkombináció. */
+export const OPEN_PALETTE_EVENT = 'open-command-palette';
+export function openCommandPalette(): void {
+  window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
+}
+
 type Hit =
   | { kind: 'person'; id: string; title: string; subtitle: string }
   | { kind: 'order'; id: string; title: string; subtitle: string }
@@ -41,8 +47,13 @@ export default function CommandPalette() {
         setOpen(false);
       }
     };
+    const onOpen = () => setOpen(true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpen);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpen);
+    };
   }, []);
 
   useEffect(() => {

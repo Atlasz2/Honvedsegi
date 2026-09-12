@@ -1,3 +1,4 @@
+import { OFFLINE_MESSAGE, isNetworkError, setOnline } from '@/lib/connection';
 import {
   ActivityLogEntry,
   Announcement,
@@ -154,7 +155,17 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
     }
   }
 
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch (error) {
+    if (isNetworkError(error)) {
+      setOnline(false);
+      throw new Error(OFFLINE_MESSAGE);
+    }
+    throw error;
+  }
+  setOnline(true);
   if (response.status === 204) {
     return undefined as T;
   }
@@ -862,7 +873,14 @@ async function downloadBlob(path: string, filename: string, body?: unknown): Pro
     headers.set('Authorization', `Bearer ${token}`);
   }
   if (body !== undefined) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${API_BASE}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
+  } catch (error) {
+    if (isNetworkError(error)) { setOnline(false); throw new Error(OFFLINE_MESSAGE); }
+    throw error;
+  }
+  setOnline(true);
   if (!response.ok) {
     throw new Error((await response.text()) || 'A letöltés sikertelen');
   }
