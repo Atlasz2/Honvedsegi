@@ -82,8 +82,14 @@ def _ensure_extended_schema(db: Session) -> None:
         db.execute(text("ALTER TABLE personnel ADD COLUMN qualifications JSON"))
     if "beosztas" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN beosztas TEXT"))
+    if "service_type" not in personnel_cols:
+        db.execute(text("ALTER TABLE personnel ADD COLUMN service_type TEXT DEFAULT ''"))
     if "extra" not in personnel_cols:
         db.execute(text("ALTER TABLE personnel ADD COLUMN extra JSON"))
+
+    exercises_cols2 = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
+    if exercises_cols2 and "organizer" not in exercises_cols2:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN organizer TEXT DEFAULT ''"))
 
     # Parancs-műhely 2. kör: fejezet-szöveg, aláírások, parancsszám.
     for table, columns in (
@@ -98,14 +104,16 @@ def _ensure_extended_schema(db: Session) -> None:
             if column not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
+    # A trainings tábla csak régi adatbázisban van (a v6 migráció olvasztja be a
+    # műveletekbe); addig a migráció által olvasott oszlopokat pótoljuk.
     trainings_cols = {row[1] for row in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
-    if "qualification_id" not in trainings_cols:
+    if trainings_cols and "qualification_id" not in trainings_cols:
         db.execute(text("ALTER TABLE trainings ADD COLUMN qualification_id TEXT"))
     exercises_cols = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
     if "qualification_id" not in exercises_cols:
         db.execute(text("ALTER TABLE exercises ADD COLUMN qualification_id TEXT"))
     for col in ("series_id", "level"):
-        if col not in trainings_cols:
+        if trainings_cols and col not in trainings_cols:
             db.execute(text(f"ALTER TABLE trainings ADD COLUMN {col} TEXT DEFAULT ''"))
         if col not in exercises_cols:
             db.execute(text(f"ALTER TABLE exercises ADD COLUMN {col} TEXT DEFAULT ''"))
@@ -130,6 +138,8 @@ def _ensure_extended_schema(db: Session) -> None:
 
     db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
     db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))
-    db.execute(text("UPDATE trainings SET qualification_id = '' WHERE qualification_id IS NULL"))
+    db.execute(text("UPDATE personnel SET service_type = '' WHERE service_type IS NULL"))
+    if trainings_cols:
+        db.execute(text("UPDATE trainings SET qualification_id = '' WHERE qualification_id IS NULL"))
     db.execute(text("UPDATE duties SET assigned = '[]' WHERE assigned IS NULL"))
     db.commit()

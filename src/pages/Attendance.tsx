@@ -306,7 +306,7 @@ export default function Attendance() {
             <div className="px-3 pb-3 grid gap-3 md:grid-cols-2">
               <div className="border border-border p-3" style={{ borderRadius: '2px' }}>
                 <p className="text-xs uppercase tracking-military text-muted-foreground mb-1">A) Mai művelet résztvevői</p>
-                <p className="text-[11px] text-muted-foreground mb-2">A kiválasztott gyakorlat/kiképzés beosztottjai egy gombbal a megadott állapotot kapják (pl. „Szolgálatban”).</p>
+                <p className="text-[11px] text-muted-foreground mb-2">A kiválasztott művelet beosztottjai egy gombbal a megadott állapotot kapják (pl. „Szolgálatban”).</p>
                 {events.length === 0 ? (
                   <p className="text-xs text-muted-foreground font-mono">Ma nincs művelet beosztott résztvevővel.</p>
                 ) : (

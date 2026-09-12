@@ -19,7 +19,7 @@ def test_series_membership_and_item_count(client, admin_headers):
     assert created.json()["itemCount"] == 0
 
     training = client.post(
-        "/api/trainings",
+        "/api/exercises",
         json={
             "name": "ABV", "type": "Kiképzés", "startDate": "2026-06-01", "endDate": "2026-06-02",
             "location": "Gyakorlótér", "organizer": "Törzs", "maxPersonnel": 20, "description": "",
@@ -68,7 +68,7 @@ def test_series_progression_matrix(client, admin_headers):
         headers=admin_headers,
     ).json()["id"]
     training = client.post(
-        "/api/trainings",
+        "/api/exercises",
         json={
             "name": "ABV Alap", "type": "Kiképzés", "startDate": "2026-06-01", "endDate": "2026-06-02",
             "location": "X", "organizer": "T", "maxPersonnel": 20, "description": "", "status": "Befejezett",

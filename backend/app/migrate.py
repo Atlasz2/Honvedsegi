@@ -373,6 +373,8 @@ def _migrate_cancelled_status(db: Session) -> None:
     if _migration_done(db, key):
         return
     for table in ("exercises", "trainings"):
+        if not _table_exists(db, table):
+            continue
         result = db.execute(text(f"UPDATE {table} SET status = 'Lemondva' WHERE status = 'Törölve'"))
         if result.rowcount:
             log.info("%s: %d Törölve → Lemondva", table, result.rowcount)
@@ -402,8 +404,8 @@ def _migrate_duties_into_exercises(db: Session) -> None:
         people += [a for a in assigned if isinstance(a, dict) and a.get("personId")]
         status = "Lemondva" if dstatus == "Lemondva" else derive_temporal_status(start or "", end or "")
         db.execute(text(
-            "INSERT INTO exercises (id, name, type, start_date, end_date, location, max_personnel, description, status, qualification_id, series_id, level, assigned) "
-            "VALUES (:id, :name, :type, :start, :end, :location, :maxp, :desc, :status, '', '', '', '[]')"
+            "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+            "VALUES (:id, :name, :type, :start, :end, :location, '', :maxp, :desc, :status, '', '', '', '[]')"
         ), {
             "id": duty_id, "name": f"{dtype} – {location}".strip(" –") if location else dtype, "type": dtype,
             "start": start or "", "end": end or start or "", "location": location or "",
@@ -437,11 +439,48 @@ def _mark_shadow_events(db: Session) -> None:
     if _migration_done(db, key):
         return
     from .constants import SHADOW_EVENT_TYPE
-    result = db.execute(text(
-        "UPDATE events SET event_type = :t WHERE id IN (SELECT id FROM exercises) OR id IN (SELECT id FROM trainings)"
-    ), {"t": SHADOW_EVENT_TYPE})
+    sources = [t for t in ("exercises", "trainings") if _table_exists(db, t)]
+    if not sources:
+        _mark_done(db, key)
+        return
+    subquery = " OR ".join(f"id IN (SELECT id FROM {t})" for t in sources)
+    result = db.execute(text(f"UPDATE events SET event_type = :t WHERE {subquery}"), {"t": SHADOW_EVENT_TYPE})
     if result.rowcount:
         log.info("Árnyék-esemény megjelölve: %d", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_trainings_into_exercises(db: Session) -> None:
+    """A kiképzés is művelet (döntés: 2026-09-13). Minden trainings-sor gyakorlat
+    lesz ugyanazzal az azonosítóval (a szervező mező átmegy), a résztvevők,
+    követelmények és képesítés-források event_type-ja 'exercise' lesz."""
+    key = "v6_trainings_into_exercises"
+    if _migration_done(db, key):
+        return
+    if not _table_exists(db, "trainings"):
+        _mark_done(db, key)
+        return
+    ex_cols = {r[1] for r in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
+    if "organizer" not in ex_cols:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN organizer TEXT DEFAULT ''"))
+    tr_cols = {r[1] for r in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
+    def col(name, default="''"):
+        return name if name in tr_cols else default
+    moved = db.execute(text(
+        "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+        f"SELECT id, name, type, start_date, end_date, COALESCE(location,''), COALESCE({col('organizer')},''), COALESCE(max_personnel,0), COALESCE(description,''), "
+        f"CASE WHEN status='Törölve' THEN 'Lemondva' ELSE COALESCE(status,'Tervezett') END, COALESCE({col('qualification_id')},''), COALESCE({col('series_id')},''), COALESCE({col('level')},''), COALESCE(assigned,'[]') "
+        "FROM trainings WHERE id NOT IN (SELECT id FROM exercises)"
+    )).rowcount
+    db.execute(text("UPDATE participants SET event_type='exercise' WHERE event_type='training'"))
+    if _table_exists(db, "event_prerequisites"):
+        db.execute(text("UPDATE event_prerequisites SET event_type='exercise' WHERE event_type='training'"))
+    if _table_exists(db, "personnel_qualifications"):
+        db.execute(text("UPDATE personnel_qualifications SET source_event_type='exercise' WHERE source_event_type='training'"))
+    db.execute(text("DELETE FROM trainings"))
+    if moved:
+        log.info("Kiképzések átvezetve a Műveletekbe: %d", moved)
     db.commit()
     _mark_done(db, key)
 
@@ -458,3 +497,4 @@ def run_all(db: Session) -> None:
     _migrate_cancelled_status(db)
     _migrate_duties_into_exercises(db)
     _mark_shadow_events(db)
+    _migrate_trainings_into_exercises(db)

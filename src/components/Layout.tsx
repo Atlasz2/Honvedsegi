@@ -9,6 +9,7 @@ import { qualificationAlerts } from '@/lib/store';
 import CommandPalette, { openCommandPalette } from '@/components/CommandPalette';
 import { useConnection, setOnline } from '@/lib/connection';
 import { Search, WifiOff } from 'lucide-react';
+import NewsBell from '@/components/NewsBell';
 
 // A menü sorrendje a napi munka sorrendje: ami rám vár → mi a helyzet → naptár →
 // emberek → feladatok → parancsok → figyelmeztetések → napló → beállítások.
@@ -35,6 +36,27 @@ const navItems: NavItem[] = [
   { path: '/vehicles', label: 'Járművek', icon: Truck, group: 'Logisztika' },
 ];
 
+// Olyan útvonalak, amelyeknek nincs saját menüpontjuk: melyik menüpont világítson.
+// Így mindig van kijelölt elem — a felhasználó tudja, hol jár.
+const NAV_ALIAS: Record<string, string> = {
+  '/riportok': '/attekintes',
+  '/announcements': '/attekintes',
+  '/helyzetkep': '/attekintes',
+  '/kovetelmenyek': '/operations',
+  '/foglaltsag': '/kozos-naptar',
+  '/calendar': '/kozos-naptar',
+};
+
+export function activeNavPath(pathname: string): string {
+  const alias = Object.keys(NAV_ALIAS).find((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
+  if (alias) return NAV_ALIAS[alias];
+  if (pathname === '/') return '/';
+  const match = navItems
+    .filter((item) => item.path !== '/' && (pathname === item.path || pathname.startsWith(item.path + '/')))
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  return match?.path ?? '/';
+}
+
 const roleBadge: Record<string, string> = {
   admin: 'ADMIN',
   reader: 'OLVASÓ',
@@ -48,6 +70,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [alertCount, setAlertCount] = useState(0);
   const online = useConnection();
   const location = useLocation();
+  const activePath = activeNavPath(location.pathname);
 
   // Kapcsolat-vesztéskor 5 másodpercenként megpróbáljuk a health-végpontot,
   // és amint válaszol, a sáv eltűnik.
@@ -101,7 +124,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {navItems.map((item, index) => {
             if (item.editorOnly && !canEdit) return null;
             const groupStart = item.group && navItems[index - 1]?.group !== item.group;
-            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
+            const active = item.path === activePath;
             const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;
             return (
               <React.Fragment key={item.path}>
@@ -152,7 +175,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className={`flex-1 flex flex-col transition-all duration-200 ${collapsed ? 'ml-16' : 'ml-56'}`}>
         {/* Top bar */}
         <header className="h-12 bg-sidebar border-b border-border flex items-center justify-between px-4 sticky top-0 z-40">
-          <div className="flex-1 flex justify-center px-4">
+          <div className="flex-1 flex items-center justify-center gap-3 px-4">
+            <NewsBell />
             <button
               onClick={openCommandPalette}
               className="w-full max-w-md flex items-center gap-2 bg-input border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-foreground transition-colors"

@@ -13,7 +13,6 @@ import {
   QualificationStat,
   QualificationType,
   Supply,
-  Training,
   Series,
   AppEvent,
   AttendanceDay,
@@ -252,7 +251,7 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
 export type QuickSearchResult = {
   persons: { id: string; name: string; sztsz: string; rank: string; unit: string; status: string }[];
   orders: { id: string; number: string; subject: string; typeName: string; status: string }[];
-  operations: { id: string; source: 'exercise' | 'training'; name: string; type: string; startDate: string; status: string }[];
+  operations: { id: string; source: 'exercise'; name: string; type: string; startDate: string; status: string }[];
 };
 export const changes = {
   version: () => request<{ version: number }>('/changes'),
@@ -338,7 +337,7 @@ export const qualificationAlerts = {
 };
 
 export type LocationConflict = {
-  eventType: 'exercise' | 'training' | 'event';
+  eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
   startDate: string;
@@ -368,9 +367,12 @@ export function checkPersonConflicts(personnelId: string, startDate: string, end
   if (excludeId) params.set('exclude_id', excludeId);
   return request<PersonConflict[]>(`/conflicts/person?${params.toString()}`);
 }
+/** „Átkerül ide": az ütköző műveletekben a részvétel „Visszamondta" lesz, megjegyzéssel. */
+export function movePersonFromConflicts(personnelId: string, fromEvents: { eventType: string; eventId: string }[], targetName: string): Promise<{ moved: { eventType: string; eventId: string; eventName: string }[] }> {
+  return request(`/conflicts/person/move`, { method: 'POST', body: JSON.stringify({ personnelId, fromEvents, targetName }) });
+}
 
 export const exercises = createCrud<Exercise>('/exercises');
-export const trainings = createCrud<Training>('/trainings');
 
 export type SeriesMatrix = {
   operations: { id: string; name: string; level: string; source: string; startDate: string }[];
@@ -422,7 +424,15 @@ export const alerts = {
   basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
   serviceMinimum: (year?: number) => request<ServiceMinimumResult>(`/alerts/service-minimum${year ? `?year=${year}` : ''}`),
   orderDeadlines: () => request<OrderDeadlinesResult>('/alerts/order-deadlines'),
+  /** Az admin egyéni dátum-szabályai kiértékelve. */
+  custom: () => request<CustomRuleAlertsResult>('/alerts/custom'),
 };
+
+export type CustomRuleAlertItem = {
+  ruleId: string; ruleLabel: string; personnelId: string; name: string; rank: string; unit: string;
+  baseDate: string; deadline: string; daysLeft: number; isOverdue: boolean;
+};
+export type CustomRuleAlertsResult = { rules: CustomAlertRule[]; items: CustomRuleAlertItem[] };
 
 export type OrderDeadlineItem = {
   orderId: string; number: string; subject: string; orderStatus: string;
@@ -447,7 +457,7 @@ export type CampaignPlan = {
   requirements: string[]; rows: CampaignRow[];
 };
 
-type CampaignSource = 'exercise' | 'training';
+type CampaignSource = 'exercise';
 
 export const campaign = {
   pasteApplicants: (source: CampaignSource, eventId: string, text: string) =>
@@ -627,7 +637,7 @@ export function initializeData() {
 
 export type ReportPreviewListItem = {
   id: string;
-  itemType: 'exercise' | 'training' | 'event';
+  itemType: 'exercise' | 'event';
   name?: string;
   type?: string;
   personId?: string;
@@ -661,7 +671,7 @@ export type ReportPreviewFocusParticipant = {
 };
 
 export type ReportPreviewFocus = {
-  type: 'exercise' | 'training' | 'event';
+  type: 'exercise' | 'event';
   id: string;
   headline: string;
   description: string;
@@ -676,11 +686,10 @@ export type ReportPreviewResponse = {
     dateFrom: string;
     dateTo: string;
   };
-  focusType: 'exercise' | 'training' | 'event' | null;
+  focusType: 'exercise' | 'event' | null;
   focusId: string | null;
   summary: {
     exercises: number;
-    trainings: number;
     events: number;
   };
   sections: ReportPreviewSection[];
@@ -691,7 +700,7 @@ export const reports = {
     dateFrom?: string;
     dateTo?: string;
     template?: 'overview' | 'operations' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event';
+    focusType?: 'exercise' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -706,7 +715,7 @@ export const reports = {
     dateFrom?: string;
     dateTo?: string;
     template?: 'overview' | 'operations' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event';
+    focusType?: 'exercise' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -755,7 +764,7 @@ export const reports = {
     dateFrom?: string;
     dateTo?: string;
     template?: "overview" | "operations" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event";
+    focusType?: "exercise" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -804,7 +813,7 @@ export const reports = {
     dateFrom?: string;
     dateTo?: string;
     template?: "overview" | "operations" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event";
+    focusType?: "exercise" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -911,7 +920,7 @@ async function downloadBlob(path: string, filename: string, body?: unknown): Pro
 }
 
 export type AttendanceEventOption = {
-  eventType: 'exercise' | 'training' | 'event';
+  eventType: 'exercise' | 'event';
   eventId: string;
   name: string;
   participantCount: number;
@@ -968,7 +977,7 @@ export const leave = {
 
 export type Booking = {
   location: string;
-  eventType: 'exercise' | 'training' | 'event';
+  eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
   startDate: string;
@@ -1035,10 +1044,12 @@ export type OperationNodePayload = {
 
 export type OperationsNow = {
   date: string;
-  running: { id: string; source: 'exercise' | 'training'; name: string; type: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
-  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise' | 'training'; operationName: string; isDuty: boolean; startDate: string; endDate: string; participantStatus: string }[];
+  running: { id: string; source: 'exercise'; name: string; type: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
+  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise'; operationName: string; isDuty: boolean; startDate: string; endDate: string; participantStatus: string }[];
   onTaskPeople: number;
   todayEvents: { id: string; name: string; type: string; startDate: string; endDate: string; location: string; status: string }[];
+  /** A következő 7 napban induló műveletek — a sorozat-elemek is. */
+  upcoming: { id: string; source: 'exercise'; name: string; type: string; isDuty: boolean; seriesId: string; startDate: string; endDate: string; location: string }[];
 };
 export const operations = {
   now: () => request<OperationsNow>('/operations/now'),
@@ -1210,15 +1221,22 @@ export type MyTodos = {
   pendingLeave: { id: string; personName: string; type: string; startDate: string; endDate: string }[];
   pendingLeaveCount: number;
   alerts: { overdueOrderDeadlines: number; dueSoonOrderDeadlines: number; basicTrainingOverdue: number; basicTrainingDueSoon: number };
-  upcoming: { id: string; source: 'exercise' | 'training'; name: string; type: string; startDate: string; endDate: string; location: string }[];
-  upcomingCount: number;
 };
 
-export type AlertSetting = { key: string; label: string; value: number; default: number; min: number; max: number; help: string };
+export type AlertSetting = {
+  key: string; label: string; value: number; default: number; min: number; max: number; help: string;
+  /** Ki-be kapcsolható figyelmeztetés-fajta (a paraméterek nem). */
+  toggleable: boolean; enabled: boolean;
+};
+export type CustomAlertRule = { id: string; label: string; field: string; validityDays: number; warnDays: number; enabled: boolean };
+export type CustomRuleField = { key: string; label: string };
 export const settings = {
   alerts: () => request<{ items: AlertSetting[] }>('/settings/alerts'),
-  updateAlerts: (values: Record<string, number>) =>
-    request<{ items: AlertSetting[]; changed: string[] }>('/settings/alerts', { method: 'PUT', body: JSON.stringify({ values }) }),
+  updateAlerts: (values: Record<string, number>, enabled: Record<string, boolean> = {}) =>
+    request<{ items: AlertSetting[]; changed: string[] }>('/settings/alerts', { method: 'PUT', body: JSON.stringify({ values, enabled }) }),
+  customRules: () => request<{ rules: CustomAlertRule[]; fields: CustomRuleField[] }>('/settings/alerts/custom'),
+  updateCustomRules: (rules: CustomAlertRule[]) =>
+    request<{ rules: CustomAlertRule[] }>('/settings/alerts/custom', { method: 'PUT', body: JSON.stringify({ rules }) }),
 };
 
 export const me = {

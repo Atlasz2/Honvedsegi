@@ -50,6 +50,7 @@ def sync_participants(db: Session, event_type: str, event_id: str, assignments: 
             rank_s    = item.get("rankShort", "")
             sztsz     = item.get("sztsz", "")
             qual_app  = bool(item.get("qualificationApproved", False))
+            notes     = str(item.get("notes") or "")
         else:
             pid       = getattr(item, "personId", "")
             pname     = getattr(item, "personName", "")
@@ -59,10 +60,11 @@ def sync_participants(db: Session, event_type: str, event_id: str, assignments: 
             rank_s    = getattr(item, "rankShort", "") or ""
             sztsz     = getattr(item, "sztsz", "") or ""
             qual_app  = bool(getattr(item, "qualificationApproved", False))
+            notes     = str(getattr(item, "notes", "") or "")
         if not pid:
             continue
         db.add(ParticipantModel(
             id=new_id(), event_type=event_type, event_id=event_id,
             personnel_id=pid, person_name=pname, rank=rank, rank_short=rank_s,
-            sztsz=sztsz, role=role, status=st, qualification_approved=qual_app,
+            sztsz=sztsz, role=role, status=st, qualification_approved=qual_app, notes=notes,
         ))

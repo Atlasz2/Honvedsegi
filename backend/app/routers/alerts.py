@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from ..basic_training import completion_map
-from ..settings_store import get_int
+from ..settings_store import get_custom_rules, get_int, is_enabled
 from ..core.dependencies import DB, Reader
 from ..models import (
     AttendanceModel,
@@ -24,7 +24,6 @@ from ..models import (
     ParticipantModel,
     PersonModel,
     PersonnelQualificationModel,
-    TrainingModel,
 )
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -108,6 +107,8 @@ def leave_minimum(
     jóváhagyott szabadságot. A 0 napos is szerepel — pont ők a lényeg."""
     year = year or date.today().year
     min_days = min_days or get_int(db, "leave_minimum_days")
+    if not is_enabled(db, "leave_minimum_days"):
+        return None
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
     taken: dict[str, int] = defaultdict(int)
@@ -165,10 +166,12 @@ def service_minimum(
     „Teljesített" és az esemény nincs lemondva; az évre vágva, naptári nap."""
     year = year or date.today().year
     min_days = min_days or get_int(db, "service_minimum_days")
+    if not is_enabled(db, "service_minimum_days"):
+        return None
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
     events: dict[tuple[str, str], tuple[str, str]] = {}
-    for event_type, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+    for event_type, model in (("exercise", ExerciseModel),):
         rows = db.execute(
             select(model.id, model.start_date, model.end_date).where(
                 model.status != "Lemondva",
@@ -218,6 +221,8 @@ def basic_training_deadline(
     (lejárat nem számít, az alapkiképzés nem évül)."""
     deadline_days = deadline_days or get_int(db, "basic_training_deadline_days")
     warn_days = get_int(db, "basic_training_warn_days")
+    if not is_enabled(db, "basic_training_warn_days"):
+        return {"modules": [], "deadlineDays": deadline_days, "warnDays": warn_days, "items": []}
     modules, completed, has_summary = completion_map(db)
     module_ids = [m.id for m in modules]
     module_names = {m.id: m.name for m in modules}
@@ -263,6 +268,8 @@ def order_deadlines(db: DB, _: Reader, warn_days: int | None = Query(None, ge=0,
     from ..models import OrderChapterModel, OrderModel  # itt, hogy az alerts ne függjön mindig a parancsoktól
 
     warn_days = get_int(db, "order_deadline_warn_days") if warn_days is None else warn_days
+    if not is_enabled(db, "order_deadline_warn_days"):
+        return {"warnDays": warn_days, "orders": [], "chapters": []}
     today = date.today()
     horizon = (today + timedelta(days=warn_days)).isoformat()
     open_orders = db.scalars(select(OrderModel).where(OrderModel.status.in_(("Előkészítés", "Aláírásra vár")))).all()
@@ -294,3 +301,54 @@ def order_deadlines(db: DB, _: Reader, warn_days: int | None = Query(None, ge=0,
             add(by_id[ch.order_id], "chapter", ch.name, ch.responsible, ch.assignee, ch.due_date)
     items.sort(key=lambda x: (x["daysLeft"], x["subject"].lower()))
     return {"warnDays": warn_days, "items": items}
+
+
+# ── Egyéni dátum-szabályok ───────────────────────────────────────────────────
+
+def _parse_date(value: str) -> date | None:
+    """ISO (2026-03-01), magyar (2026.03.01.) vagy időbélyeges érték → dátum; egyéb → None."""
+    raw = (value or "").strip().rstrip(".")
+    if not raw:
+        return None
+    raw = raw[:10].replace(".", "-").replace("/", "-")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _person_field(person: PersonModel, field: str) -> str:
+    if field.startswith("extra:"):
+        return str((person.extra or {}).get(field[6:], "") or "")
+    if field in ("join_date", "birth_date"):
+        return getattr(person, field, "") or ""
+    return ""
+
+
+@router.get("/custom")
+def custom_rule_alerts(db: DB, _: Reader):
+    """Az admin által felvett szabályok: egy személy-dátummező (+ érvényesség
+    napban) lejárata a beállított napon belül van, vagy már lejárt."""
+    rules = [r for r in get_custom_rules(db) if r["enabled"]]
+    if not rules:
+        return {"rules": [], "items": []}
+    today = date.today()
+    persons = db.scalars(select(PersonModel).where(PersonModel.status != "Leszerelt")).all()
+    items: list[dict] = []
+    for rule in rules:
+        for person in persons:
+            base = _parse_date(_person_field(person, rule["field"]))
+            if base is None:
+                continue
+            deadline = base + timedelta(days=rule["validityDays"])
+            days_left = (deadline - today).days
+            if days_left > rule["warnDays"]:
+                continue
+            items.append({
+                "ruleId": rule["id"], "ruleLabel": rule["label"],
+                "personnelId": person.id, "name": person.name, "rank": person.rank, "unit": person.unit,
+                "baseDate": base.isoformat(), "deadline": deadline.isoformat(), "daysLeft": days_left,
+                "isOverdue": days_left < 0,
+            })
+    items.sort(key=lambda x: (x["daysLeft"], x["name"].lower()))
+    return {"rules": rules, "items": items}

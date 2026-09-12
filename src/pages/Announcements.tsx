@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { announcements as store, logAction, getErrorMessage } from '@/lib/store';
 import { Announcement } from '@/lib/types';
@@ -13,6 +14,7 @@ const catClass: Record<string, string> = { 'Általános': 'badge-general', 'Font
 
 export default function AnnouncementsPage() {
   const { canEdit, user } = useAuth();
+  const location = useLocation();
   const [data, setData] = useState<Announcement[]>([]);
   const [filterCat, setFilterCat] = useState('');
   const [detail, setDetail] = useState<Announcement | null>(null);
@@ -36,6 +38,14 @@ export default function AnnouncementsPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useAutoRefresh(refresh);
+
+  // A fejléc-harangból érkezve a kiválasztott közlemény rögtön megnyílik.
+  useEffect(() => {
+    const navState = location.state as { openAnnouncementId?: string } | null;
+    if (!navState?.openAnnouncementId || data.length === 0) return;
+    const found = data.find((a) => a.id === navState.openAnnouncementId);
+    if (found) setDetail(found);
+  }, [location.state, data]);
 
   const sorted = [...data].filter(a => !filterCat || a.category === filterCat).sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
@@ -80,7 +90,7 @@ export default function AnnouncementsPage() {
         {sorted.map(a => (
           <div
             key={a.id}
-            className={`bg-card border border-border cursor-pointer transition-colors hover:bg-secondary ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
+            className={`bg-card border cursor-pointer transition-colors hover:bg-secondary ${a.category === 'Sürgős' ? 'border-destructive' : 'border-border'} ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
             style={{ borderRadius: '2px' }}
             onClick={() => setDetail(a)}
           >

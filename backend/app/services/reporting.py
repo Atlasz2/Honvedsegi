@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.time import date_overlap, parse_iso_date, utc_now
-from ..models import EventModel, ExerciseModel, TrainingModel, visible_events
+from ..models import EventModel, ExerciseModel, visible_events
 
 
 def report_title(template: str) -> str:
@@ -116,7 +116,7 @@ def build_report_data(
     focus_id: str | None,
 ) -> dict[str, Any]:
     allowed_templates = {"overview", "operations", "events", "focus"}
-    allowed_focus = {"exercise", "training", "event"}
+    allowed_focus = {"exercise", "event"}
 
     if template not in allowed_templates:
         raise HTTPException(status_code=400, detail="Nem tamogatott riportminta")
@@ -133,11 +133,6 @@ def build_report_data(
     exercises = [
         i
         for i in db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-        if date_overlap(i.start_date, i.end_date, start_date, end_date)
-    ]
-    trainings = [
-        i
-        for i in db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
         if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
     events = [
@@ -166,7 +161,6 @@ def build_report_data(
             raise HTTPException(status_code=400, detail="A fokusz riporthoz tipus es azonosito szukseges")
         model_map = {
             "exercise": ExerciseModel,
-            "training": TrainingModel,
             "event": EventModel,
         }
         model = model_map[focus_type]
@@ -177,7 +171,6 @@ def build_report_data(
     else:
         if template in {"overview", "operations"}:
             add_section("exercises", "Gyakorlatok", exercises, "exercise", 300)
-            add_section("trainings", "Kikepzesek", trainings, "training", 300)
         if template == "overview":
             add_section("events", "Esemenyek", events, "event", 300)
         elif template == "events":
@@ -191,7 +184,6 @@ def build_report_data(
         "focusId": focus_id,
         "summary": {
             "exercises": len(exercises),
-            "trainings": len(trainings),
             "events": len(events),
         },
         "sections": sections,
@@ -217,15 +209,12 @@ def build_excel_report_bytes(data: dict[str, Any], template: str, focus_type: st
     ws["A1"] = data["title"]
     ws["A1"].font = Font(size=14, bold=True)
     ws["A2"] = f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}"
-    ws["A4"] = "Gyakorlatok"
+    ws["A4"] = "Muveletek"
     ws["B4"] = data["summary"]["exercises"]
-    ws["A5"] = "Kikepzesek"
-    ws["B5"] = data["summary"]["trainings"]
-    ws["A6"] = "Esemenyek"
-    ws["B6"] = data["summary"]["events"]
-    ws["A7"] = "Szolgalatok"
+    ws["A5"] = "Esemenyek"
+    ws["B5"] = data["summary"]["events"]
 
-    row = 9
+    row = 7
     if data["focus"]:
         focus = data["focus"]
         ws.cell(row=row, column=1, value="Fokusz riport").font = Font(bold=True)
@@ -330,7 +319,7 @@ def build_docx_report_bytes(data: dict[str, Any], template: str, focus_type: str
     doc.add_paragraph(f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}")
     s = data["summary"]
     doc.add_paragraph(
-        f"Osszesites: Gyakorlatok {s['exercises']}, Kikepzesek {s['trainings']}, Esemenyek {s['events']}"
+        f"Osszesites: Gyakorlatok {s['exercises']}, Esemenyek {s['events']}"
     )
 
     if data["focus"]:
@@ -497,11 +486,11 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
     story.append(Spacer(1, 0.4 * cm))
 
     card_labels = [
-        ("Gyakorlatok", str(summary["exercises"])),
-        ("Kikepzesek", str(summary["trainings"])),
+        ("Muveletek", str(summary["exercises"])),
         ("Esemenyek", str(summary["events"])),
     ]
-    card_w = W_pt / 4 - 0.1 * cm
+    card_count = len(card_labels)
+    card_w = W_pt / card_count - 0.1 * cm
     card_data = [
         [
             Table(
@@ -515,7 +504,7 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
         ]
     ]
     card_styles = []
-    for col in range(4):
+    for col in range(card_count):
         card_styles += [
             ("BACKGROUND", (col, 0), (col, 0), C_LIGHT),
             ("BOX", (col, 0), (col, 0), 0.5, C_BORDER),
@@ -524,7 +513,7 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
             ("LEFTPADDING", (col, 0), (col, 0), 10),
             ("RIGHTPADDING", (col, 0), (col, 0), 10),
         ]
-    cards_tbl = Table(card_data, colWidths=[card_w + 0.1 * cm] * 4)
+    cards_tbl = Table(card_data, colWidths=[card_w + 0.1 * cm] * card_count)
     cards_tbl.setStyle(TableStyle(card_styles))
     story.append(cards_tbl)
     story.append(Spacer(1, 0.5 * cm))
@@ -589,10 +578,9 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
         col_cfg = {
             "duty": (["Kezdes", "Vege", "Tipus", "Szemely", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 2.8 * cm, 4.5 * cm, 3.5 * cm, 2.5 * cm]),
             "exercise": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
-            "training": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
             "event": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
         }
-        type_map = {"duties": "duty", "exercises": "exercise", "trainings": "training", "events": "event"}
+        type_map = {"duties": "duty", "exercises": "exercise", "events": "event"}
         for sec in data["sections"]:
             itype = type_map.get(sec["key"], "exercise")
             headers, widths = col_cfg.get(itype, col_cfg["exercise"])

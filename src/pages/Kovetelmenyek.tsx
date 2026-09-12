@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   prerequisites as store,
-  exercises, trainings, events, qualificationTypes,
+  exercises, events, qualificationTypes,
   getErrorMessage, logAction, EligibilityPerson,
 } from '@/lib/store';
 import { QualificationType } from '@/lib/types';
@@ -9,18 +9,17 @@ import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import { Check, GraduationCap, Save, Search, X } from 'lucide-react';
 
-type EventType = 'exercise' | 'training' | 'event';
+type EventType = 'exercise' | 'event';
 
 const EVENT_TYPES: { key: EventType; label: string }[] = [
-  { key: 'training', label: 'Kiképzés' },
-  { key: 'exercise', label: 'Gyakorlat' },
+  { key: 'exercise', label: 'Művelet' },
   { key: 'event', label: 'Esemény' },
 ];
 
 type EventOption = { id: string; label: string };
 
 function loadEventOptions(type: EventType): Promise<EventOption[]> {
-  const source = { exercise: exercises, training: trainings, event: events }[type];
+  const source = { exercise: exercises, event: events }[type];
   return source.getAll().then((items: Array<{ id: string; name?: string; type?: string }>) =>
     items.map(i => ({ id: i.id, label: i.name || i.type || i.id })),
   );
@@ -28,7 +27,7 @@ function loadEventOptions(type: EventType): Promise<EventOption[]> {
 
 export default function Kovetelmenyek() {
   const { canEdit, user } = useAuth();
-  const [eventType, setEventType] = useState<EventType>('training');
+  const [eventType, setEventType] = useState<EventType>('exercise');
   const [eventOptions, setEventOptions] = useState<EventOption[]>([]);
   const [eventId, setEventId] = useState('');
   const [qualTypes, setQualTypes] = useState<QualificationType[]>([]);

@@ -78,6 +78,23 @@ def list_leave(db: DB, _: Reader, status_filter: str = Query("", alias="status")
     return [_serialize(leave, names.get(leave.personnel_id, "")) for leave in leaves]
 
 
+def leave_type_problem(status: str, service_type: str, leave_type: str) -> str | None:
+    """Ki mit vehet ki: szabadságot csak az aktív (szerződéses/hivatásos) állomány;
+    szolgálatmentességet csak az állandó behívásos tartalékos. A többi típus
+    (betegszabadság, kiküldetés, egyéb) mindenkinek rögzíthető."""
+    from ..constants import ACTIVE_STATUSES, PERMANENT_RESERVE
+
+    if status == "Leszerelt":
+        return "Leszerelt személynek nem rögzíthető távollét"
+    if leave_type == "Szabadság" and status not in ACTIVE_STATUSES:
+        if status == "Tartalékos" and service_type == PERMANENT_RESERVE:
+            return "Tartalékos nem vehet ki szabadságot — az állandó behívásosnak szolgálatmentesség jár"
+        return "Szabadságot csak az aktív (szerződéses vagy hivatásos) állomány vehet ki"
+    if leave_type == "Szolgálatmentesség" and not (status == "Tartalékos" and service_type == PERMANENT_RESERVE):
+        return "Szolgálatmentesség csak állandó behívásos tartalékosnak jár"
+    return None
+
+
 @router.post("", response_model=LeaveRequestRead, status_code=status.HTTP_201_CREATED)
 def create_leave(payload: LeaveRequestCreate, db: DB, user: Editor):
     person = db.get(PersonModel, payload.personnelId)
@@ -87,6 +104,9 @@ def create_leave(payload: LeaveRequestCreate, db: DB, user: Editor):
     end = _parse_day(payload.endDate)
     if end < start:
         raise HTTPException(status_code=400, detail="A távollét vége nem lehet korábban a kezdeténél")
+    problem = leave_type_problem(person.status, person.service_type or "", payload.type)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
 
     leave = LeaveRequestModel(
         id=new_id(), personnel_id=person.id, type=payload.type,

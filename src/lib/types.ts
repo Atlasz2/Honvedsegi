@@ -41,10 +41,7 @@ export interface Person {
   extra?: Record<string, string>;
 }
 
-/**
- * Egy eseményhez beosztott személy közös mezői. A gyakorlat- és kiképzés-beosztás
- * ezt bővíti; a Műveletek oldal a kettőt együtt kezeli, ezért ez a közös szerződés.
- */
+/** Egy eseményhez beosztott személy közös mezői; a művelet-beosztás ezt bővíti. */
 export interface PersonAssignment {
   personId: string;
   personName: string;
@@ -54,8 +51,14 @@ export interface PersonAssignment {
   sztsz?: string;
 }
 
+export type ParticipantAttendance = 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Visszamondta';
+
 export interface ExerciseAssignment extends PersonAssignment {
   role: string;
+  attendance?: ParticipantAttendance;
+  qualificationApproved?: boolean;
+  /** A beosztás indoklása, pl. parancsnoki engedély átfedésre. */
+  notes?: string;
 }
 
 export interface Exercise {
@@ -65,6 +68,8 @@ export interface Exercise {
   startDate: string;
   endDate: string;
   location: string;
+  /** A kiképzés beolvadt a műveletbe: a szervező mezője ide került. */
+  organizer: string;
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
@@ -80,29 +85,6 @@ export interface Series {
   description: string;
   itemCount: number;
 }
-
-export interface TrainingAssignment extends PersonAssignment {
-  attendance: 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Visszamondta';
-  qualificationApproved?: boolean;
-}
-
-export interface Training {
-  id: string;
-  name: string;
-  type: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  organizer: string;
-  qualificationId: string;
-  maxPersonnel: number;
-  description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
-  seriesId?: string;
-  level?: string;
-  assigned: TrainingAssignment[];
-}
-
 
 export interface BasicAssignment {
   personId: string;
@@ -289,7 +271,7 @@ export interface Participant {
 // ── Személytörténet ────────────────────────────────────────────────────────────
 
 export interface PersonHistoryEntry {
-  eventType: 'exercise' | 'training' | 'event';
+  eventType: 'exercise' | 'event';
   eventId: string;
   status: string;
   role: string;

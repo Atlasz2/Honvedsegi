@@ -234,7 +234,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
   const pagedHistory = filteredHistory.slice((safePage - 1) * historyPageSize, safePage * historyPageSize);
 
   const EVENT_TYPE_LABEL: Record<string, string> = {
-    exercise: 'Gyakorlat', training: 'Kiképzés', event: 'Esemény', duty: 'Ügyelet',
+    exercise: 'Művelet', training: 'Kiképzés (régi)', event: 'Esemény', duty: 'Szolgálat (régi)',
   };
 
   const expiredCount = qualifications.filter(q => q.isExpired).length;
@@ -551,7 +551,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                         className="cursor-pointer hover:bg-secondary transition-colors"
                         onClick={() => {
                           onClose();
-                          if (item.eventType === 'training' || item.eventType === 'exercise') {
+                          if (item.eventType === 'exercise') {
                             navigate('/operations', { state: { openOperationId: item.eventId, openOperationSource: item.eventType } });
                           }
                         }}

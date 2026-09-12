@@ -26,7 +26,6 @@ from ..models import (
     LeaveRequestModel,
     ParticipantModel,
     PersonModel,
-    TrainingModel,
     new_id,
 )
 from ..schemas import AttendanceDayRead, AttendanceEntry, AttendanceFill, AttendanceUpdate
@@ -34,7 +33,6 @@ from ..schemas import AttendanceDayRead, AttendanceEntry, AttendanceFill, Attend
 # A napi létszámba behúzható események forrásai és a foglalást nem jelentő státuszok.
 _EVENT_SOURCES = [
     ("exercise", ExerciseModel),
-    ("training", TrainingModel),
     ("event", EventModel),
 ]
 _INACTIVE_EVENT_STATUSES = {"Törölve", "Befejezett", "Lemondva"}

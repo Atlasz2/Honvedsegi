@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ..core.dependencies import DB, Reader, Editor
-from ..models import ExerciseModel, ParticipantModel, SeriesModel, TrainingModel, new_id
+from ..models import ExerciseModel, ParticipantModel, SeriesModel, new_id
 
 _LEVEL_ORDER = {"Alap": 0, "Haladó": 1, "Emelt": 2, "": 9}
 from ..schemas import SeriesCreate, SeriesRead, SeriesUpdate
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/series", tags=["series"])
 def _item_counts(db: Session) -> dict[str, int]:
     """Sorozatonkénti elemszám (gyakorlat + kiképzés együtt)."""
     counts: dict[str, int] = {}
-    for model in (ExerciseModel, TrainingModel):
+    for model in (ExerciseModel,):
         rows = db.execute(
             select(model.series_id, func.count()).where(model.series_id != "").group_by(model.series_id)
         ).all()
@@ -75,7 +75,7 @@ def series_matrix(series_id: str, db: DB, _: Reader):
         raise HTTPException(status_code=404, detail="A sorozat nem található")
 
     operations: list[dict] = []
-    for source, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+    for source, model in (("exercise", ExerciseModel),):
         for item in db.scalars(select(model).where(model.series_id == series_id)).all():
             operations.append({
                 "id": item.id, "name": item.name, "level": item.level or "",
@@ -110,6 +110,5 @@ def delete_series(series_id: str, db: DB, _: Editor):
         raise HTTPException(status_code=404, detail="A sorozat nem található")
     # A gyermek műveletek nem törlődnek, csak önállóvá válnak.
     db.execute(update(ExerciseModel).where(ExerciseModel.series_id == series_id).values(series_id=""))
-    db.execute(update(TrainingModel).where(TrainingModel.series_id == series_id).values(series_id=""))
     db.delete(series)
     db.commit()

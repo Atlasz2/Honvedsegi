@@ -8,7 +8,7 @@ from sqlalchemy import select
 from ..appliers import apply_person
 from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
-from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel, TrainingModel
+from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel
 from ..repository import require_model
 from ..schemas import PersonLite, PersonCreate, PersonRead, PersonUpdate
 from ..serializers import load_qualification_ids_by_person, serialize_person_with_qual_table, serialize_person_with_quals
@@ -136,7 +136,6 @@ def list_personnel_paged(
 
 _EVENT_MODELS = {
     "exercise": ExerciseModel,
-    "training":  TrainingModel,
     "event":     EventModel,
 }
 
@@ -182,7 +181,7 @@ def _person_snapshot(item: PersonModel) -> dict:
     """A személy szerkeszthető mezőinek pillanatképe a naplóhoz/visszaállításhoz."""
     return {
         "name": item.name, "sztsz": item.sztsz, "rank": item.rank, "unit": item.unit,
-        "beosztas": item.beosztas or "", "status": item.status, "email": item.email,
+        "beosztas": item.beosztas or "", "status": item.status, "serviceType": item.service_type or "", "email": item.email,
         "phone": item.phone, "birthDate": item.birth_date, "address": item.address,
         "joinDate": item.join_date, "notes": item.notes,
     }

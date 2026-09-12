@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CalendarDays, CheckCircle2, FileSignature, Megaphone, Palmtree, PenLine } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileSignature, Megaphone, Palmtree, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { me as meStore, getErrorMessage, type MyTodos } from '@/lib/store';
 import { useAuth } from '@/lib/auth';
@@ -206,32 +206,6 @@ export default function Teendoim() {
                 </ul>
               </section>
               )}
-
-              {/* A hét műveletei */}
-              <section className="bg-card border border-border" style={radius}>
-                <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
-                  <CalendarDays className="w-4 h-4 text-primary" />
-                  <h2 className="text-sm font-bold uppercase tracking-military flex-1">A következő 7 nap</h2>
-                  <span className="text-xs font-mono text-muted-foreground">{todos.upcomingCount}</span>
-                </header>
-                {todos.upcoming.length === 0 ? (
-                  <p className="px-4 py-4 text-xs text-muted-foreground font-mono">Nincs művelet a következő héten.</p>
-                ) : (
-                  <ul>
-                    {todos.upcoming.map((op) => (
-                      <li key={`${op.source}-${op.id}`}>
-                        <button onClick={() => navigate(`/operations?source=${op.source}`, { state: { openOperationId: op.id, openOperationSource: op.source } })} className="w-full text-left px-4 py-2 border-b border-border/50 hover:bg-secondary/40 text-sm">
-                          <span className="block"><span className="font-medium">{op.name}</span> <span className="text-muted-foreground text-xs">· {op.type}</span></span>
-                          <span className="block text-xs font-mono text-muted-foreground">{op.startDate}{op.endDate !== op.startDate ? ` – ${op.endDate}` : ''}{op.location ? ` · ${op.location}` : ''}</span>
-                        </button>
-                      </li>
-                    ))}
-                    {todos.upcomingCount > todos.upcoming.length && (
-                      <li className="px-4 py-2 text-xs font-mono text-muted-foreground">… és még {todos.upcomingCount - todos.upcoming.length} — a Közös naptárban mind.</li>
-                    )}
-                  </ul>
-                )}
-              </section>
 
               {showOrderAlerts && todos.waitingSignature > 0 && (
                 <button onClick={() => navigate('/parancsok')} className="w-full bg-card border border-primary/40 p-3 text-left text-sm flex items-center gap-2 hover:bg-secondary/40" style={radius}>

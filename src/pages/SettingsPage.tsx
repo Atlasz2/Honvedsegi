@@ -13,7 +13,7 @@ import {
 import { User, Role } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
-import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SystemStatusPanel from '@/components/SystemStatusPanel';
@@ -99,6 +99,7 @@ export default function SettingsPage() {
   const [data, setData] = useState<User[]>([]);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '' });
   const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy', 'Hadművelet'];
@@ -192,6 +193,7 @@ export default function SettingsPage() {
       }
       setEditing(null);
       setCreating(false);
+      setShowPassword(false);
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -863,7 +865,7 @@ export default function SettingsPage() {
         onClose={() => setDeleteTarget(null)}
       />
 
-      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Felhasználó szerkesztése' : 'Új felhasználó'}>
+      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); setShowPassword(false); }} title={editing ? 'Felhasználó szerkesztése' : 'Új felhasználó'}>
         <div className="space-y-3">
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felhasználónév{!editing && ' *'}</label>
@@ -877,13 +879,26 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">{editing ? 'Új jelszó (üres = nem változik)' : 'Jelszó *'}</label>
-            <input
-              type="password"
-              value={form.password}
-              onChange={e => setForm({ ...form, password: e.target.value })}
-              className="w-full bg-input border border-border px-3 py-2 text-sm"
-              style={{ borderRadius: '2px' }}
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={form.password}
+                onChange={e => setForm({ ...form, password: e.target.value })}
+                autoComplete="new-password"
+                className="w-full bg-input border border-border pl-3 pr-10 py-2 text-sm"
+                style={{ borderRadius: '2px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                title={showPassword ? 'Jelszó elrejtése' : 'Jelszó megjelenítése'}
+                aria-label={showPassword ? 'Jelszó elrejtése' : 'Jelszó megjelenítése'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Mutasd meg, hogy le tudd diktálni vagy leírni a felhasználónak.</p>
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjelenítési név</label>
@@ -928,7 +943,7 @@ export default function SettingsPage() {
             Aktív
           </label>
           <div className="flex gap-3 justify-end pt-4">
-            <button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button>
+            <button onClick={() => { setCreating(false); setEditing(null); setShowPassword(false); }} className="btn-mil-secondary text-xs">Mégsem</button>
             <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button>
           </div>
         </div>

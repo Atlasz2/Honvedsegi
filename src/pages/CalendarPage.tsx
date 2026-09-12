@@ -1,104 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import Modal from "@/components/Modal";
-import { events, exercises, getErrorMessage, trainings } from "@/lib/store";
+import { events, exercises, getErrorMessage } from "@/lib/store";
 import { AvailabilityPanel } from "@/pages/Availability";
-import { CalendarSearch, ChevronDown, ChevronRight } from "lucide-react";
-import type { AppEvent, Exercise, Training } from "@/lib/types";
+import { CalendarSearch } from "lucide-react";
+import type { AppEvent, Exercise } from "@/lib/types";
 import { isDutyType } from "@/lib/dutyTypes";
+import { PALETTE, buildColorMap, isoDate, monthWeeks, toIso, weekBars, type CalendarItem } from "@/lib/calendarLayout";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-type CalendarSource = "duty" | "exercise" | "training" | "event"; // duty = szolgálat-típusú gyakorlat
-type SegmentPosition = "single" | "start" | "middle" | "end";
-
-type CalendarItem = {
-  id: string;
-  source: CalendarSource;
-  name: string;
-  dutyType: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  status: string;
-  peopleSummary: string;
-  peopleCount: number;
-};
-
-type DayEntry = {
-  item: CalendarItem;
-  segment: SegmentPosition;
-};
-
 const weekdayLabels = ["H", "K", "Sz", "Cs", "P", "Sz", "V"];
-
-// Erős, egymástól jól elkülönülő színek, fehér felirattal — a naptárban nem
-// keret és halvány háttér kell, hanem ránézésre olvasható csík.
-const sourceClass: Record<CalendarSource, string> = {
-  duty: "bg-amber-600 text-white",
-  exercise: "bg-sky-600 text-white",
-  training: "bg-emerald-600 text-white",
-  event: "bg-violet-600 text-white",
-};
-
-const sourceLabel: Record<CalendarSource, string> = {
-  duty: "Szolgálat",
-  exercise: "Gyakorlat",
-  training: "Kiképzés",
-  event: "Esemény",
-};
-
-function isoDate(value: string) {
-  return value.slice(0, 10);
-}
-
-function monthGrid(year: number, monthIndex: number) {
-  const firstDay = new Date(year, monthIndex, 1).getDay();
-  const offset = (firstDay + 6) % 7;
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-
-  return Array.from({ length: 42 }, (_, i) => {
-    const day = i - offset + 1;
-    return day >= 1 && day <= daysInMonth ? day : null;
-  });
-}
-
-function segmentForDate(dateStr: string, startDate: string, endDate: string): SegmentPosition {
-  const start = isoDate(startDate);
-  const end = isoDate(endDate);
-  if (start === end) return "single";
-  if (dateStr === start) return "start";
-  if (dateStr === end) return "end";
-  return "middle";
-}
-
-function segmentStyle(segment: SegmentPosition): React.CSSProperties {
-  const overlap = -4;
-  if (segment === "single") return { borderRadius: "2px" };
-  if (segment === "start") {
-    return {
-      borderTopLeftRadius: "2px",
-      borderBottomLeftRadius: "2px",
-      borderTopRightRadius: 0,
-      borderBottomRightRadius: 0,
-      marginRight: overlap,
-    };
-  }
-  if (segment === "end") {
-    return {
-      borderTopLeftRadius: 0,
-      borderBottomLeftRadius: 0,
-      borderTopRightRadius: "2px",
-      borderBottomRightRadius: "2px",
-      marginLeft: overlap,
-    };
-  }
-  return {
-    borderRadius: 0,
-    marginLeft: overlap,
-    marginRight: overlap,
-  };
-}
 
 function formatDate(value: string) {
   const parsed = new Date(value);
@@ -110,24 +22,21 @@ export default function CalendarPage() {
   const navigate = useNavigate();
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [exercisesData, setExercisesData] = useState<Exercise[]>([]);
-  const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
 
   const year = monthCursor.getFullYear();
   const monthIndex = monthCursor.getMonth();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = toIso(new Date());
 
   const refresh = useCallback(async () => {
     try {
-      const [nextExercises, nextTrainings, nextEvents] = await Promise.all([
+      const [nextExercises, nextEvents] = await Promise.all([
         exercises.getAll(),
-        trainings.getAll(),
         events.getAll(),
       ]);
       setExercisesData(nextExercises);
-      setTrainingsData(nextTrainings);
       setEventsData(nextEvents);
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -138,96 +47,78 @@ export default function CalendarPage() {
   useAutoRefresh(refresh);
 
   const allItems = useMemo<CalendarItem[]>(() => {
-    // A szolgálat is gyakorlat: a típusa mondja meg, a naptárban külön színt kap.
-    const exerciseItems: CalendarItem[] = exercisesData.map((item) => {
-      const duty = isDutyType(item.type);
-      const names = item.assigned.map((a) => a.personName).filter(Boolean);
-      return {
+    // A szolgálat is művelet: a típusa mondja meg; a naptárban a típus adja a színt.
+    const exerciseItems: CalendarItem[] = exercisesData
+      .filter((item) => item.status !== "Lemondva")
+      .map((item) => {
+        const duty = isDutyType(item.type);
+        const names = item.assigned.map((a) => a.personName).filter(Boolean);
+        return {
+          id: item.id,
+          source: duty ? "duty" : "exercise",
+          name: item.name,
+          kind: item.type || "Gyakorlat",
+          dutyType: duty ? item.type : "",
+          startDate: item.startDate,
+          endDate: item.endDate,
+          location: item.location || "Nincs helyszín",
+          status: item.status,
+          peopleSummary: duty && names.length > 0 ? names.join(", ") : `${item.assigned.length}/${item.maxPersonnel} fő`,
+          peopleCount: item.assigned.length,
+        };
+      });
+
+    const eventItems: CalendarItem[] = eventsData
+      .filter((item) => !["Lemondva", "Törölve"].includes(item.status as string))
+      .map((item) => ({
         id: item.id,
-        source: duty ? "duty" : "exercise",
+        source: "event",
         name: item.name,
-        dutyType: duty ? item.type : "",
+        kind: item.type || "Esemény",
+        dutyType: "",
         startDate: item.startDate,
         endDate: item.endDate,
         location: item.location || "Nincs helyszín",
         status: item.status,
-        peopleSummary: duty && names.length > 0 ? names.join(", ") : `${item.assigned.length}/${item.maxPersonnel} fő`,
+        peopleSummary: `${item.assigned.length}/${item.maxPersonnel} fő`,
         peopleCount: item.assigned.length,
-      };
-    });
+      }));
 
-    const trainingItems: CalendarItem[] = trainingsData.map((item) => ({
-      id: item.id,
-      source: "training",
-      name: item.name,
-      dutyType: "",
-      startDate: item.startDate,
-      endDate: item.endDate,
-      location: item.location || "Nincs helyszín",
-      status: item.status,
-      peopleSummary: `${item.assigned.length}/${item.maxPersonnel} fő`,
-      peopleCount: item.assigned.length,
-    }));
-
-    const eventItems: CalendarItem[] = eventsData.map((item) => ({
-      id: item.id,
-      source: "event",
-      name: item.name,
-      dutyType: "",
-      startDate: item.startDate,
-      endDate: item.endDate,
-      location: item.location || "Nincs helyszín",
-      status: item.status,
-      peopleSummary: `${item.assigned.length}/${item.maxPersonnel} fő`,
-      peopleCount: item.assigned.length,
-    }));
-
-    return [...exerciseItems, ...trainingItems, ...eventItems].sort((a, b) => {
+    return [...exerciseItems, ...eventItems].sort((a, b) => {
       return a.startDate.localeCompare(b.startDate) || a.name.localeCompare(b.name, "hu");
     });
-  }, [eventsData, exercisesData, trainingsData]);
+  }, [eventsData, exercisesData]);
 
-  const days = useMemo(() => monthGrid(year, monthIndex), [monthIndex, year]);
+  const weeks = useMemo(() => monthWeeks(year, monthIndex), [monthIndex, year]);
+  const monthStart = weeks[0][0];
+  const monthEnd = weeks[5][6];
 
-  const dayEntries = useMemo(() => {
-    const map = new Map<number, DayEntry[]>();
-    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const dateStr = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const entries = allItems
-        .filter((item) => isoDate(item.startDate) <= dateStr && isoDate(item.endDate) >= dateStr)
-        .map((item) => ({ item, segment: segmentForDate(dateStr, item.startDate, item.endDate) }))
-        .sort((a, b) => a.item.source.localeCompare(b.item.source) || a.item.name.localeCompare(b.item.name, "hu"));
-
-      map.set(day, entries);
-    }
-
-    return map;
-  }, [allItems, monthIndex, year]);
+  const monthItems = useMemo(
+    () => allItems.filter((it) => isoDate(it.startDate) <= monthEnd && isoDate(it.endDate) >= monthStart),
+    [allItems, monthStart, monthEnd],
+  );
+  const colorOf = useMemo(() => buildColorMap([...new Set(monthItems.map((it) => it.kind))].sort((a, b) => a.localeCompare(b, "hu"))), [monthItems]);
+  const legend = useMemo(() => [...colorOf.entries()], [colorOf]);
+  const rows = useMemo(() => weeks.map((week) => ({ week, bars: weekBars(week, monthItems) })), [weeks, monthItems]);
 
   const openSelectedItem = useCallback(() => {
     if (!selectedItem) return;
-
-    if (selectedItem.source === "duty" || selectedItem.source === "exercise") {
+    if (selectedItem.source === "event") {
+      navigate("/events", { state: { openEventId: selectedItem.id } });
+    } else {
       navigate("/operations?source=exercise", {
         state: { openOperationId: selectedItem.id, openOperationSource: "exercise" },
       });
-    } else if (selectedItem.source === "training") {
-      navigate("/operations?source=training", {
-        state: { openOperationId: selectedItem.id, openOperationSource: "training" },
-      });
-    } else {
-      navigate("/events", { state: { openEventId: selectedItem.id } });
     }
-
     setSelectedItem(null);
   }, [navigate, selectedItem]);
 
+  const monthPrefix = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+
   return (
-    // A naptár a képernyőhöz igazodik: az oldal nem görget, a napok cellái belül görgetnek.
+    // A naptár a képernyőhöz igazodik: az oldal nem görget, a hetek belül görgetnek.
     <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[520px]">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Közös naptár</h1>
         <div className="flex items-center gap-2">
           <button onClick={() => setMonthCursor(new Date(year, monthIndex - 1, 1))} className="btn-mil-secondary text-xs">◀</button>
@@ -235,92 +126,96 @@ export default function CalendarPage() {
             {monthCursor.toLocaleDateString("hu-HU", { year: "numeric", month: "long" })}
           </p>
           <button onClick={() => setMonthCursor(new Date(year, monthIndex + 1, 1))} className="btn-mil-secondary text-xs">▶</button>
+          <button onClick={() => setMonthCursor(new Date())} className="btn-mil-secondary text-xs">Ma</button>
         </div>
-      </div>
-
-      <div className="mb-3 bg-card border border-border" style={{ borderRadius: "2px" }}>
-        <button onClick={() => setAvailabilityOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs uppercase tracking-military font-mono text-primary hover:bg-secondary/40">
-          {availabilityOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        {/* A foglaltság-kereső külön ablakban él: nem vonja el a figyelmet a naptártól. */}
+        <button onClick={() => setAvailabilityOpen(true)} className="btn-mil-secondary text-xs flex items-center gap-2" title="Szabad-e a helyszín egy adott időszakban?">
           <CalendarSearch className="w-4 h-4" />
-          Foglaltság-kereső — szabad-e a helyszín?
+          Foglaltság-kereső
         </button>
-        {availabilityOpen && <div className="px-3 pb-3"><AvailabilityPanel embedded /></div>}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        {(["duty", "exercise", "training", "event"] as CalendarSource[]).map((source) => (
-          <span
-            key={source}
-            className={`inline-flex items-center px-2 py-0.5 text-[10px] uppercase tracking-military font-mono ${sourceClass[source]}`}
-            style={{ borderRadius: "2px" }}
-          >
-            {sourceLabel[source]}
-          </span>
-        ))}
-      </div>
+      {legend.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {legend.map(([kind, cls]) => (
+            <span key={kind} className={`inline-flex items-center px-2 py-0.5 text-[10px] uppercase tracking-military font-mono text-white ${cls}`} style={{ borderRadius: "2px" }}>
+              {kind}
+            </span>
+          ))}
+        </div>
+      )}
 
-      <div className="grid grid-cols-7 gap-px bg-border flex-1 min-h-0" style={{ gridTemplateRows: "auto repeat(6, minmax(0, 1fr))" }}>
-        {weekdayLabels.map((label) => (
-          <div key={label} className="bg-background px-2 py-1.5 text-center text-xs uppercase tracking-military text-muted-foreground">{label}</div>
-        ))}
+      <div className="flex flex-col flex-1 min-h-0 border border-border bg-border gap-px" style={{ borderRadius: "2px" }}>
+        <div className="grid grid-cols-7 gap-px shrink-0">
+          {weekdayLabels.map((label, i) => (
+            <div key={`${label}-${i}`} className="bg-background px-2 py-1.5 text-center text-xs uppercase tracking-military text-muted-foreground">{label}</div>
+          ))}
+        </div>
 
-        {days.map((day, index) => {
-          if (!day) {
-            return <div key={`empty-${index}`} className="bg-card opacity-30" />;
-          }
-
-          const dateStr = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-          const isToday = dateStr === todayIso;
-
-          return (
-            <div
-              key={`${index}-${day}`}
-              className={`bg-card p-1.5 flex flex-col min-h-0 ${isToday ? "ring-2 ring-primary/80 bg-primary/5" : ""}`}
-            >
-              <p className={`text-xs font-mono mb-1 shrink-0 ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>{day}</p>
-              <div className="space-y-1 flex-1 min-h-0 overflow-y-auto pr-0.5">
-                {(dayEntries.get(day) || []).map(({ item, segment }) => {
-                  const line = item.source === "duty" ? item.peopleSummary : item.name;
+        {rows.map(({ week, bars }) => (
+          <div key={week[0]} className="relative flex-1 min-h-0 grid grid-cols-7 gap-px">
+            {/* Napok háttere és számai */}
+            {week.map((dateStr) => {
+              const inMonth = dateStr.startsWith(monthPrefix);
+              const isToday = dateStr === todayIso;
+              return (
+                <div key={dateStr} className={`bg-card p-1.5 min-h-0 ${inMonth ? "" : "opacity-40"} ${isToday ? "ring-2 ring-inset ring-primary/80 bg-primary/5" : ""}`}>
+                  <p className={`text-xs font-mono ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>{Number(dateStr.slice(8, 10))}</p>
+                </div>
+              );
+            })}
+            {/* Sávok: egy elem egy folytonos csík a hét oszlopain át */}
+            <div className="absolute inset-x-0 top-6 bottom-0 overflow-y-auto pr-0.5">
+              <div className="grid grid-cols-7 gap-px auto-rows-[22px] gap-y-0.5">
+                {bars.map((bar) => {
+                  const it = bar.item;
+                  const line = it.source === "duty" ? `${it.dutyType}: ${it.peopleSummary}` : it.name;
                   return (
                     <button
-                      key={`${item.source}-${item.id}-${day}`}
-                      onClick={() => setSelectedItem(item)}
-                      className={`w-full text-left text-[11px] px-1.5 py-0.5 leading-tight transition-all hover:brightness-110 ${sourceClass[item.source]}`}
-                      style={segmentStyle(segment)}
-                      title={line}
+                      key={`${it.source}-${it.id}`}
+                      onClick={() => setSelectedItem(it)}
+                      className={`text-left text-[11px] px-1.5 leading-[22px] truncate text-white transition-all hover:brightness-110 ${colorOf.get(it.kind) ?? PALETTE[0]}`}
+                      style={{
+                        gridColumn: `${bar.startCol + 1} / span ${bar.span}`,
+                        gridRow: bar.lane + 1,
+                        marginLeft: bar.continuesLeft ? 0 : 4,
+                        marginRight: bar.continuesRight ? 0 : 4,
+                        borderTopLeftRadius: bar.continuesLeft ? 0 : 2,
+                        borderBottomLeftRadius: bar.continuesLeft ? 0 : 2,
+                        borderTopRightRadius: bar.continuesRight ? 0 : 2,
+                        borderBottomRightRadius: bar.continuesRight ? 0 : 2,
+                      }}
+                      title={`${line} · ${formatDate(it.startDate)} → ${formatDate(it.endDate)}`}
                       aria-label={line}
                     >
-                      {item.source === "duty" ? (
-                        <>
-                          <span className="block truncate font-semibold leading-tight">{item.dutyType}</span>
-                          <span className="block truncate opacity-90 leading-tight">{item.peopleSummary}</span>
-                        </>
-                      ) : (
-                        <span className="block truncate">{item.name}</span>
-                      )}
+                      {bar.continuesLeft && <span className="opacity-70 mr-1">…</span>}
+                      {it.source === "duty" ? <><span className="font-semibold">{it.dutyType}</span> · {it.peopleSummary}</> : it.name}
                     </button>
                   );
                 })}
               </div>
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
+      <Modal open={availabilityOpen} onClose={() => setAvailabilityOpen(false)} title="Foglaltság-kereső — szabad-e a helyszín?" wide>
+        <AvailabilityPanel embedded />
+      </Modal>
 
-      <Modal open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem ? `${sourceLabel[selectedItem.source]} részletei` : "Részletek"}>
+      <Modal open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem ? `${selectedItem.kind} részletei` : "Részletek"}>
         {selectedItem && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="text-muted-foreground text-xs uppercase tracking-military">Forrás</span>
-                <p className={`inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${sourceClass[selectedItem.source]}`} style={{ borderRadius: "2px" }}>
-                  {sourceLabel[selectedItem.source]}
+                <span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span>
+                <p className={`inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 text-white ${colorOf.get(selectedItem.kind) ?? PALETTE[0]}`} style={{ borderRadius: "2px" }}>
+                  {selectedItem.kind}
                 </p>
               </div>
               <div>
-                <span className="text-muted-foreground text-xs uppercase tracking-military">Név / Típus</span>
-                <p className="mt-1">{selectedItem.source === "duty" ? `${selectedItem.dutyType} - ${selectedItem.name}` : selectedItem.name}</p>
+                <span className="text-muted-foreground text-xs uppercase tracking-military">Név</span>
+                <p className="mt-1">{selectedItem.name}</p>
               </div>
               <div>
                 <span className="text-muted-foreground text-xs uppercase tracking-military">Kezdet / Vég</span>
@@ -335,7 +230,7 @@ export default function CalendarPage() {
                 <p className="mt-1">{selectedItem.status}</p>
               </div>
               <div>
-                <span className="text-muted-foreground text-xs uppercase tracking-military">Személy összegzés</span>
+                <span className="text-muted-foreground text-xs uppercase tracking-military">Résztvevők</span>
                 <p className="mt-1">{selectedItem.peopleSummary}{selectedItem.source === "duty" ? "" : ` (${selectedItem.peopleCount} fő)`}</p>
               </div>
             </div>

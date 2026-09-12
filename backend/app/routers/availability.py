@@ -13,14 +13,13 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from ..core.dependencies import DB, Reader
-from ..models import visible_events, EventModel, ExerciseModel, TrainingModel
+from ..models import visible_events, EventModel, ExerciseModel
 
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
 
 _SOURCES = [
     ("exercise", ExerciseModel),
-    ("training", TrainingModel),
     ("event", EventModel),
 ]
 # Ezek nem foglalják az erőforrást.

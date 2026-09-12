@@ -16,7 +16,7 @@ from ..appliers import apply_event
 from ..constants import DUTY_EXERCISE_TYPES, SHADOW_EVENT_TYPE
 from ..core.time import parse_iso_date, utc_now
 from ..participants import load_participants_by_event
-from ..serializers import serialize_event, serialize_exercise, serialize_training
+from ..serializers import serialize_event, serialize_exercise
 from ..models import (
     visible_events,
     EventModel,
@@ -24,7 +24,6 @@ from ..models import (
     MaterialRequirementModel,
     OperationAttendanceModel,
     OperationDocumentModel,
-    TrainingModel,
     UserModel,
 )
 from ..schemas import (
@@ -60,8 +59,8 @@ def _content_disposition_filename(original_name: str) -> str:
     return f"filename*=UTF-8''{quote(original_name)}"
 
 
-def _build_shadow_event(operation_id: str, source: ExerciseModel | TrainingModel, source_kind: str) -> EventModel:
-    organizer = "" if source_kind == "exercise" else (source.organizer or "")
+def _build_shadow_event(operation_id: str, source: ExerciseModel, source_kind: str) -> EventModel:
+    organizer = source.organizer or ""
     return EventModel(
         id=operation_id,
         event_type=SHADOW_EVENT_TYPE,
@@ -88,11 +87,6 @@ def require_event(db: Session, operation_id: str) -> EventModel:
     exercise = db.get(ExerciseModel, operation_id)
     if exercise:
         shadow = _build_shadow_event(operation_id, exercise, "exercise")
-
-    if shadow is None:
-        training = db.get(TrainingModel, operation_id)
-        if training:
-            shadow = _build_shadow_event(operation_id, training, "training")
 
     if shadow is None:
         raise HTTPException(status_code=404, detail="A művelet nem található")
@@ -214,13 +208,18 @@ def _operation_upload_dir(operation_id: str) -> Path:
 
 
 def operations_now_data(db: Session) -> dict[str, Any]:
-    """Futó (ma zajló, nem lemondott) műveletek a beosztottakkal, és a mai események."""
+    """Futó (ma zajló, nem lemondott) műveletek a beosztottakkal, a mai események,
+    és a következő 7 napban INDULÓ műveletek (a sorozat-elemek is)."""
+    from datetime import timedelta
+
     from ..constants import DUTY_EXERCISE_TYPES
     from ..models import ParticipantModel, PersonModel
 
-    today = utc_now().date().isoformat()
+    today_date = utc_now().date()
+    today = today_date.isoformat()
+    week_end = (today_date + timedelta(days=7)).isoformat()
     running: list[dict[str, Any]] = []
-    for source, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+    for source, model in (("exercise", ExerciseModel),):
         for item in db.scalars(
             select(model).where(model.status != "Lemondva", model.start_date <= today + "T23:59", model.end_date >= today)
             .order_by(model.start_date)
@@ -267,7 +266,23 @@ def operations_now_data(db: Session) -> dict[str, Any]:
             .order_by(EventModel.start_date)
         ).all()
     ]
-    return {"date": today, "running": running, "onTask": on_task, "onTaskPeople": len({x["personnelId"] for x in on_task}), "todayEvents": today_events}
+    upcoming = [
+        {"id": item.id, "source": "exercise", "name": item.name, "type": item.type,
+         "isDuty": item.type in DUTY_EXERCISE_TYPES, "seriesId": item.series_id or "",
+         "startDate": item.start_date, "endDate": item.end_date, "location": item.location or ""}
+        for item in db.scalars(
+            select(ExerciseModel).where(
+                ExerciseModel.status != "Lemondva",
+                ExerciseModel.start_date > today + "T23:59",
+                ExerciseModel.start_date <= week_end + "T23:59",
+            ).order_by(ExerciseModel.start_date, ExerciseModel.name)
+        ).all()
+    ]
+    return {
+        "date": today, "running": running, "onTask": on_task,
+        "onTaskPeople": len({x["personnelId"] for x in on_task}),
+        "todayEvents": today_events, "upcoming": upcoming,
+    }
 
 
 def list_operations_data(db: Session) -> list[OperationRead]:
@@ -279,9 +294,7 @@ def list_operations_data(db: Session) -> list[OperationRead]:
     sync_temporal_statuses(db)
 
     exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-    trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
     participants_by_exercise = load_participants_by_event(db, "exercise")
-    participants_by_training = load_participants_by_event(db, "training")
 
     ops: list[OperationRead] = []
     for ex in exercises:
@@ -289,17 +302,8 @@ def list_operations_data(db: Session) -> list[OperationRead]:
         ops.append(OperationRead(
             id=ex.id, name=ex.name, type=ex.type, operationType="exercise",
             startDate=ex.start_date, endDate=ex.end_date, location=ex.location,
-            organizer=None, maxPersonnel=ex.max_personnel, description=ex.description,
+            organizer=ex.organizer or "", maxPersonnel=ex.max_personnel, description=ex.description,
             status=ex.status, assigned=[a.model_dump() for a in serialized.assigned],
-        ))
-    for tr in trainings:
-        serialized = serialize_training(db, tr, participants_by_training.get(tr.id, []))
-        ops.append(OperationRead(
-            id=tr.id, name=tr.name, type=tr.type, operationType="training",
-            startDate=tr.start_date, endDate=tr.end_date, location=tr.location,
-            organizer=tr.organizer or "", maxPersonnel=tr.max_personnel,
-            description=tr.description, status=tr.status,
-            assigned=[a.model_dump() for a in serialized.assigned],
         ))
     ops.sort(key=lambda x: x.startDate)
     return ops

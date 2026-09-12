@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from ..campaign_export import build_pdf, build_xlsx
 from ..core.dependencies import DB, Editor, Reader
-from ..models import ExerciseModel, ParticipantModel, PersonModel, TrainingModel, new_id
+from ..models import ExerciseModel, ParticipantModel, PersonModel, new_id
 from ..participants import get_participants
 from ..schemas import (
     ApplicantAmbiguous,
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api/campaign", tags=["campaign"])
 
 _APPLICANT_STATUS = "Jelentkezett"
 _DISCHARGED_STATUS = "Leszerelt"
-_EVENT_MODELS = {"exercise": ExerciseModel, "training": TrainingModel}
+_EVENT_MODELS = {"exercise": ExerciseModel}
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _SZTSZ_PATTERN = re.compile(r"\b(\d{8}|[A-Za-z]{2}\d{6})\b")
 
@@ -45,7 +45,7 @@ _SZTSZ_PATTERN = re.compile(r"\b(\d{8}|[A-Za-z]{2}\d{6})\b")
 def _load_event(db, event_type: str, event_id: str):
     model = _EVENT_MODELS.get(event_type)
     if model is None:
-        raise HTTPException(status_code=400, detail="Kampányterv csak gyakorlathoz vagy kiképzéshez készíthető")
+        raise HTTPException(status_code=400, detail="Kampányterv csak művelethez készíthető")
     item = db.get(model, event_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Az esemény nem található")

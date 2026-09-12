@@ -5,8 +5,7 @@ import { toast } from 'sonner';
 import { CalendarSearch, MapPin } from 'lucide-react';
 
 const TYPE_LABEL: Record<Booking['eventType'], string> = {
-  exercise: 'Gyakorlat',
-  training: 'Kiképzés',
+  exercise: 'Művelet',
   event: 'Esemény',
 };
 

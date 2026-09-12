@@ -11,12 +11,12 @@ from .services.lifecycle import apply_status
 from .models import (
     DutyModel, EquipmentModel, EventModel, EventPrerequisiteModel, ExerciseModel,
     ParticipantModel, PersonModel, PersonnelQualificationModel, QualificationTypeModel,
-    SupplyModel, TrainingModel, VehicleModel, new_id,
+    SupplyModel, VehicleModel, new_id,
 )
 from .schemas import (
     DutyCreate, DutyUpdate, EquipmentCreate, EquipmentUpdate, EventCreate, EventUpdate,
     ExerciseCreate, ExerciseUpdate, PersonCreate, PersonUpdate, SupplyCreate, SupplyUpdate,
-    TrainingCreate, TrainingUpdate, VehicleCreate, VehicleUpdate,
+    VehicleCreate, VehicleUpdate,
 )
 
 
@@ -27,6 +27,7 @@ def apply_person(target: PersonModel, payload: PersonCreate | PersonUpdate) -> N
     target.unit = payload.unit
     target.beosztas = payload.beosztas
     target.status = payload.status
+    target.service_type = payload.serviceType
     target.email = payload.email
     target.phone = payload.phone
     target.birth_date = payload.birthDate
@@ -41,6 +42,7 @@ def apply_exercise(target: ExerciseModel, payload: ExerciseCreate | ExerciseUpda
     target.start_date = payload.startDate
     target.end_date = payload.endDate
     target.location = payload.location
+    target.organizer = payload.organizer
     target.max_personnel = payload.maxPersonnel
     target.description = payload.description
     apply_status(target, payload.status)
@@ -105,7 +107,7 @@ def auto_chain_prerequisites(db: Session, event_type: str, event_id: str, series
         return
     key = (module_name or "").strip().lower()
     qual_ids: set[str] = set()
-    for model in (ExerciseModel, TrainingModel):
+    for model in (ExerciseModel,):
         for item in db.scalars(select(model).where(model.series_id == series_id, model.level == prev_level)).all():
             if (item.name or "").strip().lower() != key:
                 continue
@@ -122,22 +124,6 @@ def auto_chain_prerequisites(db: Session, event_type: str, event_id: str, series
     for qual_id in qual_ids:
         if qual_id not in existing:
             db.add(EventPrerequisiteModel(id=new_id(), event_type=event_type, event_id=event_id, qual_type_id=qual_id))
-
-
-def apply_training(target: TrainingModel, payload: TrainingCreate | TrainingUpdate) -> None:
-    target.name = payload.name
-    target.type = payload.type
-    target.start_date = payload.startDate
-    target.end_date = payload.endDate
-    target.location = payload.location
-    target.organizer = payload.organizer
-    target.qualification_id = payload.qualificationId
-    target.max_personnel = payload.maxPersonnel
-    target.description = payload.description
-    apply_status(target, payload.status)
-    target.series_id = payload.seriesId
-    target.level = payload.level
-    # assigned is managed via participants table; caller must call sync_participants
 
 
 def apply_event(target: EventModel, payload: EventCreate | EventUpdate) -> None:

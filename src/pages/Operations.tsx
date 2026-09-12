@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
-import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, checkPersonConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
-import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, PersonLite, QualificationType, Series } from "@/lib/types";
+import { exercises, series as seriesStore, personnel as pStore, checkLocationConflicts, checkPersonConflicts, movePersonFromConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type PersonConflict, type SeriesMatrix } from "@/lib/store";
+import type { Exercise, ExerciseAssignment, PersonLite, QualificationType, Series } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -17,7 +17,8 @@ import { toast } from "sonner";
 
 // A művelet státusza megegyezik a gyakorlatéval — egy igazságforrás, nincs másolat.
 type OperationStatus = Exercise["status"];
-type OperationSource = "exercise" | "training";
+// A kiképzés beolvadt a műveletbe: egyetlen forrás maradt, a URL/állapot-átadás kedvéért marad a mező.
+type OperationSource = "exercise";
 
 type OperationItemBase = {
   id: string;
@@ -26,6 +27,7 @@ type OperationItemBase = {
   startDate: string;
   endDate: string;
   location: string;
+  organizer: string;
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
@@ -33,14 +35,7 @@ type OperationItemBase = {
   level: string;
 };
 
-/**
- * A `source` diszkriminátor dönti el, milyen beosztás tartozik az elemhez:
- * gyakorlatnál van `role`, kiképzésnél nincs. Így a fordító őrzi, hogy a
- * szerep-mezőt csak gyakorlaton olvassuk ki.
- */
-type OperationItem =
-  | (OperationItemBase & { source: "exercise"; assigned: ExerciseAssignment[] })
-  | (OperationItemBase & { source: "training"; assigned: TrainingAssignment[] });
+type OperationItem = OperationItemBase & { source: OperationSource; assigned: ExerciseAssignment[] };
 
 type CreateForm = {
   source: OperationSource;
@@ -129,24 +124,7 @@ function normalizeExercise(item: Exercise): OperationItem {
     startDate: item.startDate,
     endDate: item.endDate,
     location: item.location,
-    maxPersonnel: item.maxPersonnel,
-    description: item.description,
-    status: item.status,
-    seriesId: item.seriesId ?? "",
-    level: item.level ?? "",
-    assigned: item.assigned,
-  };
-}
-
-function normalizeTraining(item: Training): OperationItem {
-  return {
-    id: item.id,
-    source: "training",
-    name: item.name,
-    type: item.type,
-    startDate: item.startDate,
-    endDate: item.endDate,
-    location: item.location,
+    organizer: item.organizer ?? "",
     maxPersonnel: item.maxPersonnel,
     description: item.description,
     status: item.status,
@@ -171,11 +149,9 @@ export default function Operations() {
   const [newSeriesDesc, setNewSeriesDesc] = useState("");
   const [savingSeries, setSavingSeries] = useState(false);
   const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
-  const [rawTrainings, setRawTrainings] = useState<Training[]>([]);
   const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
-  const [sourceFilter, setSourceFilter] = useState<"all" | OperationSource>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [detail, setDetail] = useState<OperationItem | null>(null);
@@ -206,6 +182,9 @@ export default function Operations() {
 
   const [deleteTarget, setDeleteTarget] = useState<OperationItem | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OperationItem | null>(null);
+  // Személy-ütközés a beosztásnál: a beosztás megáll, amíg az ügyintéző nem dönt.
+  const [overlap, setOverlap] = useState<{ person: PersonLite; clashes: PersonConflict[] } | null>(null);
+  const [overlapBusy, setOverlapBusy] = useState(false);
   const [addPersonId, setAddPersonId] = useState("");
   const [addPersonRole, setAddPersonRole] = useState("résztvevő");
   const [eligibilityMap, setEligibilityMap] = useState<Record<string, { eligible: boolean; missing: string[] }>>({});
@@ -247,15 +226,13 @@ export default function Operations() {
 
   const refresh = useCallback(async () => {
     try {
-      const [exerciseData, trainingData, seriesData] = await Promise.all([
+      const [exerciseData, seriesData] = await Promise.all([
         exercises.getAll(),
-        trainings.getAll(),
         seriesStore.getAll(),
       ]);
       setRawExercises(exerciseData);
-      setRawTrainings(trainingData);
       setSeriesList(seriesData);
-      const merged = [...exerciseData.map(normalizeExercise), ...trainingData.map(normalizeTraining)]
+      const merged = exerciseData.map(normalizeExercise)
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(merged);
       if (detailRef.current) {
@@ -277,24 +254,18 @@ export default function Operations() {
     pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
   }, []);
 
-  useEffect(() => {
-    const sourceParam = new URLSearchParams(location.search).get("source");
-    if (sourceParam === "exercise" || sourceParam === "training") setSourceFilter(sourceParam);
-    else setSourceFilter("all");
-  }, [location.search]);
-
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
       if (normalized && ![item.name, item.type, item.location, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
       if (filter !== "Összes" && item.status !== filter) return false;
-      if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
-      if (item.seriesId) return false;  // a sorozat-elemek a sorozat-kártyán belül jelennek meg
       return true;
     });
-  }, [data, search, filter, sourceFilter, dateFrom, dateTo]);
+  }, [data, search, filter, dateFrom, dateTo]);
+
+  const seriesNameById = useMemo(() => new Map(seriesList.map((sr) => [sr.id, sr.name])), [seriesList]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -312,20 +283,12 @@ export default function Operations() {
     }
   });
 
-  const sourceCounts = useMemo(
-    () => ({
-      exercise: data.filter((item) => item.source === "exercise").length,
-      training: data.filter((item) => item.source === "training").length,
-    }),
-    [data],
-  );
-
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
   useEffect(() => {
-    const navState = location.state as { openOperationId?: string; openOperationSource?: "exercise" | "training" } | null;
+    const navState = location.state as { openOperationId?: string; openOperationSource?: OperationSource } | null;
     if (!navState?.openOperationId || data.length === 0) return;
     const found = data.find((item) =>
       item.id === navState.openOperationId &&
@@ -374,64 +337,82 @@ export default function Operations() {
     return () => { active = false; };
   }, [detail]);
 
+  /** Tényleges felvétel a beosztásba (az ütközés-döntés után, vagy ha nincs ütközés). */
+  const commitAddPerson = async (p: PersonLite, notes = "") => {
+    if (!detail) return;
+    const raw = rawExercises.find((e) => e.id === detail.id);
+    if (!raw) return;
+    if (raw.assigned.some((a) => a.personId === p.id)) {
+      toast.info(`${p.name} már be van osztva ide.`);
+      return;
+    }
+    const newAssignment: ExerciseAssignment = {
+      personId: p.id, personName: p.name, role: addPersonRole,
+      attendance: "Tervezett", rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz, notes,
+    };
+    await exercises.update({ ...raw, assigned: [...raw.assigned, newAssignment] });
+    setAddPersonId("");
+    setAddPersonRole("résztvevő");
+    setPersonSearch("");
+    await refresh();
+    const elig = eligibilityMap[p.id];
+    if (elig && !elig.eligible) {
+      toast.warning(`Figyelem: ${p.name} nem teljesíti a követelményt (${elig.missing.join(", ")}). Beosztva — ellenőrizd.`);
+    } else {
+      toast.success("Személy hozzáadva");
+    }
+  };
+
   const addPerson = async () => {
     if (!detail || !addPersonId) return;
     const p = personnelData.find((x) => x.id === addPersonId);
     if (!p) return;
     try {
-      if (detail.source === "exercise") {
-        const raw = rawExercises.find((e) => e.id === detail.id);
-        if (!raw) return;
-        const newAssignment: ExerciseAssignment = {
-          personId: p.id, personName: p.name, role: addPersonRole,
-          attendance: "Tervezett", rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz,
-        };
-        await exercises.update({ ...raw, assigned: [...raw.assigned, newAssignment] });
-      } else {
-        const raw = rawTrainings.find((t) => t.id === detail.id);
-        if (!raw) return;
-        const newAssignment: TrainingAssignment = {
-          personId: p.id, personName: p.name, attendance: "Tervezett",
-          qualificationApproved: false, rank: p.rank, rankShort: shortRank(p.rank), sztsz: p.sztsz,
-        };
-        await trainings.update({ ...raw, assigned: [...raw.assigned, newAssignment] });
-      }
-      setAddPersonId("");
-      setAddPersonRole("résztvevő");
-      setPersonSearch("");
-      await refresh();
-      const elig = eligibilityMap[p.id];
-      if (elig && !elig.eligible) {
-        toast.warning(`Figyelem: ${p.name} nem teljesíti a követelményt (${elig.missing.join(", ")}). Beosztva — ellenőrizd.`);
-      } else {
-        toast.success("Személy hozzáadva");
-      }
-      // Ugyanez az ember máshol is be van osztva ugyanekkor? Figyelmeztetés, nem tiltás.
+      // Ugyanez az ember máshol is be van osztva ugyanekkor? Akkor a beosztás
+      // megáll, és az ügyintéző dönt (marad / átkerül / engedéllyel mindkettő).
+      let clashes: PersonConflict[] = [];
       try {
-        const clashes = await checkPersonConflicts(p.id, detail.startDate, detail.endDate, detail.source, detail.id);
-        if (clashes.length > 0) {
-          toast.warning(`${p.name} ekkor máshol is be van osztva: ${clashes.map((c) => `${c.eventName} (${c.startDate.slice(0, 10)}–${c.endDate.slice(0, 10)})`).join(", ")}.`, { duration: 8000 });
-        }
+        clashes = await checkPersonConflicts(p.id, detail.startDate, detail.endDate, detail.source, detail.id);
       } catch {
-        // az ütközés-ellenőrzés kiesése nem akadályozza a beosztást
+        toast.warning("Az ütközés-ellenőrzés nem érhető el — a beosztás ellenőrzés nélkül történik.");
       }
+      if (clashes.length > 0) {
+        setOverlap({ person: p, clashes });
+        return;
+      }
+      await commitAddPerson(p);
     } catch (error) {
       toast.error(getErrorMessage(error));
+    }
+  };
+
+  const resolveOverlap = async (decision: "keep" | "move" | "both") => {
+    if (!overlap || !detail) return;
+    if (decision === "keep") { setOverlap(null); return; }
+    setOverlapBusy(true);
+    try {
+      const names = overlap.clashes.map((c) => c.eventName).join(", ");
+      if (decision === "move") {
+        await movePersonFromConflicts(overlap.person.id, overlap.clashes.map((c) => ({ eventType: c.eventType, eventId: c.eventId })), detail.name);
+        await commitAddPerson(overlap.person, `Átkerült innen: ${names}`);
+        toast.info(`${overlap.person.name} a korábbi beosztásban „Visszamondta" lett (${names}).`);
+      } else {
+        await commitAddPerson(overlap.person, `Parancsnoki engedéllyel átfedésben: ${names}`);
+      }
+      setOverlap(null);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setOverlapBusy(false);
     }
   };
 
   const removePerson = async (personId: string) => {
     if (!detail) return;
     try {
-      if (detail.source === "exercise") {
-        const raw = rawExercises.find((e) => e.id === detail.id);
-        if (!raw) return;
-        await exercises.update({ ...raw, assigned: raw.assigned.filter((a) => a.personId !== personId) });
-      } else {
-        const raw = rawTrainings.find((t) => t.id === detail.id);
-        if (!raw) return;
-        await trainings.update({ ...raw, assigned: raw.assigned.filter((a) => a.personId !== personId) });
-      }
+      const raw = rawExercises.find((e) => e.id === detail.id);
+      if (!raw) return;
+      await exercises.update({ ...raw, assigned: raw.assigned.filter((a) => a.personId !== personId) });
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -440,23 +421,14 @@ export default function Operations() {
 
   const updateAttendance = async (personId: string, att: string) => {
     if (!detail) return;
-    const attendanceVal = att as TrainingAssignment["attendance"];
+    const attendanceVal = att as ExerciseAssignment["attendance"];
     try {
-      if (detail.source === "exercise") {
-        const raw = rawExercises.find((e) => e.id === detail.id);
-        if (!raw) return;
-        await exercises.update({
-          ...raw,
-          assigned: raw.assigned.map((a) => a.personId === personId ? { ...a, attendance: attendanceVal } : a),
-        });
-      } else {
-        const raw = rawTrainings.find((t) => t.id === detail.id);
-        if (!raw) return;
-        await trainings.update({
-          ...raw,
-          assigned: raw.assigned.map((a) => a.personId === personId ? { ...a, attendance: attendanceVal } : a),
-        });
-      }
+      const raw = rawExercises.find((e) => e.id === detail.id);
+      if (!raw) return;
+      await exercises.update({
+        ...raw,
+        assigned: raw.assigned.map((a) => a.personId === personId ? { ...a, attendance: attendanceVal } : a),
+      });
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -466,13 +438,11 @@ export default function Operations() {
   // ── Szerkesztés ────────────────────────────────────────────────────────────
 
   const openEdit = (item: OperationItem) => {
-    const rawTraining = item.source === "training" ? rawTrainings.find((t) => t.id === item.id) : undefined;
-    const rawExercise = item.source === "exercise" ? rawExercises.find((e) => e.id === item.id) : undefined;
-    const raw = rawTraining ?? rawExercise;
+    const raw = rawExercises.find((e) => e.id === item.id);
     setEditForm({
       name: item.name, type: item.type,
       startDate: item.startDate, endDate: item.endDate,
-      location: item.location, organizer: rawTraining?.organizer ?? "",
+      location: item.location, organizer: item.organizer,
       maxPersonnel: item.maxPersonnel, description: item.description,
       status: item.status,
       qualificationId: raw?.qualificationId ?? "", level: raw?.level ?? "", prerequisiteIds: [], seriesId: raw?.seriesId ?? "",
@@ -496,27 +466,16 @@ export default function Operations() {
     setEditErrors(errs);
     if (Object.keys(errs).length > 0) return;
     try {
-      if (editing.source === "exercise") {
-        const raw = rawExercises.find((e) => e.id === editing.id);
-        if (!raw) return;
-        await exercises.update({
-          ...raw, name: editForm.name, type: editForm.type,
-          startDate: editForm.startDate, endDate: editForm.endDate,
-          location: editForm.location, maxPersonnel: editForm.maxPersonnel,
-          description: editForm.description, status: editForm.status as Exercise["status"],
-          qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
-        });
-      } else {
-        const raw = rawTrainings.find((t) => t.id === editing.id);
-        if (!raw) return;
-        await trainings.update({
-          ...raw, name: editForm.name, type: editForm.type,
-          startDate: editForm.startDate, endDate: editForm.endDate,
-          location: editForm.location, organizer: editForm.organizer,
-          maxPersonnel: editForm.maxPersonnel, description: editForm.description,
-          status: editForm.status, qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
-        });
-      }
+      const raw = rawExercises.find((e) => e.id === editing.id);
+      if (!raw) return;
+      await exercises.update({
+        ...raw, name: editForm.name, type: editForm.type,
+        startDate: editForm.startDate, endDate: editForm.endDate,
+        location: editForm.location, organizer: editForm.organizer.trim(),
+        maxPersonnel: editForm.maxPersonnel,
+        description: editForm.description, status: editForm.status as Exercise["status"],
+        qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
+      });
       await prerequisites.set(editing.source, editing.id, editForm.prerequisiteIds);
       toast.success("Sikeresen mentve");
       setEditing(null);
@@ -529,11 +488,8 @@ export default function Operations() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      if (deleteTarget.source === "exercise") {
-        await exercises.remove(deleteTarget.id);
-      } else {
-        await trainings.remove(deleteTarget.id);
-      }      toast.success("Törölve");
+      await exercises.remove(deleteTarget.id);
+      toast.success("Törölve");
       setDetail(null);
       setDeleteTarget(null);
       await refresh();
@@ -613,7 +569,6 @@ export default function Operations() {
     if (!form.startDate) next.startDate = "Kötelező";
     if (!form.endDate) next.endDate = "Kötelező";
     if (form.startDate && form.endDate && form.endDate < form.startDate) next.endDate = "Vége >= Kezdete";
-    if (form.source === "training" && !form.organizer.trim()) next.organizer = "Kötelező";
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -627,11 +582,8 @@ export default function Operations() {
         location: form.location.trim(), maxPersonnel: form.maxPersonnel,
         description: form.description.trim(),
       };
-      if (form.source === "exercise") {
-        const created = await exercises.add({ ...common, status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
-        await prerequisites.set("exercise", created.id, form.prerequisiteIds);      } else {
-        const created = await trainings.add({ ...common, organizer: form.organizer.trim(), status: form.status, assigned: [], qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level });
-        await prerequisites.set("training", created.id, form.prerequisiteIds);      }
+      const created = await exercises.add({ ...common, organizer: form.organizer.trim(), status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
+      await prerequisites.set("exercise", created.id, form.prerequisiteIds);
       toast.success("Művelet létrehozva");
       setCreating(false);
       setForm(emptyCreateForm);
@@ -647,13 +599,8 @@ export default function Operations() {
     if (!detail) return;
     const status: OperationStatus = cancelled ? "Lemondva" : "Tervezett";
     try {
-      if (detail.source === "exercise") {
-        const raw = rawExercises.find((e) => e.id === detail.id);
-        if (raw) await exercises.update({ ...raw, status });
-      } else {
-        const raw = rawTrainings.find((t) => t.id === detail.id);
-        if (raw) await trainings.update({ ...raw, status });
-      }
+      const raw = rawExercises.find((e) => e.id === detail.id);
+      if (raw) await exercises.update({ ...raw, status });
       toast.success(cancelled ? "Művelet lemondva — nem számít bele semmibe." : "Lemondás visszavonva.");
       setCancelTarget(null);
       await refresh();
@@ -667,7 +614,7 @@ export default function Operations() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Műveletek</h1>
-          <p className="text-xs text-muted-foreground font-mono mt-1">Gyakorlatok + kiképzések egy nézetben</p>
+          <p className="text-xs text-muted-foreground font-mono mt-1">Gyakorlatok, kiképzések és szolgálatok egy helyen</p>
         </div>
         <div className="flex items-center gap-2">
           {canEdit && (
@@ -694,8 +641,7 @@ export default function Operations() {
             </button>
           )}
           <div className="hidden md:flex items-center gap-2 text-xs font-mono text-muted-foreground">
-            <span className="mono-chip">GYAKORLAT: {sourceCounts.exercise}</span>
-            <span className="mono-chip">KIKÉPZÉS: {sourceCounts.training}</span>
+            <span className="mono-chip">ÖSSZES: {data.length}</span>
           </div>
         </div>
       </div>
@@ -741,11 +687,6 @@ export default function Operations() {
             style={{ borderRadius: "2px" }}
           />
         </div>
-        {(["all", "exercise", "training"] as const).map((src) => (
-          <button key={src} onClick={() => { setSourceFilter(src); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${sourceFilter === src ? "btn-mil-primary" : "btn-mil-secondary"}`}>
-            {src === "all" ? "Összes forrás" : src === "exercise" ? "Gyakorlat" : "Kiképzés"}
-          </button>
-        ))}
         {["Összes", ...STATUSES].map((s) => (
           <button key={s} onClick={() => { setFilter(s as "Összes" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`}>
             {s === "Összes" ? s : STATUS_LABEL[s as OperationStatus]}
@@ -778,11 +719,15 @@ export default function Operations() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2 mb-2">
-                  {item.source === "exercise" ? <Crosshair className="w-3.5 h-3.5 text-primary" /> : <GraduationCap className="w-3.5 h-3.5 text-primary" />}
+                  <Crosshair className="w-3.5 h-3.5 text-primary" />
                   <span className="mono-chip text-xs">{typeMap[item.type] || item.type}</span>
-                  <span className="mono-chip text-[10px]">{item.source === "exercise" ? "GYAKORLAT" : "KIKÉPZÉS"}</span>
                   {item.level && (
                     <span className="mono-chip text-[10px] bg-primary/15 text-primary">{item.level}</span>
+                  )}
+                  {item.seriesId && (
+                    <span className="mono-chip text-[10px] flex items-center gap-1" title={`Sorozat: ${seriesNameById.get(item.seriesId) ?? ""}`}>
+                      <Layers className="w-3 h-3" />{seriesNameById.get(item.seriesId) ?? "Sorozat"}
+                    </span>
                   )}
                 </div>
                 <div className="space-y-1 text-sm text-muted-foreground">
@@ -919,30 +864,36 @@ export default function Operations() {
         </div>
       </Modal>
 
-      <Modal open={qualMgrOpen} onClose={() => setQualMgrOpen(false)} title="Képzettségek">
+      <Modal open={qualMgrOpen} onClose={() => setQualMgrOpen(false)} title="Képzettségek" wide>
         <div className="space-y-4">
-          <p className="text-xs text-muted-foreground">Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be.</p>
+          <p className="text-sm text-muted-foreground">Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be.</p>
           {canEdit && (
-            <div className="flex gap-2 items-end">
-              <div className="flex-1">
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto] items-end bg-secondary/30 border border-border p-3" style={{ borderRadius: "2px" }}>
+              <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Új képzettség neve</label>
-                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="pl. Gépjárművezető B" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
               </div>
-              <div className="w-40">
+              <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label>
                 <input value={newTypeCategory} onChange={(e) => setNewTypeCategory(e.target.value)} placeholder="Általános" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
               </div>
-              <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs">Létrehoz</button>
+              <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs whitespace-nowrap py-2">Létrehoz</button>
             </div>
           )}
-          <input value={qualMgrSearch} onChange={(e) => setQualMgrSearch(e.target.value)} placeholder="Szűrés név vagy kategória szerint…" className="w-full bg-input border border-border px-3 py-1.5 text-sm" style={{ borderRadius: "2px" }} />
-          <div className="border border-border max-h-[28rem] overflow-auto" style={{ borderRadius: "2px" }}>
-            <table className="w-full text-sm">
+          <input value={qualMgrSearch} onChange={(e) => setQualMgrSearch(e.target.value)} placeholder="Szűrés név vagy kategória szerint…" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+          <div className="border border-border max-h-[60vh] overflow-auto" style={{ borderRadius: "2px" }}>
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col className="w-[22%]" />
+                <col className="w-[16%]" />
+                {canEdit && <col className="w-[190px]" />}
+              </colgroup>
               <thead className="sticky top-0 bg-card">
                 <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
                   <th className="px-3 py-2">Név</th>
                   <th className="px-3 py-2">Kategória</th>
-                  <th className="px-3 py-2">Lejárat (nap)</th>
+                  <th className="px-3 py-2">Lejárat</th>
                   {canEdit && <th className="px-3 py-2"></th>}
                 </tr>
               </thead>
@@ -962,22 +913,6 @@ export default function Operations() {
 
       <Modal open={creating} onClose={() => setCreating(false)} title="Új művelet hozzáadása">
         <div className="space-y-3">
-          <div>
-            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Típus *</label>
-            <select
-              value={form.source}
-              onChange={(e) => {
-                const nextSource = e.target.value as OperationSource;
-                setForm((prev) => ({ ...prev, source: nextSource }));
-              }}
-              className="w-full bg-input border border-border px-3 py-2 text-sm"
-              style={{ borderRadius: "2px" }}
-            >
-              <option value="exercise">Gyakorlat</option>
-              <option value="training">Kiképzés</option>
-            </select>
-          </div>
-
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megnevezés *</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
@@ -1057,13 +992,10 @@ export default function Operations() {
             )}
           </div>
 
-          {form.source === "training" && (
-            <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező *</label>
-              <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-              {errors.organizer && <p className="text-destructive text-xs mt-1">{errors.organizer}</p>}
-            </div>
-          )}
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
+            <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} placeholder="pl. Kiképzési részleg" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+          </div>
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
@@ -1130,7 +1062,7 @@ export default function Operations() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mono-chip mt-1">{typeMap[detail.type] || detail.type}</p></div>
-              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Forrás</span><p className="mono-chip mt-1">{detail.source === "exercise" ? "Gyakorlat" : "Kiképzés"}</p></div>
+              {detail.organizer && <div><span className="text-muted-foreground text-xs uppercase tracking-military">Szervező</span><p className="mt-1">{detail.organizer}</p></div>}
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${statusClass[detail.status]}`} style={{ borderRadius: "2px" }}>{STATUS_LABEL[detail.status]}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Időszak</span><p className="font-mono text-primary text-sm mt-1">{formatDate(detail.startDate)} → {formatDate(detail.endDate)}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Helyszín</span><p className="mt-1">{detail.location || "Nincs megadva"}</p></div>
@@ -1150,7 +1082,7 @@ export default function Operations() {
                 <tr>
                   <th>Név</th>
                   <th>Rendfokozat / SZTSZ</th>
-                  <th>{detail.source === "exercise" ? "Beosztás" : "Jelenlét"}</th>
+                  <th>Beosztás / jelenlét</th>
                   {canEdit && <th></th>}
                 </tr>
               </thead>
@@ -1164,13 +1096,13 @@ export default function Operations() {
                   const rankLabel = String(a.rankShort ?? a.rank ?? "-");
                   const sztszLabel = String(a.sztsz ?? "-");
                   const att = String(a.attendance ?? "Tervezett");
-                  // Szerep csak a gyakorlat-beosztáson van; a fordító itt szűkít.
-                  const role = "role" in a ? a.role : "-";
+                  const role = a.role || "résztvevő";
                   const elig = eligibilityMap[personId];
                   return (
                     <tr key={`${personId}-${idx}`}>
                       <td>
                         {name}
+                        {a.notes && <span className="block text-[11px] text-amber-400 font-mono" title={a.notes}>{a.notes}</span>}
                         {elig && !elig.eligible && (
                           <span className="ml-2 text-warning text-xs font-mono" title={`Hiányzik: ${elig.missing.join(", ")}`}>
                             ⚠ {elig.missing.join(", ")}
@@ -1190,7 +1122,7 @@ export default function Operations() {
                           </select>
                         ) : (
                           <span className="text-brass font-mono text-xs">
-                            {detail.source === "exercise" ? role : att}
+                            {role} · {att}
                           </span>
                         )}
                       </td>
@@ -1245,17 +1177,15 @@ export default function Operations() {
                       })}
                   </select>
                 </div>
-                {detail.source === "exercise" && (
-                  <div className="w-40">
-                    <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Beosztás</label>
-                    <input
-                      value={addPersonRole}
-                      onChange={(e) => setAddPersonRole(e.target.value)}
-                      className="w-full bg-input border border-border px-3 py-2 text-sm"
-                      style={{ borderRadius: "2px" }}
-                    />
-                  </div>
-                )}
+                <div className="w-40">
+                  <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Beosztás</label>
+                  <input
+                    value={addPersonRole}
+                    onChange={(e) => setAddPersonRole(e.target.value)}
+                    className="w-full bg-input border border-border px-3 py-2 text-sm"
+                    style={{ borderRadius: "2px" }}
+                  />
+                </div>
                 <button onClick={() => { void addPerson(); }} className="btn-mil-primary text-xs">Hozzáadás</button>
               </div>
             )}
@@ -1327,12 +1257,10 @@ export default function Operations() {
               )}
             </div>
 
-            {editing.source === "training" && (
-              <div>
-                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
-                <input value={editForm.organizer} onChange={(e) => setEditForm({ ...editForm, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-              </div>
-            )}
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
+              <input value={editForm.organizer} onChange={(e) => setEditForm({ ...editForm, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            </div>
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
@@ -1415,6 +1343,40 @@ export default function Operations() {
         onConfirm={() => { void setCancelled(true); }}
         message={`Lemondod a műveletet: „${cancelTarget?.name}"? A lemondott művelet nem számít bele semmibe (képesítés, éves szolgálati napok), a beosztás megmarad.`}
       />
+      {/* ── Személy-ütközés: döntés a beosztás előtt ─────────────────────── */}
+      <Modal open={!!overlap} onClose={() => { if (!overlapBusy) setOverlap(null); }} title="Ütköző beosztás">
+        {overlap && detail && (
+          <div className="space-y-4">
+            <p className="text-sm">
+              <span className="font-bold">{overlap.person.name}</span> ekkor már be van osztva máshová:
+            </p>
+            <ul className="text-sm border border-border divide-y divide-border/50" style={{ borderRadius: "2px" }}>
+              {overlap.clashes.map((c) => (
+                <li key={`${c.eventType}-${c.eventId}`} className="px-3 py-2 flex justify-between gap-3">
+                  <span className="font-medium">{c.eventName}</span>
+                  <span className="font-mono text-xs text-muted-foreground shrink-0">{c.startDate.slice(0, 10)} – {c.endDate.slice(0, 10)} · {c.participantStatus}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">Ide: <span className="text-foreground">{detail.name}</span> ({formatDate(detail.startDate)} → {formatDate(detail.endDate)}). Mi legyen?</p>
+            <div className="grid gap-2">
+              <button onClick={() => { void resolveOverlap("keep"); }} disabled={overlapBusy} className="btn-mil-secondary text-left text-sm px-3 py-2">
+                <span className="block font-bold">Marad az eredetiben</span>
+                <span className="block text-xs text-muted-foreground">Nem osztjuk be ide; a korábbi beosztás változatlan.</span>
+              </button>
+              <button onClick={() => { void resolveOverlap("move"); }} disabled={overlapBusy} className="btn-mil-secondary text-left text-sm px-3 py-2">
+                <span className="block font-bold">Átkerül ide</span>
+                <span className="block text-xs text-muted-foreground">A korábbi beosztásban „Visszamondta" lesz (megjegyzéssel, naplózva), és ide bekerül.</span>
+              </button>
+              <button onClick={() => { void resolveOverlap("both"); }} disabled={overlapBusy} className="btn-mil-primary text-left text-sm px-3 py-2">
+                <span className="block font-bold">Parancsnoki engedéllyel mindkettő</span>
+                <span className="block text-xs opacity-80">Ide is bekerül; a beosztáson látszik az indoklás („Parancsnoki engedéllyel átfedésben: …").</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <ConfirmDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -1477,11 +1439,11 @@ function QualTypeRow({ item, canEdit, onSaved, onDeleted }: {
   if (!editing) {
     return (
       <tr className="border-b border-border/50 hover:bg-secondary/40">
-        <td className="px-3 py-1.5 text-foreground font-rajdhani">{item.name}</td>
-        <td className="px-3 py-1.5 text-muted-foreground">{item.category}</td>
-        <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{item.validityDays === null ? "nem jár le" : `${item.validityDays} nap`}</td>
+        <td className="px-3 py-2 text-foreground font-rajdhani break-words">{item.name}</td>
+        <td className="px-3 py-2 text-muted-foreground break-words">{item.category}</td>
+        <td className="px-3 py-2 font-mono text-xs text-muted-foreground whitespace-nowrap">{item.validityDays === null ? "nem jár le" : `${item.validityDays} nap`}</td>
         {canEdit && (
-          <td className="px-3 py-1.5 whitespace-nowrap text-right">
+          <td className="px-3 py-2 whitespace-nowrap text-right">
             <button onClick={() => setEditing(true)} className="text-xs text-primary hover:underline px-1">Szerkesztés</button>
             <button onClick={() => setConfirmDelete(true)} className="text-xs text-destructive hover:underline px-1">Törlés</button>
             <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={() => { void remove(); }} message={`Törlöd a képzettséget: „${item.name}"? Csak akkor lehet, ha senkinek nincs kiadva.`} />
@@ -1492,11 +1454,11 @@ function QualTypeRow({ item, canEdit, onSaved, onDeleted }: {
   }
   return (
     <tr className="border-b border-border/50 bg-primary/5">
-      <td className="px-3 py-1.5"><input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-sm" style={{ borderRadius: "2px" }} /></td>
-      <td className="px-3 py-1.5"><input value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-sm" style={{ borderRadius: "2px" }} /></td>
-      <td className="px-3 py-1.5"><input type="number" min={1} value={validity} onChange={(e) => setValidity(e.target.value)} placeholder="nem jár le" className="w-24 bg-input border border-border px-2 py-1 text-sm font-mono" style={{ borderRadius: "2px" }} /></td>
-      <td className="px-3 py-1.5 whitespace-nowrap text-right">
-        <button onClick={() => { void save(); }} disabled={busy} className="btn-mil-primary text-[11px] px-2 py-0.5">Mentés</button>
+      <td className="px-3 py-2"><input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-2"><input value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-2"><input type="number" min={1} value={validity} onChange={(e) => setValidity(e.target.value)} placeholder="nem jár le" title="Nap; üresen: nem jár le" className="w-full bg-input border border-border px-2 py-1.5 text-sm font-mono" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-2 whitespace-nowrap text-right">
+        <button onClick={() => { void save(); }} disabled={busy} className="btn-mil-primary text-[11px] px-2 py-1">Mentés</button>
         <button onClick={() => { setEditing(false); setName(item.name); setCategory(item.category); setValidity(item.validityDays === null ? "" : String(item.validityDays)); }} className="text-xs text-muted-foreground hover:underline px-2">Mégsem</button>
       </td>
     </tr>

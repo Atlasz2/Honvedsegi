@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield, FileSignature } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield, FileSignature, CalendarClock } from "lucide-react";
 import {
-  qualificationAlerts, alerts as alertsStore, documents as docStore,
+  qualificationAlerts, alerts as alertsStore, documents as docStore, settings as settingsStore,
   type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
   type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem, type ServiceMinimumResult, type YearDeadline,
-  type OrderDeadlinesResult, type OrderDeadlineItem,
+  type OrderDeadlinesResult, type OrderDeadlineItem, type CustomRuleAlertsResult, type CustomRuleAlertItem,
 } from "@/lib/store";
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
@@ -13,6 +13,14 @@ import { toast } from "sonner";
 import AlertSection, { type AlertColumn } from "@/components/AlertSection";
 
 const DAYS_OPTIONS = [30, 60, 90] as const;
+
+const DISABLED_LABEL: Record<string, string> = {
+  order_deadline_warn_days: "parancs-határidők",
+  basic_training_warn_days: "alapkiképzés-határidő",
+  leave_minimum_days: "szabadság-minimum",
+  service_minimum_days: "szolgálati minimum",
+  qualification_warn_days: "képesítés-lejárat",
+};
 type DaysAhead = (typeof DAYS_OPTIONS)[number];
 
 const badge = (cls: string, text: string) => (
@@ -66,13 +74,16 @@ export default function Alerts() {
   const [basicTraining, setBasicTraining] = useState<BasicTrainingResult | null>(null);
   const [serviceMinimum, setServiceMinimum] = useState<ServiceMinimumResult | null>(null);
   const [orderDeadlines, setOrderDeadlines] = useState<OrderDeadlinesResult | null>(null);
+  const [customAlerts, setCustomAlerts] = useState<CustomRuleAlertsResult | null>(null);
+  // Kikapcsolt figyelmeztetés-fajták (Beállítások → Riasztási küszöbök): a szekció el sem jelenik.
+  const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [daysAhead, setDaysAhead] = useState<DaysAhead>(60);
   const [showExpired, setShowExpired] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData, orderData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData, orderData, customData, settingsData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
         alertsStore.unexcused(30),
@@ -82,8 +93,12 @@ export default function Alerts() {
         alertsStore.basicTraining(),
         alertsStore.serviceMinimum(),
         alertsStore.orderDeadlines(),
+        alertsStore.custom(),
+        settingsStore.alerts(),
       ]);
       setOrderDeadlines(orderData);
+      setCustomAlerts(customData);
+      setDisabled(new Set(settingsData.items.filter((i) => i.toggleable && !i.enabled).map((i) => i.key)));
       setAlerts(alertData);
       setStats(statData);
       setUnexcused(unexcusedData);
@@ -156,7 +171,34 @@ export default function Alerts() {
         </label>
       </div>
 
-      <AlertSection<BasicTrainingItem>
+      {disabled.size > 0 && (
+        <p className="text-[11px] font-mono text-muted-foreground mb-4">
+          Kikapcsolt figyelmeztetés: {[...disabled].map((k) => DISABLED_LABEL[k] ?? k).join(", ")} — a Beállítások → Riasztási küszöbök alatt kapcsolható vissza.
+        </p>
+      )}
+
+      {customAlerts && customAlerts.rules.length > 0 && (
+        <AlertSection<CustomRuleAlertItem>
+          title={`Egyéni szabályok — ${customAlerts.rules.map((r) => r.label).join(", ")}`}
+          tone="warning"
+          icon={<CalendarClock className="w-4 h-4 text-amber-400" />}
+          loading={loading}
+          rows={customAlerts.items}
+          rowKey={(i) => `${i.ruleId}-${i.personnelId}`}
+          onRowClick={(i) => openPerson(i.personnelId)}
+          emptyText="Egyik egyéni szabály sem jelez"
+          description={<p>Az admin által felvett dátum-szabályok (Beállítások → Riasztási küszöbök → Egyéni szabályok). Lejárat = a mező dátuma + érvényesség.</p>}
+          groupOf={(i) => i.ruleLabel}
+          columns={[
+            ...personColumns<CustomRuleAlertItem>(),
+            { header: "Alapdátum", render: (i) => <span className="font-mono text-xs">{i.baseDate}</span>, value: (i) => i.baseDate },
+            { header: "Lejárat", render: (i) => <span className="font-mono text-xs">{i.deadline}</span>, value: (i) => i.deadline },
+            { header: "Hátra", render: (i) => expiryBadge(i.isOverdue, i.daysLeft), value: (i) => (i.isOverdue ? `lejárt ${Math.abs(i.daysLeft)} napja` : `${i.daysLeft} nap`) },
+          ]}
+        />
+      )}
+
+      {!disabled.has("basic_training_warn_days") && <AlertSection<BasicTrainingItem>
         title="Alapkiképzés-határidő — tartalékosok, akiknek nincs meg minden modul"
         tone="destructive"
         icon={<GraduationCap className="w-4 h-4 text-destructive" />}
@@ -175,9 +217,9 @@ export default function Alerts() {
           { header: "Modulok", render: (i) => <span className="font-mono text-xs">{i.completedModules} / {i.totalModules}</span>, value: (i) => `${i.completedModules}/${i.totalModules}` },
           { header: "Hiányzik", render: (i) => <span className="text-muted-foreground text-xs">{i.missingModules.join(", ")}</span>, value: (i) => i.missingModules.join(", ") },
         ]}
-      />
+      />}
 
-      <AlertSection<OrderDeadlineItem>
+      {!disabled.has("order_deadline_warn_days") && <AlertSection<OrderDeadlineItem>
         title={`Parancs-határidők — lejárt vagy ${orderDeadlines?.warnDays ?? 30} napon belül`}
         tone="warning"
         icon={<FileSignature className="w-4 h-4 text-amber-400" />}
@@ -196,9 +238,9 @@ export default function Alerts() {
           { header: "Határidő", render: (i) => <span className="font-mono text-xs">{i.dueDate}</span>, value: (i) => i.dueDate },
           { header: "Hátra", render: (i) => expiryBadge(i.isOverdue, i.daysLeft), value: (i) => (i.isOverdue ? `lejárt ${Math.abs(i.daysLeft)} napja` : `${i.daysLeft} nap`) },
         ]}
-      />
+      />}
 
-      <AlertSection<QualificationAlert>
+      {!disabled.has("qualification_warn_days") && <AlertSection<QualificationAlert>
         title={`Lejáró és lejárt képesítések — ${daysAhead} napon belül`}
         tone="warning"
         icon={<AlertTriangle className="w-4 h-4 text-amber-400" />}
@@ -216,7 +258,7 @@ export default function Alerts() {
           { header: "Lejárat", render: (a) => <span className="font-mono text-xs">{a.expiryDate}</span>, value: (a) => a.expiryDate },
           { header: "Állapot", render: (a) => expiryBadge(a.isExpired, a.daysUntilExpiry), value: (a) => (a.isExpired ? `lejárt ${Math.abs(a.daysUntilExpiry)} napja` : `${a.daysUntilExpiry} nap`) },
         ]}
-      />
+      />}
 
       <AlertSection<ExpiringDocument>
         title={`Lejáró okmányok / alkalmasság — ${daysAhead} napon belül`}
@@ -236,7 +278,7 @@ export default function Alerts() {
         ]}
       />
 
-      <AlertSection<NonNullable<ServiceMinimumResult>["items"][number]>
+      {!disabled.has("service_minimum_days") && <AlertSection<NonNullable<ServiceMinimumResult>["items"][number]>
         title={`Évi szolgálati minimum ${serviceMinimum?.year ?? ""} — tartalékosok ${serviceMinimum?.minDays ?? 7} nap alatt`}
         tone="warning"
         icon={<Shield className="w-4 h-4 text-amber-400" />}
@@ -246,7 +288,7 @@ export default function Alerts() {
         onRowClick={(i) => openPerson(i.personnelId)}
         emptyText="Minden tartalékos teljesítette az éves szolgálati minimumot"
         description={<>
-          <p>Jogszabályi kötelezettség: minden tartalékos évente legalább {serviceMinimum?.minDays ?? 7} napot szolgál. Szolgált nap = gyakorlat/kiképzés napjai „Megjelent” jelenléttel; a lemondott művelet nem számít.</p>
+          <p>Jogszabályi kötelezettség: minden tartalékos évente legalább {serviceMinimum?.minDays ?? 7} napot szolgál. Szolgált nap = a művelet (gyakorlat, kiképzés, szolgálat) napjai „Megjelent” jelenléttel; a lemondott művelet nem számít.</p>
           {serviceMinimum && <YearDeadlineLine d={serviceMinimum} />}
         </>}
         columns={[
@@ -254,9 +296,9 @@ export default function Alerts() {
           { header: "Szolgált", render: (i) => <span className="font-mono text-xs">{i.servedDays} nap</span>, value: (i) => `${i.servedDays}` },
           { header: "Hiányzik", render: (i) => badge(i.servedDays === 0 ? "badge-cancelled" : "badge-ongoing", `${i.missingDays} nap`), value: (i) => `${i.missingDays}` },
         ]}
-      />
+      />}
 
-      <AlertSection<NonNullable<LeaveMinimumResult>["items"][number]>
+      {!disabled.has("leave_minimum_days") && <AlertSection<NonNullable<LeaveMinimumResult>["items"][number]>
         title={`Szabadság-minimum ${leaveMinimum?.year ?? ""} — aktívak ${leaveMinimum?.minDays ?? 10} munkanap alatt`}
         tone="primary"
         icon={<Palmtree className="w-4 h-4 text-primary" />}
@@ -274,7 +316,7 @@ export default function Alerts() {
           { header: "Kivett", render: (i) => <span className="font-mono text-xs">{i.takenDays} nap</span>, value: (i) => `${i.takenDays}` },
           { header: "Hiányzik", render: (i) => badge(i.takenDays === 0 ? "badge-cancelled" : "badge-ongoing", `${i.missingDays} nap`), value: (i) => `${i.missingDays}` },
         ]}
-      />
+      />}
 
       <AlertSection<UnexcusedAlert>
         title="Igazolatlan távollétek — utolsó 30 nap"

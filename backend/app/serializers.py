@@ -7,12 +7,12 @@ from sqlalchemy.orm import Session
 from .models import (
     ActivityLogModel, AnnouncementModel, DutyModel, EquipmentModel, EventModel,
     ExerciseModel, ParticipantModel, PersonModel, PersonnelQualificationModel,
-    QualificationTypeModel, SupplyModel, TrainingModel, VehicleModel,
+    QualificationTypeModel, SupplyModel, VehicleModel,
 )
 from .participants import get_participants
 from .schemas import (
     ActivityLogRead, AnnouncementRead, DutyRead, EquipmentRead, EventRead,
-    ExerciseRead, PersonRead, SupplyRead, TrainingRead, VehicleRead,
+    ExerciseRead, PersonRead, SupplyRead, VehicleRead,
 )
 
 
@@ -25,6 +25,7 @@ def serialize_person(item: PersonModel) -> PersonRead:
         unit=item.unit,
         beosztas=item.beosztas or "",
         status=item.status,
+        serviceType=item.service_type or "",
         email=item.email,
         phone=item.phone,
         birthDate=item.birth_date,
@@ -49,6 +50,7 @@ def serialize_person_with_quals(item: PersonModel, qualification_ids: list[str])
         unit=item.unit,
         beosztas=item.beosztas or "",
         status=item.status,
+        serviceType=item.service_type or "",
         email=item.email,
         phone=item.phone,
         birthDate=item.birth_date,
@@ -95,33 +97,15 @@ def serialize_exercise(db: Session, item: ExerciseModel, participants: list[Part
         participants = get_participants(db, "exercise", item.id)
     assigned = [
         {"personId": p.personnel_id, "personName": p.person_name, "role": p.role,
-         "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
+         "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz, "notes": p.notes or ""}
         for p in participants
     ] if participants else (item.assigned or [])
     return ExerciseRead(
         id=item.id, name=item.name, type=item.type,
         startDate=item.start_date, endDate=item.end_date, location=item.location,
-        maxPersonnel=item.max_personnel, description=item.description,
+        organizer=item.organizer or "", maxPersonnel=item.max_personnel, description=item.description,
         status=item.status, qualificationId=item.qualification_id or "",
         seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
-    )
-
-
-def serialize_training(db: Session, item: TrainingModel, participants: list[ParticipantModel] | None = None) -> TrainingRead:
-    if participants is None:
-        participants = get_participants(db, "training", item.id)
-    assigned = [
-        {"personId": p.personnel_id, "personName": p.person_name,
-         "attendance": p.status, "qualificationApproved": p.qualification_approved,
-         "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
-        for p in participants
-    ] if participants else (item.assigned or [])
-    return TrainingRead(
-        id=item.id, name=item.name, type=item.type,
-        startDate=item.start_date, endDate=item.end_date, location=item.location,
-        organizer=item.organizer or "", qualificationId=item.qualification_id or "",
-        maxPersonnel=item.max_personnel, description=item.description,
-        status=item.status, seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
     )
 
 
@@ -130,7 +114,7 @@ def serialize_event(db: Session, item: EventModel, participants: list[Participan
         participants = get_participants(db, "event", item.id)
     assigned = [
         {"personId": p.personnel_id, "personName": p.person_name, "role": p.role,
-         "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz}
+         "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz, "notes": p.notes or ""}
         for p in participants
     ] if participants else (item.assigned or [])
     return EventRead(

@@ -31,7 +31,7 @@ def test_preview_returns_summary_and_sections(client, admin_headers, template):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["title"]
-    assert set(body["summary"]) == {"exercises", "trainings", "events"}
+    assert set(body["summary"]) == {"exercises", "events"}
     assert body["interval"]["dateFrom"]
     assert body["interval"]["dateTo"]
 

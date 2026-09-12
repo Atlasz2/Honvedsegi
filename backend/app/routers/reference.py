@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ..constants import PERSON_STATUSES, RANKS, UNITS
+from ..constants import PERSON_STATUSES, RANKS, SERVICE_TYPES, UNITS
 from ..core.dependencies import Reader
 
 router = APIRouter(prefix="/api/reference", tags=["reference"])
@@ -20,5 +20,6 @@ def get_reference_data(_: Reader) -> dict[str, object]:
     return {
         "units": list(UNITS),
         "personStatuses": list(PERSON_STATUSES),
+        "serviceTypes": {k: list(v) for k, v in SERVICE_TYPES.items()},
         "ranks": [{"name": name, "short": short} for name, short in RANKS],
     }

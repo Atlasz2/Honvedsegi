@@ -8,6 +8,7 @@ from sqlalchemy import select
 from ..basic_training import grant_if_complete
 from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
+from ..settings_store import is_enabled
 from ..models import (
     PersonModel,
     PersonnelQualificationModel,
@@ -233,6 +234,8 @@ def get_alerts(db: DB, _: Reader, days_ahead: int = 60):
     Visszaadja azokat a képesítéseket, amelyek `days_ahead` napon belül lejárnak,
     vagy már lejártak (daysUntilExpiry negatív).
     """
+    if not is_enabled(db, "qualification_warn_days"):
+        return []
     today = date.today()
     cutoff = (today + timedelta(days=days_ahead)).isoformat()
 

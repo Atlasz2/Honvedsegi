@@ -5,7 +5,7 @@ import { campaign, getErrorMessage, type ApplicantPasteResult } from '@/lib/stor
 import Modal from '@/components/Modal';
 
 type Props = {
-  source: 'exercise' | 'training';
+  source: 'exercise';
   eventId: string;
   eventName: string;
   canEdit: boolean;

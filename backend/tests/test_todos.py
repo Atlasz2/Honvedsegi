@@ -36,7 +36,7 @@ def test_todos_show_my_departments_open_chapters(client, admin_headers):
     assert len(mine) == 1 and mine[0]["chapter"] == "Jogi rész" and mine[0]["isOverdue"] is True and mine[0]["hasText"] is False
     assert not any(c["chapter"] == "Bevezető" for c in todos["myChapters"]), "más részleg fejezete nem az enyém"
     assert todos["alerts"]["overdueOrderDeadlines"] >= 1
-    assert "pendingLeaveCount" in todos and "upcoming" in todos
+    assert "pendingLeaveCount" in todos and "changes" in todos
 
     # részleg nélküli felhasználónak nincs fejezet-teendője, de a többi látszik
     plain = client.get("/api/me/todos", headers=admin_headers).json()

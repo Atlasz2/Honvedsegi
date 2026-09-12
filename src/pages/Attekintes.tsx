@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, CalendarDays, Crosshair, Megaphone, Pin, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -61,10 +61,26 @@ export default function Attekintes() {
   useEffect(() => { void refresh(); }, [refresh]);
   useAutoRefresh(refresh);
 
-  const exceptions = (day?.items ?? []).filter((item) => item.status !== 'Jelen');
+  // Aki a feladat-listában már szerepel, az az „Eltérések" közt nem jelenik meg
+  // újra (a „Szolgálatban" létszám-állapot ugyanazt mondaná el másodszor).
+  const onTaskIds = useMemo(() => new Set((now?.onTask ?? []).map((r) => r.personnelId)), [now]);
+  const exceptions = (day?.items ?? []).filter((item) => item.status !== 'Jelen' && !onTaskIds.has(item.personnelId));
+  const hiddenExceptions = (day?.items ?? []).filter((item) => item.status !== 'Jelen' && onTaskIds.has(item.personnelId)).length;
+
+  // Feladatonként csoportosítva: a feladat neve egyszer, alatta az emberek.
+  const onTaskGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; operationId: string; source: 'exercise'; name: string; isDuty: boolean; startDate: string; endDate: string; rows: OperationsNow['onTask'] }>();
+    for (const row of now?.onTask ?? []) {
+      const key = `${row.source}-${row.operationId}`;
+      const group = groups.get(key) ?? { key, operationId: row.operationId, source: row.source, name: row.operationName, isDuty: row.isDuty, startDate: row.startDate, endDate: row.endDate, rows: [] };
+      group.rows.push(row);
+      groups.set(key, group);
+    }
+    return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'hu'));
+  }, [now]);
   const presentCount = day?.summary?.['Jelen'] ?? 0;
   const otherStatuses = Object.entries(day?.summary ?? {}).filter(([s]) => s !== 'Jelen').sort((a, b) => b[1] - a[1]);
-  const openOperation = (id: string, source: 'exercise' | 'training') => navigate(`/operations?source=${source}`, { state: { openOperationId: id, openOperationSource: source } });
+  const openOperation = (id: string, source: 'exercise') => navigate(`/operations?source=${source}`, { state: { openOperationId: id, openOperationSource: source } });
 
   return (
     <div>
@@ -112,19 +128,27 @@ export default function Attekintes() {
             ) : (
               <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
                 <table className="w-full mil-table">
-                  <thead className="sticky top-0 bg-card"><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Feladat</th><th>Mikortól</th><th>Meddig</th></tr></thead>
-                  <tbody>
-                    {now.onTask.map((row) => (
-                      <tr key={`${row.personnelId}-${row.operationId}`} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => openOperation(row.operationId, row.source)}>
-                        <td className="font-medium">{row.name}</td>
-                        <td className="font-mono text-xs text-primary">{row.rank}</td>
-                        <td className="text-muted-foreground text-xs">{row.unit}</td>
-                        <td className="text-xs">{row.isDuty && <span className="mono-chip text-[10px] mr-1">SZOLGÁLAT</span>}{row.operationName}</td>
-                        <td className="font-mono text-xs">{dayOf(row.startDate)}{timeOf(row.startDate) ? ` ${timeOf(row.startDate)}` : ''}</td>
-                        <td className="font-mono text-xs">{dayOf(row.endDate)}{timeOf(row.endDate) ? ` ${timeOf(row.endDate)}` : ''}</td>
+                  <thead className="sticky top-0 bg-card"><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Mikortól</th><th>Meddig</th></tr></thead>
+                  {onTaskGroups.map((group, gi) => (
+                    <tbody key={group.key} className={gi > 0 ? 'border-t-2 border-border' : ''}>
+                      <tr className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => openOperation(group.operationId, group.source)}>
+                        <td colSpan={5} className="text-center py-2 bg-secondary/30">
+                          {group.isDuty && <span className="mono-chip text-[10px] mr-2">SZOLGÁLAT</span>}
+                          <span className="font-rajdhani font-bold uppercase tracking-military text-sm text-primary">{group.name}</span>
+                          <span className="ml-2 text-[11px] font-mono text-muted-foreground">{group.rows.length} fő</span>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
+                      {group.rows.map((row) => (
+                        <tr key={`${row.personnelId}-${row.operationId}`} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate('/personnel', { state: { openPersonnelId: row.personnelId } })}>
+                          <td className="font-medium">{row.name}</td>
+                          <td className="font-mono text-xs text-primary">{row.rank}</td>
+                          <td className="text-muted-foreground text-xs">{row.unit}</td>
+                          <td className="font-mono text-xs">{dayOf(row.startDate)}{timeOf(row.startDate) ? ` ${timeOf(row.startDate)}` : ''}</td>
+                          <td className="font-mono text-xs">{dayOf(row.endDate)}{timeOf(row.endDate) ? ` ${timeOf(row.endDate)}` : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  ))}
                 </table>
               </div>
             )}
@@ -135,7 +159,7 @@ export default function Attekintes() {
             <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
               <Activity className="w-4 h-4 text-amber-400" />
               <h2 className="text-sm font-bold uppercase tracking-military flex-1">Eltérések a mai létszámban</h2>
-              <span className="text-xs font-mono text-muted-foreground">{exceptions.length}{pendingLeave ? ` · ${pendingLeave} szabadság jóváhagyásra` : ''}</span>
+              <span className="text-xs font-mono text-muted-foreground">{exceptions.length}{hiddenExceptions ? ` (+${hiddenExceptions} feladatban, fent)` : ''}{pendingLeave ? ` · ${pendingLeave} szabadság jóváhagyásra` : ''}</span>
             </header>
             {otherStatuses.length > 0 && (
               <div className="flex flex-wrap gap-2 px-4 py-2 border-b border-border/50 text-xs font-mono">
@@ -201,6 +225,32 @@ export default function Attekintes() {
                     <button onClick={() => navigate('/events', { state: { openEventId: ev.id } })} className="w-full text-left px-4 py-2 border-b border-border/50 hover:bg-secondary/40 text-sm flex justify-between gap-3">
                       <span><span className="font-medium">{ev.name}</span> <span className="text-muted-foreground text-xs">· {ev.type}</span></span>
                       <span className="font-mono text-xs text-primary shrink-0">{timeOf(ev.startDate) || 'egész nap'}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* A következő 7 nap műveletei */}
+          <section className="bg-card border border-border" style={radius}>
+            <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
+              <CalendarDays className="w-4 h-4 text-primary" />
+              <h2 className="text-sm font-bold uppercase tracking-military flex-1">A következő 7 nap</h2>
+              <span className="text-xs font-mono text-muted-foreground">{now?.upcoming.length ?? 0}</span>
+            </header>
+            {!now || now.upcoming.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-muted-foreground font-mono">Nem indul művelet a következő héten.</p>
+            ) : (
+              <ul className="max-h-72 overflow-y-auto">
+                {now.upcoming.map((op) => (
+                  <li key={op.id}>
+                    <button onClick={() => openOperation(op.id, op.source)} className="w-full text-left px-4 py-2 border-b border-border/50 hover:bg-secondary/40 text-sm">
+                      <span className="block">
+                        {op.isDuty && <span className="mono-chip text-[10px] mr-1">SZOLGÁLAT</span>}
+                        <span className="font-medium">{op.name}</span> <span className="text-muted-foreground text-xs">· {op.type}</span>
+                      </span>
+                      <span className="block text-xs font-mono text-muted-foreground">{dayOf(op.startDate)}{timeOf(op.startDate) ? ` ${timeOf(op.startDate)}` : ''}{dayOf(op.endDate) !== dayOf(op.startDate) ? ` – ${dayOf(op.endDate)}` : ''}{op.location ? ` · ${op.location}` : ''}</span>
                     </button>
                   </li>
                 ))}

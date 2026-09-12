@@ -1,4 +1,4 @@
-"""Az esemény-jellegű lista-végpontok tesztjei (exercise/training/event/duty).
+"""Az esemény-jellegű lista-végpontok tesztjei (exercise/event).
 
 A test_list_has_no_n_plus_one regressziós teszt: a résztvevőket egyetlen
 kötegelt lekérdezéssel kell betölteni eseménytípusonként, nem eseményenként.
@@ -10,7 +10,7 @@ from sqlalchemy import event
 
 from app.db import engine
 
-LIST_ENDPOINTS = ["/api/exercises", "/api/trainings", "/api/events"]
+LIST_ENDPOINTS = ["/api/exercises", "/api/events"]
 
 
 @pytest.mark.parametrize("endpoint", LIST_ENDPOINTS)

@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from .alerts import basic_training_deadline, order_deadlines
 from ..constants import DEPARTMENT_DUTIES
 from ..core.dependencies import DB, Reader
-from ..models import AnnouncementModel, ExerciseModel, LeaveRequestModel, OrderChapterModel, OrderModel, PersonModel, TrainingModel
+from ..models import AnnouncementModel, ExerciseModel, LeaveRequestModel, OrderChapterModel, OrderModel, PersonModel
 
 router = APIRouter(prefix="/api/me", tags=["me"])
 
@@ -36,7 +36,6 @@ def _days_left(due: str, today: date) -> int | None:
 def my_todos(db: DB, user: Reader):
     today = date.today()
     today_iso = today.isoformat()
-    week_end = (today + timedelta(days=7)).isoformat()
     department = (user.department or "").strip()
     # Mi tartozik hozzám: a részleg szerint; admin/alkotó mindent lát, részleg
     # nélküli szerkesztő csak az általánosat (heti műveletek).
@@ -102,17 +101,6 @@ def my_todos(db: DB, user: Reader):
         "basicTrainingDueSoon": sum(1 for b in basic if b["isDueSoon"]),
     }
 
-    # 5) A következő 7 nap műveletei.
-    upcoming: list[dict] = []
-    for source, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
-        for item in db.scalars(
-            select(model).where(model.status != "Lemondva", model.start_date <= week_end, model.end_date >= today_iso)
-            .order_by(model.start_date)
-        ).all():
-            upcoming.append({"id": item.id, "source": source, "name": item.name, "type": item.type,
-                             "startDate": item.start_date[:10], "endDate": item.end_date[:10], "location": item.location or ""})
-    upcoming.sort(key=lambda x: (x["startDate"], x["name"]))
-
     # Friss változások (időpont/helyszín módosult) az elmúlt 7 napból — mindenkinek.
     since = (today - timedelta(days=7)).isoformat()
     changes = [
@@ -132,6 +120,4 @@ def my_todos(db: DB, user: Reader):
         "pendingLeave": pending_leave,
         "pendingLeaveCount": pending_leave_count,
         "alerts": alerts,
-        "upcoming": upcoming[:12],
-        "upcomingCount": len(upcoming),
     }

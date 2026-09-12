@@ -66,6 +66,8 @@ class PersonModel(Base):
     unit: Mapped[str] = mapped_column(String)
     beosztas: Mapped[str] = mapped_column(String, default="")
     status: Mapped[str] = mapped_column(String, index=True)
+    # Jogviszony altípusa (constants.SERVICE_TYPES); üres, ha nem ismert.
+    service_type: Mapped[str] = mapped_column(String, default="")
     email: Mapped[str] = mapped_column(String, default="")
     phone: Mapped[str] = mapped_column(String, default="")
     birth_date: Mapped[str] = mapped_column(String, default="")
@@ -167,6 +169,8 @@ class ExerciseModel(Base):
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
     location: Mapped[str] = mapped_column(String, default="")
+    # A kiképzés beolvadt a műveletbe: a „szervező" mezője ide került.
+    organizer: Mapped[str] = mapped_column(String, default="")
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
@@ -178,7 +182,7 @@ class ExerciseModel(Base):
 
 class SeriesModel(Base):
     """Felkészítés-sorozat (szülő „kártya"), pl. „7×20 Tartalékos szakfelkészítés".
-    A gyakorlatok/kiképzések a series_id mezővel hivatkoznak rá."""
+    A műveletek a series_id mezővel hivatkoznak rá."""
     __tablename__ = "operation_series"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
@@ -186,24 +190,6 @@ class SeriesModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
-
-class TrainingModel(Base):
-    __tablename__ = "trainings"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
-    name: Mapped[str] = mapped_column(String, index=True)
-    type: Mapped[str] = mapped_column(String)
-    start_date: Mapped[str] = mapped_column(String, index=True)
-    end_date: Mapped[str] = mapped_column(String)
-    location: Mapped[str] = mapped_column(String, default="")
-    organizer: Mapped[str] = mapped_column(String, default="")
-    qualification_id: Mapped[str] = mapped_column(String, default="")
-    max_personnel: Mapped[int] = mapped_column(Integer, default=0)
-    description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String, index=True)
-    assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    series_id: Mapped[str] = mapped_column(String, default="", index=True)  # szülő felkészítés-sorozat
-    level: Mapped[str] = mapped_column(String, default="")  # Alap/Haladó/Emelt
 
 class EquipmentModel(Base):
     __tablename__ = "equipment"

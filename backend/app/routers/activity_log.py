@@ -4,16 +4,15 @@ from fastapi import Query, APIRouter, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import or_, select
 
-from ..appliers import apply_event, apply_exercise, apply_person, apply_training
+from ..appliers import apply_event, apply_exercise, apply_person
 from ..core.dependencies import DB, Reader, Editor
-from ..models import ActivityLogModel, EventModel, ExerciseModel, PersonModel, TrainingModel
+from ..models import ActivityLogModel, EventModel, ExerciseModel, PersonModel
 from ..schemas import (
     ActivityLogCreate,
     ActivityLogRead,
     EventUpdate,
     ExerciseUpdate,
     PersonUpdate,
-    TrainingUpdate,
 )
 from ..serializers import serialize_log
 
@@ -29,7 +28,6 @@ def _entity_model(entity: str):
     mapping = {
         "personnel": PersonModel,
         "exercise": ExerciseModel,
-        "training": TrainingModel,
         "event": EventModel,
     }
     return mapping.get(entity)
@@ -41,8 +39,6 @@ def apply_entity_payload(entity: str, item, data: dict) -> None:
             apply_person(item, PersonUpdate(**data))
         elif entity == "exercise":
             apply_exercise(item, ExerciseUpdate(**data))
-        elif entity == "training":
-            apply_training(item, TrainingUpdate(**data))
         elif entity == "event":
             apply_event(item, EventUpdate(**data))
         else:

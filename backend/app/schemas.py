@@ -4,7 +4,7 @@ from datetime import datetime
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 Role = Literal["reader", "editor", "admin", "fejleszto"]
@@ -12,7 +12,6 @@ PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
 # Az időbeli állapotot (Tervezett/Folyamatban/Befejezett) a dátumokból a rendszer
 # számolja; a felhasználó csak lemondani tud. (A régi "Törölve" → "Lemondva".)
 ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
-TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
 TrainingAttendance = Literal["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Visszamondta"]
 EquipmentCondition = Literal["Jó", "Javítandó", "Selejtezendő"]
 VehicleStatus = Literal["Elérhető", "Használatban", "Szervizben", "Meghibásodott", "Selejtezett"]
@@ -24,7 +23,7 @@ AttendanceStatus = Literal[
     "Jelen", "Szabadság", "Betegállomány", "Vezényelve",
     "Szolgálatban", "Kiküldetés", "Igazolt távollét", "Igazolatlan távollét",
 ]
-LeaveType = Literal["Szabadság", "Betegszabadság", "Kiküldetés", "Egyéb"]
+LeaveType = Literal["Szabadság", "Szolgálatmentesség", "Betegszabadság", "Kiküldetés", "Egyéb"]
 LeaveStatus = Literal["Beadva", "Jóváhagyva", "Elutasítva"]
 
 
@@ -252,6 +251,8 @@ class PersonBase(BaseModel):
     unit: str
     beosztas: str = ""
     status: PersonStatus
+    # Jogviszony altípusa: Aktív → Szerződéses/Hivatásos, Tartalékos → Önkéntes/Állandó behívásos.
+    serviceType: str = ""
     email: str = ""
     phone: str = ""
     birthDate: str = ""
@@ -259,6 +260,17 @@ class PersonBase(BaseModel):
     joinDate: str = ""
     notes: str = ""
     qualifications: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _service_type_matches_status(self):
+        from .constants import SERVICE_TYPES
+        value = (self.serviceType or "").strip()
+        self.serviceType = value
+        allowed = SERVICE_TYPES.get(self.status, ())
+        if value and value not in allowed:
+            options = ", ".join(allowed) if allowed else "nincs"
+            raise ValueError(f"„{value}” jogviszony nem illik a(z) {self.status} státuszhoz (választható: {options})")
+        return self
 
 
 class PersonCreate(PersonBase):
@@ -304,11 +316,13 @@ class PersonRead(PersonBase):
 class ExerciseAssignment(BaseModel):
     personId: str
     personName: str
-    role: str
+    role: str = "résztvevő"
     attendance: TrainingAttendance | None = None
     rank: str | None = None
     rankShort: str | None = None
     sztsz: str | None = None
+    # Pl. „Parancsnoki engedéllyel átfedésben: X gyakorlat" — a beosztás indoklása.
+    notes: str = ""
 
 
 class ExerciseBase(BaseModel):
@@ -317,6 +331,7 @@ class ExerciseBase(BaseModel):
     startDate: str
     endDate: str
     location: str = ""
+    organizer: str = ""
     maxPersonnel: int = 0
     description: str = ""
     status: ExerciseStatus
@@ -338,37 +353,6 @@ class ExerciseRead(ExerciseBase):
     id: str
 
 
-class TrainingAssignment(BaseModel):
-    personId: str
-    personName: str
-    attendance: TrainingAttendance
-    qualificationApproved: bool = False
-
-
-class TrainingBase(BaseModel):
-    name: str
-    type: str
-    startDate: str
-    endDate: str
-    location: str = ""
-    organizer: str = ""
-    qualificationId: str = ""
-    maxPersonnel: int = 0
-    description: str = ""
-    status: TrainingStatus
-    seriesId: str = ""
-    level: str = ""
-    assigned: list[TrainingAssignment] = []
-
-
-class TrainingCreate(TrainingBase):
-    pass
-
-
-class TrainingUpdate(TrainingBase):
-    pass
-
-
 class SeriesBase(BaseModel):
     name: str
     description: str = ""
@@ -387,15 +371,11 @@ class SeriesRead(SeriesBase):
     itemCount: int = 0
 
 
-class TrainingRead(TrainingBase):
-    id: str
-
-
 class OperationRead(BaseModel):
     id: str
     name: str
     type: str
-    operationType: Literal["exercise", "training"]
+    operationType: Literal["exercise"]
     startDate: str
     endDate: str
     location: str

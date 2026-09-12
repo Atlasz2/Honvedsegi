@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import or_, select
 
 from ..core.dependencies import DB, Reader
-from ..models import ExerciseModel, OrderModel, PersonModel, TrainingModel
+from ..models import ExerciseModel, OrderModel, PersonModel
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -59,7 +59,7 @@ def quick_search(db: DB, _: Reader, q: str = Query("", min_length=0, max_length=
     ]
 
     operations = []
-    for source, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+    for source, model in (("exercise", ExerciseModel),):
         for item in db.scalars(
             select(model).where(or_(_like(model.name, needle), _like(model.location, needle)))
             .order_by(model.start_date.desc()).limit(_LIMIT)

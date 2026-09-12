@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
-import { exercises, trainings, events, reports, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
-import type { Exercise, Training, AppEvent } from "@/lib/types";
+import { exercises, events, reports, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
+import type { Exercise, AppEvent } from "@/lib/types";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
 
 type ReportTemplate = "overview" | "operations" | "events" | "focus";
-type ReportFocusType = "exercise" | "training" | "event";
+type ReportFocusType = "exercise" | "event";
 
 type ExportOption = {
   id: string;
@@ -17,22 +17,20 @@ type ExportOption = {
 };
 
 const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
-  { value: "overview", label: "Összesített riport", description: "Gyakorlatok, kiképzések, események és szolgálatok egy PDF-ben." },
-  { value: "operations", label: "Műveleti naptár", description: "Csak gyakorlatok és kiképzések az adott időszakra." },
+  { value: "overview", label: "Összesített riport", description: "Műveletek és események egy PDF-ben." },
+  { value: "operations", label: "Műveleti naptár", description: "Csak a műveletek az adott időszakra." },
   { value: "events", label: "Eseménynaptár", description: "Kizárólag események exportja." },
   { value: "focus", label: "Konkrét elem riport", description: "Egy kiválasztott gyakorlat, kiképzés, esemény vagy szolgálat részletes exportja." },
 ];
 
 const FOCUS_TYPES: Array<{ value: ReportFocusType; label: string }> = [
   { value: "exercise", label: "Gyakorlat" },
-  { value: "training", label: "Kiképzés" },
   { value: "event", label: "Esemény" },
 ];
 
 export default function Riportok() {
   const [exs, setExs] = useState<Exercise[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
-  const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [pdfFrom, setPdfFrom] = useState("");
   const [pdfTo, setPdfTo] = useState("");
   const [reportTemplate, setReportTemplate] = useState<ReportTemplate>("overview");
@@ -45,14 +43,12 @@ export default function Riportok() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextExs, nextEvents, nextTrainings] = await Promise.all([
+      const [nextExs, nextEvents] = await Promise.all([
         exercises.getAll(),
         events.getAll(),
-        trainings.getAll(),
       ]);
       setExs(nextExs);
       setEventsData(nextEvents);
-      setTrainingsData(nextTrainings);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -71,15 +67,6 @@ export default function Riportok() {
           subtitle: `${item.startDate} | ${item.location || "Nincs helyszín"}`,
         }));
     }
-    if (reportFocusType === "training") {
-      return [...trainingsData]
-        .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.name.localeCompare(b.name))
-        .map((item) => ({
-          id: item.id,
-          label: item.name,
-          subtitle: `${item.startDate} | ${item.location || "Nincs helyszín"}`,
-        }));
-    }
     if (reportFocusType === "event") {
       return [...eventsData]
         .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.name.localeCompare(b.name))
@@ -90,7 +77,7 @@ export default function Riportok() {
         }));
     }
     return [];
-  }, [eventsData, exs, reportFocusType, trainingsData]);
+  }, [eventsData, exs, reportFocusType]);
 
   useEffect(() => {
     if (reportTemplate !== "focus") return;
@@ -252,7 +239,7 @@ export default function Riportok() {
               </div>
               <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
                 <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Összesítés</p>
-                <p className="text-sm font-mono">Gy: {previewData.summary.exercises} | Ki: {previewData.summary.trainings}</p>
+                <p className="text-sm font-mono">Műveletek: {previewData.summary.exercises}</p>
                 <p className="text-sm font-mono">Es: {previewData.summary.events}</p>
               </div>
               <div className="border border-border p-3" style={{ borderRadius: "2px" }}>

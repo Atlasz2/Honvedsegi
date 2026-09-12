@@ -26,7 +26,7 @@ from ..schemas import EligibilityPerson, PrerequisiteRead, PrerequisiteSet, Qual
 router = APIRouter(prefix="/api/prerequisites", tags=["prerequisites"])
 
 
-_VALID_EVENT_TYPES = {"exercise", "training", "event", "duty"}
+_VALID_EVENT_TYPES = {"exercise", "event"}
 _DISCHARGED_STATUS = "Leszerelt"
 _RESERVE_STATUS = "Tartalékos"
 

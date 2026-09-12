@@ -14,7 +14,6 @@ from .models import (
     PersonModel,
     SessionTokenModel,
     SupplyModel,
-    TrainingModel,
     UserModel,
     VehicleModel,
 )
@@ -104,8 +103,8 @@ def seed_database(db: Session) -> None:
     ]
 
     trainings = [
-        TrainingModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", organizer="Egészségügyi Csoport", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
-        TrainingModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", organizer="Kiképzési Törzs", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
+        ExerciseModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", organizer="Egészségügyi Csoport", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
+        ExerciseModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", organizer="Kiképzési Törzs", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
     ]
 
     equipment = [
@@ -168,7 +167,6 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         EquipmentModel,
         EventModel,
         ExerciseModel,
-        TrainingModel,
         SupplyModel,
         VehicleModel,
         PersonModel,
@@ -314,7 +312,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
             )
         )
 
-    trainings: list[TrainingModel] = []
+    trainings: list[ExerciseModel] = []  # a kiképzés is művelet
     for index in range(1, 181):
         start = base_date + timedelta(days=rng.randint(0, 365))
         duration = rng.randint(1, 4)
@@ -327,7 +325,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
             for pid in assigned_ids
         ]
         trainings.append(
-            TrainingModel(
+            ExerciseModel(
                 id=f"t{index}",
                 name=f"{rng.choice(training_name_prefixes)} felkészítés {index:03d}",
                 type=rng.choice(training_types),

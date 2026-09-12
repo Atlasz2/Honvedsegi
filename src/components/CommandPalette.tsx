@@ -12,7 +12,7 @@ export function openCommandPalette(): void {
 type Hit =
   | { kind: 'person'; id: string; title: string; subtitle: string }
   | { kind: 'order'; id: string; title: string; subtitle: string }
-  | { kind: 'operation'; id: string; source: 'exercise' | 'training'; title: string; subtitle: string };
+  | { kind: 'operation'; id: string; source: 'exercise'; title: string; subtitle: string };
 
 const KIND_LABEL: Record<Hit['kind'], string> = { person: 'Személy', order: 'Parancs', operation: 'Művelet' };
 const KIND_ICON: Record<Hit['kind'], typeof User> = { person: User, order: FileSignature, operation: Crosshair };
