@@ -38,12 +38,14 @@ def _required_env_csv(name: str) -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Startup: create tables, seed initial data, then ensure schema + migrations.
+    # Indulás: táblák → HIÁNYZÓ OSZLOPOK pótlása → seed → migrációk.
+    # A séma-kiegészítés a seed ELŐTT fut: a seed az ORM-en át olvas, ami már az
+    # új oszlopokat kéri — régi adatbázison különben az első lekérdezésnél elhasal.
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        seed_database(db)
         _ensure_personnel_sztsz_schema(db)
         _ensure_extended_schema(db)
+        seed_database(db)
         _enforce_single_god_user(db)
         run_migrations(db)
         purge_expired_sessions(db)
