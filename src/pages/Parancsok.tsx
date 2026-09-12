@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AlertTriangle, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
@@ -75,6 +76,15 @@ export default function Parancsok() {
   }, [openOnly]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Más oldalról (pl. Figyelmeztetések) érkezve a kért parancs rögtön megnyílik.
+  const location = useLocation();
+  useEffect(() => {
+    const wanted = (location.state as { openOrderId?: string } | null)?.openOrderId;
+    if (!wanted) return;
+    store.get(wanted).then(setDetail).catch((error) => toast.error(getErrorMessage(error)));
+    window.history.replaceState({}, '');
+  }, [location.state]);
 
   const visibleList = list.filter((o) =>
     cardFilter === null ? true : cardFilter === 'overdue' ? o.isOverdue : o.pendingResponsibles.includes(cardFilter));

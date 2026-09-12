@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield, FileSignature } from "lucide-react";
 import {
   qualificationAlerts, alerts as alertsStore, documents as docStore,
   type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
   type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem, type ServiceMinimumResult, type YearDeadline,
+  type OrderDeadlinesResult, type OrderDeadlineItem,
 } from "@/lib/store";
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
@@ -64,13 +65,14 @@ export default function Alerts() {
   const [leaveMinimum, setLeaveMinimum] = useState<LeaveMinimumResult | null>(null);
   const [basicTraining, setBasicTraining] = useState<BasicTrainingResult | null>(null);
   const [serviceMinimum, setServiceMinimum] = useState<ServiceMinimumResult | null>(null);
+  const [orderDeadlines, setOrderDeadlines] = useState<OrderDeadlinesResult | null>(null);
   const [daysAhead, setDaysAhead] = useState<DaysAhead>(60);
   const [showExpired, setShowExpired] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData, orderData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
         alertsStore.unexcused(30),
@@ -79,7 +81,9 @@ export default function Alerts() {
         alertsStore.leaveMinimum(),
         alertsStore.basicTraining(),
         alertsStore.serviceMinimum(),
+        alertsStore.orderDeadlines(),
       ]);
+      setOrderDeadlines(orderData);
       setAlerts(alertData);
       setStats(statData);
       setUnexcused(unexcusedData);
@@ -170,6 +174,27 @@ export default function Alerts() {
           { header: "Hátra", render: deadlineBadge, value: deadlineText },
           { header: "Modulok", render: (i) => <span className="font-mono text-xs">{i.completedModules} / {i.totalModules}</span>, value: (i) => `${i.completedModules}/${i.totalModules}` },
           { header: "Hiányzik", render: (i) => <span className="text-muted-foreground text-xs">{i.missingModules.join(", ")}</span>, value: (i) => i.missingModules.join(", ") },
+        ]}
+      />
+
+      <AlertSection<OrderDeadlineItem>
+        title={`Parancs-határidők — lejárt vagy ${orderDeadlines?.warnDays ?? 30} napon belül`}
+        tone="warning"
+        icon={<FileSignature className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={orderDeadlines?.items ?? []}
+        rowKey={(i) => `${i.orderId}-${i.kind}-${i.label}`}
+        onRowClick={(i) => navigate("/parancsok", { state: { openOrderId: i.orderId } })}
+        emptyText="Nincs lejárt vagy közelgő parancs-határidő"
+        description={<p>Nyitott parancsok: a parancs egészének határideje és az el nem készült fejezeteké, felelős részleggel. Kattintásra a parancs megnyílik.</p>}
+        groupOf={(i) => (i.responsible ? `${i.responsible} részleg` : "A parancs egésze")}
+        columns={[
+          { header: "Parancs", render: (i) => <span className="font-medium">{i.number ? `${i.number} — ` : ""}{i.subject}</span>, value: (i) => `${i.number} ${i.subject}`.trim() },
+          { header: "Mi", render: (i) => i.label, value: (i) => i.label },
+          { header: "Felelős", render: (i) => <span className="font-mono text-xs text-primary">{i.responsible || "—"}</span>, value: (i) => i.responsible },
+          { header: "Dolgozik rajta", render: (i) => <span className="text-muted-foreground text-xs">{i.assignee || "—"}</span>, value: (i) => i.assignee },
+          { header: "Határidő", render: (i) => <span className="font-mono text-xs">{i.dueDate}</span>, value: (i) => i.dueDate },
+          { header: "Hátra", render: (i) => expiryBadge(i.isOverdue, i.daysLeft), value: (i) => (i.isOverdue ? `lejárt ${Math.abs(i.daysLeft)} napja` : `${i.daysLeft} nap`) },
         ]}
       />
 
