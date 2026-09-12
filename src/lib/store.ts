@@ -356,6 +356,17 @@ export function checkLocationConflicts(
   if (excludeId) params.set('exclude_id', excludeId);
   return request<LocationConflict[]>(`/conflicts?${params.toString()}`);
 }
+export type PersonConflict = {
+  eventType: string; eventId: string; eventName: string; startDate: string; endDate: string; status: string; participantStatus: string;
+};
+/** Ugyanaz a személy más, átfedő műveletben — a beosztásnál figyelmeztetünk. */
+export function checkPersonConflicts(personnelId: string, startDate: string, endDate: string, excludeType?: string, excludeId?: string): Promise<PersonConflict[]> {
+  const params = new URLSearchParams({ personnel_id: personnelId, start_date: startDate, end_date: endDate });
+  if (excludeType) params.set('exclude_type', excludeType);
+  if (excludeId) params.set('exclude_id', excludeId);
+  return request<PersonConflict[]>(`/conflicts/person?${params.toString()}`);
+}
+
 export const exercises = createCrud<Exercise>('/exercises');
 export const trainings = createCrud<Training>('/trainings');
 

@@ -71,3 +71,45 @@ def check_conflicts(
     _add("event", db.scalars(select(EventModel)).all())
 
     return conflicts
+
+
+@router.get("/person")
+def person_conflicts(
+    db: DB,
+    _: Reader,
+    personnel_id: str,
+    start_date: str,
+    end_date: str,
+    exclude_type: str = "",
+    exclude_id: str = "",
+):
+    """Ugyanaz a személy egy másik, időben átfedő (nem lemondott) műveletbe is
+    be van-e osztva? A beosztásnál figyelmeztetünk — nem tiltunk, mert a
+    parancsnok dönt, de látnia kell."""
+    from ..models import ParticipantModel
+
+    if not personnel_id or not start_date or not end_date:
+        return []
+    models = {"exercise": ExerciseModel, "training": TrainingModel, "event": EventModel}
+    parts = db.scalars(
+        select(ParticipantModel).where(
+            ParticipantModel.personnel_id == personnel_id,
+            ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+        )
+    ).all()
+    result = []
+    for part in parts:
+        if part.event_type == exclude_type and part.event_id == exclude_id:
+            continue
+        model = models.get(part.event_type)
+        item = db.get(model, part.event_id) if model else None
+        if not item or item.status in ("Lemondva", "Törölve"):
+            continue
+        if _dates_overlap(item.start_date, item.end_date, start_date, end_date):
+            result.append({
+                "eventType": part.event_type, "eventId": item.id, "eventName": item.name,
+                "startDate": item.start_date, "endDate": item.end_date, "status": item.status,
+                "participantStatus": part.status,
+            })
+    result.sort(key=lambda x: x["startDate"])
+    return result

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
-import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
+import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, checkPersonConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
 import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, PersonLite, QualificationType, Series } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
@@ -398,6 +398,15 @@ export default function Operations() {
         toast.warning(`Figyelem: ${p.name} nem teljesíti a követelményt (${elig.missing.join(", ")}). Beosztva — ellenőrizd.`);
       } else {
         toast.success("Személy hozzáadva");
+      }
+      // Ugyanez az ember máshol is be van osztva ugyanekkor? Figyelmeztetés, nem tiltás.
+      try {
+        const clashes = await checkPersonConflicts(p.id, detail.startDate, detail.endDate, detail.source, detail.id);
+        if (clashes.length > 0) {
+          toast.warning(`${p.name} ekkor máshol is be van osztva: ${clashes.map((c) => `${c.eventName} (${c.startDate.slice(0, 10)}–${c.endDate.slice(0, 10)})`).join(", ")}.`, { duration: 8000 });
+        }
+      } catch {
+        // az ütközés-ellenőrzés kiesése nem akadályozza a beosztást
       }
     } catch (error) {
       toast.error(getErrorMessage(error));
