@@ -8,6 +8,7 @@ vi.mock('@/lib/store', () => ({
 }));
 vi.mock('@/lib/auth', () => ({ useAuth: () => ({ canEdit: true }) }));
 vi.mock('@/components/DatePickerInput', () => ({ default: () => null }));
+vi.mock('@/components/Modal', () => ({ default: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 
 import { OrderTypesModal } from '../Parancsok';
 
@@ -34,5 +35,25 @@ describe('parancstípus szerkesztő — aláírók', () => {
     expect(screen.getAllByTitle('Aláíró törlése')).toHaveLength(3);
     fireEvent.click(screen.getAllByTitle('Aláíró törlése')[2]);
     expect(screen.getAllByTitle('Aláíró törlése')).toHaveLength(2);
+  });
+});
+
+describe('parancs részlete — aláírás-hely', () => {
+  it('a beosztás mezőbe folyamatosan lehet írni (nem esik ki a fókusz)', async () => {
+    const { OrderDetailModal } = await import('../Parancsok');
+    const order = {
+      id: 'o1', orderTypeId: 't1', typeName: 'Leszerelési parancs', number: '1/2026', issuer: 'MH', subject: 'X',
+      personnelId: '', personName: '', status: 'Előkészítés' as const, dueDate: '', issuedDate: '', notes: '',
+      createdBy: 'admin', createdAt: '2026-09-12T10:00:00', doneChapters: 0, totalChapters: 0,
+      pendingResponsibles: [], readyToSign: false, signedCount: 0, isOverdue: false,
+      signatures: [{ role: 'Törzsfőnök', name: '', signed: false, signedAt: '', signedBy: '' }], chapters: [],
+    };
+    render(<OrderDetailModal order={order} canEdit onClose={() => {}} onChanged={() => {}} onDelete={() => {}} onCopy={() => {}} />);
+    const input = screen.getByDisplayValue('Törzsfőnök') as HTMLInputElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: 'Törzsfőnök h' } });
+    expect(document.activeElement).toBe(screen.getByDisplayValue('Törzsfőnök h'));
+    fireEvent.change(screen.getByDisplayValue('Törzsfőnök h'), { target: { value: 'Törzsfőnök he' } });
+    expect(document.activeElement).toBe(screen.getByDisplayValue('Törzsfőnök he'));
   });
 });

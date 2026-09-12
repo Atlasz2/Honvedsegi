@@ -246,7 +246,7 @@ export default function Parancsok() {
 // vastagságú — így ránézésre látszik, mi van még hátra. A margón fejezetenként
 // ott van a részleg, ki nyúlt hozzá utoljára és mikor.
 
-function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete, onCopy }: {
+export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete, onCopy }: {
   order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void; onCopy: () => void;
 }) {
   const [metaOpen, setMetaOpen] = useState(false);
@@ -452,7 +452,7 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete, onCopy
 
           <div className="mt-8 grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(1, signatures.length)}, minmax(0, 1fr))` }}>
             {signatures.map((sig, i) => (
-              <div key={`${sig.role}-${i}`} className="text-center text-xs relative group">
+              <div key={i} className="text-center text-xs relative group">
                 {canEdit && !sig.signed && (
                   <button
                     type="button"
