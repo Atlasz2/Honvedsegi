@@ -55,3 +55,14 @@ def test_personnel_lite_is_small_and_excludes_discharged(client, admin_headers):
     rows = client.get("/api/personnel/lite", headers=admin_headers).json()
     assert rows and set(rows[0]) == {"id", "name", "sztsz", "rank", "unit", "status"}
     assert not any(r["name"] == "Lite Lajos" for r in rows)
+
+
+def test_quick_search_finds_person_by_name_and_sztsz(client, admin_headers):
+    person = client.post("/api/personnel", json={"name": "Kereső Kázmér", "sztsz": "19100001", "rank": "honvéd", "unit": "1. század", "status": "Aktív"}, headers=admin_headers).json()
+    by_name = client.get("/api/search?q=kereso", headers=admin_headers).json()
+    assert any(p["id"] == person["id"] for p in by_name["persons"]), "ékezet nélkül is talál"
+    by_sztsz = client.get("/api/search?q=1910000", headers=admin_headers).json()
+    assert any(p["id"] == person["id"] for p in by_sztsz["persons"])
+    assert client.get("/api/search?q=k", headers=admin_headers).json() == {"persons": [], "orders": [], "operations": []}
+    single = client.get(f"/api/personnel/{person['id']}", headers=admin_headers)
+    assert single.status_code == 200 and single.json()["name"] == "Kereső Kázmér"

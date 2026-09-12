@@ -141,6 +141,12 @@ _EVENT_MODELS = {
 }
 
 
+@router.get("/{item_id}", response_model=PersonRead)
+def get_person(item_id: str, db: DB, _: Reader):
+    """Egy személy aktája — a gyorskereső és a más oldalról érkező megnyitás ezt használja."""
+    return serialize_person_with_qual_table(db, require_model(db, PersonModel, item_id))
+
+
 @router.get("/{item_id}/history")
 def get_person_history(item_id: str, db: DB, _: Reader):
     """Egy személy teljes eseménytörténete névvel és dátumokkal."""

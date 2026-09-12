@@ -6,6 +6,7 @@ import {
   Package, Truck, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, Activity, CalendarSearch, History, FileSignature,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
+import CommandPalette from '@/components/CommandPalette';
 
 const navItems = [
   { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
@@ -85,6 +86,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-background">
+      <CommandPalette />
       {/* Sidebar */}
       <aside
         className={`fixed top-0 left-0 h-screen bg-sidebar border-r border-border flex flex-col z-50 transition-all duration-200 scanline-overlay ${collapsed ? 'w-16' : 'w-56'}`}

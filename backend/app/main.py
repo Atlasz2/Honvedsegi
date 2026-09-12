@@ -22,7 +22,7 @@ from .static_serving import mount_frontend
 from .routers import (
     activity_log, alerts, announcements, attendance, auth, availability, campaign, conflicts, documents, equipment,
     events, exercises, imports, leave, maintenance, operations, orders, personnel, prerequisites,
-    qualifications, reference, reports, series, supplies, trainings, users, vehicles,
+    qualifications, reference, reports, search, series, supplies, trainings, users, vehicles,
 )
 
 
@@ -105,7 +105,7 @@ async def security_headers_middleware(request: Request, call_next):
 for _router_module in (
     auth, users, personnel, attendance, leave, exercises, trainings, events,
     operations, equipment, supplies, vehicles,
-    announcements, activity_log, qualifications, prerequisites, reference, reports, series, imports, conflicts, availability, alerts, documents, maintenance, campaign, orders,
+    announcements, activity_log, qualifications, prerequisites, reference, reports, series, imports, conflicts, availability, alerts, documents, maintenance, campaign, orders, search,
 ):
     app.include_router(_router_module.router)
 

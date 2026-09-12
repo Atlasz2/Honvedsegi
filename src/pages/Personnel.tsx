@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { personnel as store, qualificationTypes as qtStore, getErrorMessage } from '@/lib/store';
 import { useReferenceData } from '@/lib/queries';
 import { Person, QualificationType } from '@/lib/types';
@@ -97,6 +98,14 @@ export default function Personnel() {
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [detailPerson, setDetailPerson] = useState<Person | null>(null);
+  // Más oldalról (riasztás, gyorskereső) érkezve a kért személy aktája rögtön megnyílik.
+  const location = useLocation();
+  useEffect(() => {
+    const wanted = (location.state as { openPersonnelId?: string } | null)?.openPersonnelId;
+    if (!wanted) return;
+    store.get(wanted).then(setDetailPerson).catch((error) => toast.error(getErrorMessage(error)));
+    window.history.replaceState({}, '');
+  }, [location.state]);
   // Törzsadat gyorsítótárból: oldalváltásnál nem tölt újra (lásd lib/queries.ts).
   const { data: referenceData } = useReferenceData();
   const ranks = referenceData.ranks.map(rank => rank.name);

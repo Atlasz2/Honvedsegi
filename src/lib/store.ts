@@ -236,8 +236,18 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
   };
 }
 
+export type QuickSearchResult = {
+  persons: { id: string; name: string; sztsz: string; rank: string; unit: string; status: string }[];
+  orders: { id: string; number: string; subject: string; typeName: string; status: string }[];
+  operations: { id: string; source: 'exercise' | 'training'; name: string; type: string; startDate: string; status: string }[];
+};
+export const search = {
+  quick: (q: string) => request<QuickSearchResult>(`/search?q=${encodeURIComponent(q)}`),
+};
+
 export const personnel = {
   ...createCrud<Person>('/personnel'),
+  get: (id: string) => request<Person>(`/personnel/${id}`),
   /** Könnyű lista a beosztó/kiadó felületeknek — a teljes akta helyett. */
   getLite: () => request<PersonLite[]>('/personnel/lite'),
   getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; qualification?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
