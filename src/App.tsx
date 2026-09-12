@@ -24,6 +24,7 @@ const Alerts = lazy(() => import("@/pages/Alerts"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Leave = lazy(() => import("@/pages/Leave"));
 const Parancsok = lazy(() => import("@/pages/Parancsok"));
+const Teendoim = lazy(() => import("@/pages/Teendoim"));
 const Helyzetkep = lazy(() => import("@/pages/Helyzetkep"));
 const Availability = lazy(() => import("@/pages/Availability"));
 const Kovetelmenyek = lazy(() => import("@/pages/Kovetelmenyek"));
@@ -44,7 +45,8 @@ function AppRoutes() {
     <Layout>
       <Suspense fallback={<p className="text-xs text-muted-foreground font-mono p-6">Betöltés…</p>}>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Teendoim />} />
+          <Route path="/attekintes" element={<Dashboard />} />
           <Route path="/kozos-naptar" element={<CalendarPage />} />
           <Route path="/kozos-naptar/*" element={<CalendarPage />} />
           <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />

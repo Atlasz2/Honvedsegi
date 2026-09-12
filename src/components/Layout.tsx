@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
+  LayoutDashboard, ListChecks, Users, Crosshair, Shield as ShieldIcon,
   Package, Truck, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, Activity, CalendarSearch, History, FileSignature,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
@@ -11,7 +11,8 @@ import { useConnection, setOnline } from '@/lib/connection';
 import { Search, WifiOff } from 'lucide-react';
 
 const navItems = [
-  { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
+  { path: '/', label: 'Teendőim', icon: ListChecks },
+  { path: '/attekintes', label: 'Áttekintés', icon: LayoutDashboard },
   { path: '/helyzetkep', label: 'Helyzetkép', icon: Activity },
   { path: '/kozos-naptar', label: 'Közös naptár', icon: CalendarRange },
   { path: '/foglaltsag', label: 'Foglaltság', icon: CalendarSearch },

@@ -41,6 +41,7 @@ type BackendUser = {
   display_name: string;
   role: User['role'];
   active: boolean;
+  department?: string;
   last_login?: string | null;
 };
 
@@ -138,6 +139,7 @@ function toUser(raw: BackendUser): User {
     displayName: raw.display_name,
     role: raw.role,
     active: raw.active,
+    department: raw.department || '',
     lastLogin: raw.last_login || undefined,
   };
 }
@@ -527,24 +529,26 @@ export const users = {
     const result = await request<BackendUser[]>('/users');
     return result.map(toUser);
   },
-  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string }) => {
+  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string; department?: string }) => {
     const result = await request<BackendUser>('/users', {
       method: 'POST',
       body: JSON.stringify({
         username: payload.username,
         password: payload.password,
         display_name: payload.displayName,
+        department: payload.department ?? '',
         role: payload.role,
         active: payload.active,
       }),
     });
     return toUser(result);
   },
-  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string }) => {
+  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string; department?: string }) => {
     const result = await request<BackendUser>(`/users/${username}`, {
       method: 'PUT',
       body: JSON.stringify({
         display_name: payload.displayName,
+        department: payload.department ?? '',
         role: payload.role,
         active: payload.active,
         password: payload.password || null,
@@ -1170,4 +1174,21 @@ export const basicTrainingImport = {
   },
   confirm: (draftId: string, createMissingModules: boolean) =>
     request<BasicTrainingImportResult>(`/import/basic-training/confirm/${draftId}?create_missing_modules=${createMissingModules}`, { method: 'POST' }),
+};
+
+// ── Teendőim ────────────────────────────────────────────────────────────────
+
+export type MyTodos = {
+  department: string;
+  myChapters: { orderId: string; number: string; subject: string; chapterId: string; chapter: string; status: string; assignee: string; dueDate: string; daysLeft: number | null; isOverdue: boolean; hasText: boolean }[];
+  waitingSignature: number;
+  pendingLeave: { id: string; personName: string; type: string; startDate: string; endDate: string }[];
+  pendingLeaveCount: number;
+  alerts: { overdueOrderDeadlines: number; dueSoonOrderDeadlines: number; basicTrainingOverdue: number; basicTrainingDueSoon: number };
+  upcoming: { id: string; source: 'exercise' | 'training'; name: string; type: string; startDate: string; endDate: string; location: string }[];
+  upcomingCount: number;
+};
+
+export const me = {
+  todos: () => request<MyTodos>('/me/todos'),
 };

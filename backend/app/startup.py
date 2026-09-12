@@ -124,6 +124,9 @@ def _ensure_extended_schema(db: Session) -> None:
         db.execute(text("ALTER TABLE activity_logs ADD COLUMN payload JSON"))
     if "user_role" not in log_cols:
         db.execute(text("ALTER TABLE activity_logs ADD COLUMN user_role TEXT DEFAULT ''"))
+    user_cols = {row[1] for row in db.execute(text("PRAGMA table_info(users)")).fetchall()}
+    if user_cols and "department" not in user_cols:
+        db.execute(text("ALTER TABLE users ADD COLUMN department TEXT DEFAULT ''"))
 
     db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
     db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))

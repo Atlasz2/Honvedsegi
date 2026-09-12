@@ -6,6 +6,8 @@ export interface User {
   displayName: string;
   role: Role;
   active: boolean;
+  /** Részleg (Ügyvitel, Jog, Kiképzés, Személyügy, Pénzügy) vagy üres — a Teendőimhez. */
+  department?: string;
   lastLogin?: string;
 }
 
@@ -13,6 +15,7 @@ export interface AuthToken {
   username: string;
   displayName: string;
   role: Role;
+  department?: string;
   expiry: number;
 }
 

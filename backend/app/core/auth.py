@@ -55,6 +55,7 @@ def user_to_auth_payload(user: UserModel, expiry: datetime) -> AuthUser:
         username=user.username,
         displayName=user.display_name,
         role=user.role,
+        department=user.department or "",
         expiry=int(expiry.timestamp() * 1000),
     )
 
@@ -65,6 +66,7 @@ def to_user_read(user: UserModel) -> UserRead:
         display_name=user.display_name,
         role=user.role,
         active=user.active,
+        department=user.department or "",
         last_login=user.last_login,
     )
 

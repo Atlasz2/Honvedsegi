@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from ..audit import record_activity
+from ..constants import ORDER_RESPONSIBLES
 from ..core.auth import to_user_read
 from ..core.dependencies import DB, Admin
 from ..core.privileged import assert_role_assignable, assert_user_manageable, filter_visible_users
@@ -22,6 +23,7 @@ def _user_snapshot(user: UserModel) -> dict:
     return {
         "username": user.username,
         "displayName": user.display_name,
+        "department": user.department or "",
         "role": user.role,
         "active": user.active,
     }
@@ -32,6 +34,14 @@ def list_users(db: DB, current_user: Admin) -> list[UserRead]:
     items = db.scalars(select(UserModel).order_by(UserModel.username)).all()
     visible = filter_visible_users(items, current_user)
     return [to_user_read(item) for item in visible]
+
+
+def _check_department(department: str) -> str:
+    """Csak ismert részleg (vagy üres) — elgépelt részleghez nem tartozna teendő."""
+    value = (department or "").strip()
+    if value and value not in ORDER_RESPONSIBLES:
+        raise HTTPException(status_code=400, detail=f"Ismeretlen részleg: {value}. Választható: {', '.join(ORDER_RESPONSIBLES)}")
+    return value
 
 
 def _check_password(password: str) -> None:
@@ -56,6 +66,7 @@ def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
         display_name=payload.display_name,
         role=payload.role,
         active=payload.active,
+        department=_check_department(payload.department),
     )
     db.add(user)
     db.flush()
@@ -78,6 +89,7 @@ def update_user(username: str, payload: UserUpdate, db: DB, current_user: Admin)
     user.display_name = payload.display_name
     user.role = payload.role
     user.active = payload.active
+    user.department = _check_department(payload.department)
     password_changed = bool(payload.password)
     if password_changed:
         _check_password(payload.password)

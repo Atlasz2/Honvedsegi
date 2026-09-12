@@ -96,7 +96,8 @@ export default function SettingsPage() {
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true });
+  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '' });
+  const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy'];
   const [importEntity, setImportEntity] = useState<ImportEntity>('personnel');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
@@ -166,6 +167,7 @@ export default function SettingsPage() {
           role: form.role,
           active: form.active,
           password: form.password || undefined,
+          department: form.department,
         });
         await logAction(authUser!.displayName, authUser!.username, 'módosítva', 'Felhasználók', form.username);
         toast.success('Sikeresen mentve');
@@ -180,6 +182,7 @@ export default function SettingsPage() {
           displayName: form.displayName,
           role: form.role,
           active: form.active,
+          department: form.department,
         });
         await logAction(authUser!.displayName, authUser!.username, 'létrehozva', 'Felhasználók', form.username);
         toast.success('Felhasználó létrehozva');
@@ -321,7 +324,7 @@ export default function SettingsPage() {
           {isAdmin && (
             <button
               onClick={() => {
-                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true });
+                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true, department: '' });
                 setCreating(true);
               }}
               className="btn-mil-primary flex items-center gap-2 text-xs"
@@ -376,7 +379,7 @@ export default function SettingsPage() {
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
-                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active });
+                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active, department: u.department ?? '' });
                           setEditing(u);
                         }}
                         className="p-1.5 text-primary hover:bg-primary/10"
@@ -870,6 +873,19 @@ export default function SettingsPage() {
             >
               {availableRoles.map(r => <option key={r} value={r}>{roleBadge[r]}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Részleg (a Teendőimhez)</label>
+            <select
+              value={form.department}
+              onChange={e => setForm({ ...form, department: e.target.value })}
+              className="w-full bg-input border border-border px-3 py-2 text-sm"
+              style={{ borderRadius: '2px' }}
+            >
+              <option value="">— nincs részleg —</option>
+              {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">A részleg nyitott parancs-fejezetei a felhasználó Teendőim oldalán jelennek meg.</p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input

@@ -264,7 +264,10 @@ def order_deadlines(db: DB, _: Reader, warn_days: int = Query(ALERT_WARN_DAYS, g
     items = []
 
     def add(order, kind, label, responsible, assignee, due):
-        days_left = (date.fromisoformat(due[:10]) - today).days
+        try:
+            days_left = (date.fromisoformat(due[:10]) - today).days
+        except ValueError:
+            return  # elgépelt dátum: nem riasztás, de nem is dönti le az oldalt
         items.append({
             "orderId": order.id, "number": order.number or "", "subject": order.subject, "orderStatus": order.status,
             "kind": kind, "label": label, "responsible": responsible, "assignee": assignee,

@@ -37,6 +37,7 @@ class UserRead(ORMModel):
     display_name: str
     role: Role
     active: bool
+    department: str = ""
     last_login: datetime | None = None
 
 
@@ -46,6 +47,7 @@ class UserCreate(BaseModel):
     display_name: str
     role: Role
     active: bool = True
+    department: str = ""
 
 
 class UserUpdate(BaseModel):
@@ -53,6 +55,7 @@ class UserUpdate(BaseModel):
     role: Role
     active: bool
     password: str | None = None
+    department: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -64,6 +67,7 @@ class AuthUser(BaseModel):
     username: str
     displayName: str
     role: Role
+    department: str = ""
     expiry: int
 
 
