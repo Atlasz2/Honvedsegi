@@ -5,6 +5,7 @@ import {
   Equipment,
   Exercise,
   Person,
+  PersonLite,
   PersonHistoryEntry,
   PersonnelQualification,
   QualificationAlert,
@@ -237,6 +238,8 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
 
 export const personnel = {
   ...createCrud<Person>('/personnel'),
+  /** Könnyű lista a beosztó/kiadó felületeknek — a teljes akta helyett. */
+  getLite: () => request<PersonLite[]>('/personnel/lite'),
   getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; qualification?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
     const query = new URLSearchParams({
       page: String(params.page),
@@ -524,8 +527,21 @@ export const maintenance = {
   unlock: (username: string) => request<{ status: string }>(`/maintenance/users/${username}/unlock`, { method: 'POST' }),
 };
 
+export type ActivityLogQuery = { dateFrom?: string; dateTo?: string; user?: string; module?: string; q?: string; limit?: number };
+
 export const activityLog = {
-  getAll: () => request<ActivityLogEntry[]>('/activity-log'),
+  getAll: (params: ActivityLogQuery = {}) => {
+    const query = new URLSearchParams();
+    if (params.dateFrom) query.set('date_from', params.dateFrom);
+    if (params.dateTo) query.set('date_to', params.dateTo);
+    if (params.user) query.set('user', params.user);
+    if (params.module) query.set('module', params.module);
+    if (params.q) query.set('q', params.q);
+    if (params.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return request<ActivityLogEntry[]>(`/activity-log${qs ? `?${qs}` : ''}`);
+  },
+  facets: () => request<{ users: string[]; modules: string[] }>('/activity-log/facets'),
   add: (payload: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => request<ActivityLogEntry>('/activity-log', { method: 'POST', body: JSON.stringify(payload) }),
   restore: (id: string) => request<ActivityLogEntry>(`/activity-log/${id}/restore`, { method: 'POST' }),
 };
@@ -1048,6 +1064,10 @@ export const orders = {
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
   updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>
     request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  addChapter: (orderId: string, payload: OrderChapterTemplate) =>
+    request<Order>(`/orders/${orderId}/chapters`, { method: 'POST', body: JSON.stringify(payload) }),
+  removeChapter: (orderId: string, chapterId: string) =>
+    request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'DELETE' }),
   updateSignatures: (orderId: string, signatures: { role: string; name: string; signed: boolean }[]) =>
     request<Order>(`/orders/${orderId}/signatures`, { method: 'PUT', body: JSON.stringify({ signatures }) }),
   exportDocx: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.docx`, `parancs-${number || orderId.slice(0, 8)}.docx`),

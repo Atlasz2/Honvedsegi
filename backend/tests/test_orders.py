@@ -172,3 +172,28 @@ def test_signature_slots_can_be_added_and_removed_on_the_order(client, admin_hea
         {"role": "Törzsfőnök", "name": "Kis alezredes", "signed": False},
     ]}, headers=admin_headers)
     assert [s["role"] for s in r.json()["signatures"]] == ["Törzsfőnök"]
+
+
+def test_chapters_can_be_added_and_removed_on_the_order(client, admin_headers):
+    order_type = _type(client, admin_headers, chapters=LESZERELES[:1])
+    order = _order(client, admin_headers, order_type["id"])
+    r = client.post(f"/api/orders/{order['id']}/chapters", json={"name": "Kiegészítő rész", "responsible": "Pénzügy", "required": False, "template": "{{tárgy}} — pénzügy"}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert [c["name"] for c in body["chapters"]] == ["Bevezető", "Kiegészítő rész"]
+    assert body["chapters"][1]["content"] == "Kiss Béla leszerelése — pénzügy"
+
+    # elfogadott fejezet nem törölhető, a nem elfogadott igen
+    accepted = _set_chapter(client, admin_headers, body, 0, "Kész")
+    assert client.delete(f"/api/orders/{order['id']}/chapters/{accepted['chapters'][0]['id']}", headers=admin_headers).status_code == 409
+    r = client.delete(f"/api/orders/{order['id']}/chapters/{accepted['chapters'][1]['id']}", headers=admin_headers)
+    assert r.status_code == 200 and [c["name"] for c in r.json()["chapters"]] == ["Bevezető"]
+
+
+def test_reopened_chapter_drops_back_to_preparation(client, admin_headers):
+    order_type = _type(client, admin_headers, chapters=LESZERELES[:1])
+    order = _order(client, admin_headers, order_type["id"])
+    order = _set_chapter(client, admin_headers, order, 0, "Kész")
+    assert order["status"] == "Aláírásra vár"
+    order = _set_chapter(client, admin_headers, order, 0, "Folyamatban")
+    assert order["status"] == "Előkészítés"

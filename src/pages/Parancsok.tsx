@@ -239,6 +239,9 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
   const [issuedDate, setIssuedDate] = useState(order.issuedDate);
   const [notes, setNotes] = useState(order.notes);
   const [signatures, setSignatures] = useState<OrderSignature[]>(order.signatures);
+  const [addingChapter, setAddingChapter] = useState(false);
+  const [newChapter, setNewChapter] = useState<OrderChapterTemplate>(emptyChapter());
+  const [removeChapter, setRemoveChapter] = useState<OrderChapter | null>(null);
 
   useEffect(() => {
     setStatus(order.status); setNumber(order.number); setIssuer(order.issuer);
@@ -279,6 +282,25 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
     setSignatures(next);
     try {
       onChanged(await store.updateSignatures(order.id, next.map(({ role, name, signed }) => ({ role, name, signed }))));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const addChapter = async () => {
+    try {
+      onChanged(await store.addChapter(order.id, { ...newChapter, name: newChapter.name.trim() }));
+      setNewChapter(emptyChapter());
+      setAddingChapter(false);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const doRemoveChapter = async () => {
+    if (!removeChapter) return;
+    try {
+      onChanged(await store.removeChapter(order.id, removeChapter.id));
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -369,9 +391,27 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
 
           <div className="mt-4">
             {visible.map((ch, index) => (
-              <InlineChapter key={ch.id} index={index + 1} chapter={ch} canEdit={canEdit} onSave={(patch) => saveChapter(ch, patch)} />
+              <InlineChapter key={ch.id} index={index + 1} chapter={ch} canEdit={canEdit} onSave={(patch) => saveChapter(ch, patch)} onRemove={() => setRemoveChapter(ch)} />
             ))}
           </div>
+
+          {canEdit && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+              {addingChapter ? (
+                <>
+                  <input value={newChapter.name} onChange={(e) => setNewChapter({ ...newChapter, name: e.target.value })} placeholder="Fejezet neve" className="w-48 bg-input border border-border px-2 py-1 text-xs" style={radius} />
+                  <select value={newChapter.responsible} onChange={(e) => setNewChapter({ ...newChapter, responsible: e.target.value })} className="bg-input border border-border px-2 py-1 text-xs" style={radius}>
+                    {RESPONSIBLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-muted-foreground"><input type="checkbox" checked={newChapter.required} onChange={(e) => setNewChapter({ ...newChapter, required: e.target.checked })} />kötelező</label>
+                  <button type="button" onClick={() => { void addChapter(); }} disabled={!newChapter.name.trim()} className="btn-mil-primary text-[11px] px-2 py-0.5">Felvesz</button>
+                  <button type="button" onClick={() => setAddingChapter(false)} className="btn-mil-secondary text-[11px] px-2 py-0.5">Mégsem</button>
+                </>
+              ) : (
+                <button type="button" onClick={() => setAddingChapter(true)} className="text-muted-foreground hover:text-foreground hover:underline">+ fejezet ehhez a parancshoz</button>
+              )}
+            </div>
+          )}
 
           {skipped.length > 0 && (
             <p className="mt-4 text-[11px] font-mono text-muted-foreground">
@@ -465,13 +505,14 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
           </div>
         </div>
       </div>
+      <ConfirmDialog open={!!removeChapter} onClose={() => setRemoveChapter(null)} onConfirm={() => { void doRemoveChapter(); }} message={`Törlöd a fejezetet: „${removeChapter?.name}"? A szövege elvész.`} />
     </Modal>
   );
 }
 
 /** Egy fejezet a dokumentumban: a szöveg a helyén írható, a margón a részleg és a nyoma. */
-function InlineChapter({ index, chapter, canEdit, onSave }: {
-  index: number; chapter: OrderChapter; canEdit: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>;
+function InlineChapter({ index, chapter, canEdit, onSave, onRemove }: {
+  index: number; chapter: OrderChapter; canEdit: boolean; onSave: (patch: Partial<OrderChapter>) => Promise<void>; onRemove?: () => void;
 }) {
   const [content, setContent] = useState(chapter.content);
   const [saving, setSaving] = useState(false);
@@ -538,6 +579,9 @@ function InlineChapter({ index, chapter, canEdit, onSave }: {
             )}
             {!accepted && !chapter.required && (
               <button onClick={() => { void run({ status: 'Nem szükséges' }); }} disabled={saving} className="btn-mil-secondary text-[11px] px-2 py-0.5">Nem kell</button>
+            )}
+            {!accepted && onRemove && (
+              <button onClick={onRemove} disabled={saving} title="Fejezet törlése a parancsról" className="text-[11px] text-destructive hover:underline px-1">Törlés</button>
             )}
           </div>
         )}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Calendar, MapPin, Plus, Search, Trash2, Users, Pencil } from 'lucide-react';
 import { events, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
-import type { AppEvent, BasicAssignment, Person } from '@/lib/types';
+import type { AppEvent, BasicAssignment, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { rankWeight, shortRank } from '@/lib/rank';
 import Modal from '@/components/Modal';
@@ -38,7 +38,7 @@ export default function Events() {
   const location = useLocation();
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<AppEvent[]>([]);
-  const [personnelData, setPersonnelData] = useState<Person[]>([]);
+  const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'Összes' | EventStatus>('Összes');
@@ -60,10 +60,9 @@ export default function Events() {
 
   const refresh = useCallback(async () => {
     try {
-      const [items, people] = await Promise.all([events.getAll(), pStore.getAll()]);
+      const items = await events.getAll();
       const sorted = [...items].sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(sorted);
-      setPersonnelData(people);
       if (detailRef.current) {
         const updated = sorted.find((x) => x.id === detailRef.current!.id) ?? null;
         setDetail(updated);
@@ -80,6 +79,11 @@ export default function Events() {
     const iv = setInterval(() => void refresh(), 30000);
     return () => clearInterval(iv);
   }, [refresh]);
+
+  // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
+  useEffect(() => {
+    pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
+  }, []);
 
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();

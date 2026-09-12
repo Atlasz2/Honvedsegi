@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Query, APIRouter, HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..appliers import apply_event, apply_exercise, apply_person, apply_training
 from ..core.dependencies import DB, Reader, Editor
@@ -10,7 +10,6 @@ from ..models import ActivityLogModel, EventModel, ExerciseModel, PersonModel, T
 from ..schemas import (
     ActivityLogCreate,
     ActivityLogRead,
-    DutyUpdate,
     EventUpdate,
     ExerciseUpdate,
     PersonUpdate,
@@ -53,11 +52,43 @@ def apply_entity_payload(entity: str, item, data: dict) -> None:
 
 
 @router.get("", response_model=list[ActivityLogRead])
-def list_activity_logs(db: DB, current_user: Reader):
+def list_activity_logs(
+    db: DB,
+    current_user: Reader,
+    date_from: str = Query("", description="ÉÉÉÉ-HH-NN"),
+    date_to: str = Query("", description="ÉÉÉÉ-HH-NN"),
+    user: str = "",
+    module: str = "",
+    q: str = Query("", description="rekord neve (részlet)"),
+    limit: int = Query(2000, ge=1, le=10000),
+):
+    """A napló idővel tízezres lesz — a szűrés és a korlát a szerveren van,
+    a láthatóság (szerepkör-szint) is SQL-ben, nem Pythonban."""
     viewer_level = _ROLE_LEVEL.get(current_user.role, 1)
-    entries = db.scalars(select(ActivityLogModel).order_by(ActivityLogModel.timestamp.desc())).all()
-    visible = [e for e in entries if _ROLE_LEVEL.get(e.user_role or "reader", 1) <= viewer_level]
-    return [serialize_log(i) for i in visible]
+    visible_roles = [role for role, level in _ROLE_LEVEL.items() if level <= viewer_level]
+    query = select(ActivityLogModel).where(
+        or_(ActivityLogModel.user_role.in_(visible_roles), ActivityLogModel.user_role == "", ActivityLogModel.user_role.is_(None))
+    )
+    if date_from:
+        query = query.where(ActivityLogModel.timestamp >= f"{date_from}T00:00:00")
+    if date_to:
+        query = query.where(ActivityLogModel.timestamp <= f"{date_to}T23:59:59.999999")
+    if user:
+        query = query.where(ActivityLogModel.user_name == user)
+    if module:
+        query = query.where(ActivityLogModel.module == module)
+    if q.strip():
+        query = query.where(ActivityLogModel.record_name.ilike(f"%{q.strip()}%"))
+    entries = db.scalars(query.order_by(ActivityLogModel.timestamp.desc()).limit(limit)).all()
+    return [serialize_log(i) for i in entries]
+
+
+@router.get("/facets")
+def activity_log_facets(db: DB, _: Reader):
+    """A szűrők listái (felhasználók, modulok) — nem a teljes napló letöltéséből."""
+    users = [u for (u,) in db.execute(select(ActivityLogModel.user_name).distinct().order_by(ActivityLogModel.user_name))]
+    modules = [m for (m,) in db.execute(select(ActivityLogModel.module).distinct().order_by(ActivityLogModel.module))]
+    return {"users": users, "modules": modules}
 
 
 @router.post("", response_model=ActivityLogRead)

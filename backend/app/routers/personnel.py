@@ -10,7 +10,7 @@ from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
 from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel, TrainingModel
 from ..repository import require_model
-from ..schemas import PersonCreate, PersonRead, PersonUpdate
+from ..schemas import PersonLite, PersonCreate, PersonRead, PersonUpdate
 from ..serializers import load_qualification_ids_by_person, serialize_person_with_qual_table, serialize_person_with_quals
 from ..validation import assert_unique_sztsz, normalize_sztsz
 
@@ -60,6 +60,18 @@ def list_personnel(db: DB, _: Reader):
     quals_by_person = load_qualification_ids_by_person(db)
     persons = _sort_persons(db.scalars(select(PersonModel)).all(), "name", "asc")
     return [serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in persons]
+
+
+@router.get("/lite", response_model=list[PersonLite])
+def list_personnel_lite(db: DB, _: Reader):
+    """Csak az azonosításhoz kellő mezők, egyetlen lekérdezésből — a beosztó
+    felületek ezt töltik, nem a teljes aktát."""
+    rows = db.execute(
+        select(PersonModel.id, PersonModel.name, PersonModel.sztsz, PersonModel.rank, PersonModel.unit, PersonModel.status)
+        .where(PersonModel.status != "Leszerelt")
+        .order_by(PersonModel.name)
+    ).all()
+    return [PersonLite(id=i, name=n, sztsz=s, rank=r, unit=u, status=st) for i, n, s, r, u, st in rows]
 
 
 @router.get("/paged")

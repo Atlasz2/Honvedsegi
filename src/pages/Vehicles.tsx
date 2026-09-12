@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { vehicles as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
-import { Vehicle, Person } from '@/lib/types';
+import { Vehicle, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -14,7 +14,7 @@ const statusClass: Record<string, string> = { 'Elérhető': 'badge-active', 'Has
 export default function VehiclesPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Vehicle[]>([]);
-  const [personnelData, setPersonnelData] = useState<Person[]>([]);
+  const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [filter, setFilter] = useState('');
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [creating, setCreating] = useState(false);
@@ -25,9 +25,8 @@ export default function VehiclesPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
+      const nextData = await store.getAll();
       setData(nextData);
-      setPersonnelData(nextPersonnel);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -38,6 +37,11 @@ export default function VehiclesPage() {
     const iv = setInterval(() => { void refresh(); }, 30000);
     return () => clearInterval(iv);
   }, [refresh]);
+
+  // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
+  useEffect(() => {
+    pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
+  }, []);
 
   const filtered = data.filter(v => !filter || v.status === filter);
   const activePpl = personnelData.filter(p => p.status === 'Aktív' || p.status === 'Tartalékos');

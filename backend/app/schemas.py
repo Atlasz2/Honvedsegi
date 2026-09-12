@@ -281,6 +281,16 @@ class PersonUpdate(PersonBase):
         return PersonCreate.normalize_phone(value)
 
 
+class PersonLite(BaseModel):
+    """A választókhoz (beosztás, kiadás) elég ennyi — a teljes akta ötödét sem nyomja."""
+    id: str
+    name: str
+    sztsz: str
+    rank: str
+    unit: str
+    status: PersonStatus
+
+
 class PersonRead(PersonBase):
     id: str
     # Importból átemelt, nem modellezett oszlopok (KGIR-export); csak olvasható.

@@ -53,3 +53,4 @@ backend/data/*.db-wal
 backend/.tmp-*
 backend/*.db
 
+backend/uploads/

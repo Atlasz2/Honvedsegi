@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import date
 from typing import Any
 
@@ -55,7 +56,19 @@ def _sync_temporal_status(item: Any, *, today: date) -> bool:
     return False
 
 
-def sync_temporal_statuses(db: Session) -> int:
+_last_sync_at: float = 0.0
+_SYNC_INTERVAL_SECONDS = 600
+
+
+def sync_temporal_statuses(db: Session, *, force: bool = False) -> int:
+    """Az állapot csak napváltáskor változhat, ezért elég ritkán futtatni —
+    minden listázásnál végigolvasni az összes műveletet 100 felhasználónál
+    fölösleges terhelés lenne."""
+    global _last_sync_at
+    now = time.monotonic()
+    if not force and now - _last_sync_at < _SYNC_INTERVAL_SECONDS:
+        return 0
+    _last_sync_at = now
     changed = 0
     today = _today_iso()
 

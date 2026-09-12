@@ -26,6 +26,7 @@ from ..models import OrderChapterModel, OrderModel, OrderTypeModel, PersonModel,
 from ..order_export import build_docx, build_pdf
 from ..schemas import (
     OrderChapterRead,
+    OrderChapterTemplate,
     OrderChapterUpdate,
     OrderCreate,
     OrderOverview,
@@ -226,8 +227,12 @@ def _placeholder_values(order: OrderModel, person: PersonModel | None) -> dict[s
 def _advance_status(order: OrderModel, chapters: list[OrderChapterModel]) -> None:
     """Automatikus lépések: minden kötelező fejezet kész → Aláírásra vár;
     minden aláírás megvan → Kiadva. Visszalépést nem csinál (az kézi döntés)."""
-    if order.status == "Előkészítés" and chapters and not _pending_responsibles(chapters):
+    pending = _pending_responsibles(chapters)
+    if order.status == "Előkészítés" and chapters and not pending:
         order.status = "Aláírásra vár"
+    # Visszanyitott fejezet aláírás előtt: vissza előkészítésbe (aláírt parancsot nem bántunk).
+    if order.status == "Aláírásra vár" and pending and not any(s.get("signed") for s in (order.signatures or [])):
+        order.status = "Előkészítés"
     signatures = order.signatures or []
     if order.status == "Aláírásra vár" and signatures and all(s.get("signed") for s in signatures):
         order.status = "Kiadva"
@@ -383,6 +388,54 @@ def update_chapter(order_id: str, chapter_id: str, payload: OrderChapterUpdate, 
         before=before, after={"status": chapter.status, "assignee": chapter.assignee, "dueDate": chapter.due_date,
                               "note": chapter.note, "contentLength": len(chapter.content or "")},
     )
+    db.commit()
+    return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
+
+
+@router.post("/{order_id}/chapters", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
+def add_chapter(order_id: str, payload: OrderChapterTemplate, db: DB, user: Editor):
+    """Fejezet felvétele egy meglévő parancsra (a típus pillanatképén túl)."""
+    order = _require_order(db, order_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A fejezet neve nem lehet üres")
+    if payload.responsible not in ORDER_RESPONSIBLES:
+        raise HTTPException(status_code=400, detail=f"Ismeretlen felelős: {payload.responsible}")
+    chapters = _chapters_of(db, order_id)
+    person = db.get(PersonModel, order.personnel_id) if order.personnel_id else None
+    chapter = OrderChapterModel(
+        id=new_id(), order_id=order_id, position=(chapters[-1].position + 1) if chapters else 0,
+        name=name, responsible=payload.responsible, required=payload.required,
+        content=_fill_template(payload.template, _placeholder_values(order, person)),
+    )
+    db.add(chapter)
+    db.flush()
+    chapters = _chapters_of(db, order_id)
+    _advance_status(order, chapters)
+    record_activity(db, user, mode="update", module=MODULE, record_name=f"{order.subject} / {name}", entity="order_chapter",
+                    before={}, after={"added": name, "responsible": payload.responsible})
+    db.commit()
+    return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
+
+
+@router.delete("/{order_id}/chapters/{chapter_id}", response_model=OrderRead)
+def delete_chapter(order_id: str, chapter_id: str, db: DB, user: Editor):
+    """Fejezet törlése a parancsról. Elfogadott (Kész) fejezetet nem törlünk —
+    előbb vissza kell nyitni, hogy ne tűnjön el kész munka egy kattintásra."""
+    order = _require_order(db, order_id)
+    chapter = db.get(OrderChapterModel, chapter_id)
+    if not chapter or chapter.order_id != order_id:
+        raise HTTPException(status_code=404, detail="A fejezet nem található")
+    if chapter.status == "Kész":
+        raise HTTPException(status_code=409, detail="Elfogadott fejezet nem törölhető — előbb nyisd vissza")
+    record_activity(db, user, mode="update", module=MODULE, record_name=f"{order.subject} / {chapter.name}", entity="order_chapter",
+                    before={"removed": chapter.name, "responsible": chapter.responsible}, after={})
+    db.delete(chapter)
+    db.flush()
+    chapters = _chapters_of(db, order_id)
+    for position, ch in enumerate(chapters):
+        ch.position = position
+    _advance_status(order, chapters)
     db.commit()
     return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
 

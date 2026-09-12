@@ -16,6 +16,9 @@ export interface AuthToken {
   expiry: number;
 }
 
+/** A választókhoz elég ennyi (GET /api/personnel/lite). */
+export type PersonLite = Pick<Person, 'id' | 'name' | 'sztsz' | 'rank' | 'unit' | 'status'>;
+
 export interface Person {
   id: string;
   name: string;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
 import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
-import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, Person, QualificationType, Series } from "@/lib/types";
+import type { Exercise, ExerciseAssignment, Training, TrainingAssignment, PersonLite, QualificationType, Series } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -68,6 +68,10 @@ type EditForm = {
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
+  // Utólag is állítható: mit ad, milyen szint, mi a belépési követelmény.
+  qualificationId: string;
+  level: string;
+  prerequisiteIds: string[];
 };
 
 // Az időbeli állapotot (közelgő / folyamatban / lezajlott) a rendszer a dátumokból
@@ -166,7 +170,7 @@ export default function Operations() {
   const [savingSeries, setSavingSeries] = useState(false);
   const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
   const [rawTrainings, setRawTrainings] = useState<Training[]>([]);
-  const [personnelData, setPersonnelData] = useState<Person[]>([]);
+  const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
   const [sourceFilter, setSourceFilter] = useState<"all" | OperationSource>("all");
@@ -188,7 +192,8 @@ export default function Operations() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [editing, setEditing] = useState<OperationItem | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett" });
+  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett", qualificationId: "", level: "", prerequisiteIds: [] });
+  const [editPrereqSearch, setEditPrereqSearch] = useState("");
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
   const [deleteTarget, setDeleteTarget] = useState<OperationItem | null>(null);
@@ -234,15 +239,13 @@ export default function Operations() {
 
   const refresh = useCallback(async () => {
     try {
-      const [exerciseData, trainingData, pData, seriesData] = await Promise.all([
+      const [exerciseData, trainingData, seriesData] = await Promise.all([
         exercises.getAll(),
         trainings.getAll(),
-        pStore.getAll(),
         seriesStore.getAll(),
       ]);
       setRawExercises(exerciseData);
       setRawTrainings(trainingData);
-      setPersonnelData(pData);
       setSeriesList(seriesData);
       const merged = [...exerciseData.map(normalizeExercise), ...trainingData.map(normalizeTraining)]
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -265,6 +268,11 @@ export default function Operations() {
     }, 30000);
     return () => clearInterval(iv);
   }, [refresh]);
+
+  // Az állomány ritkán változik: egyszer töltjük, könnyű formában (nem 30 mp-enként a teljes aktát).
+  useEffect(() => {
+    pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
+  }, []);
 
   useEffect(() => {
     const sourceParam = new URLSearchParams(location.search).get("source");
@@ -446,18 +454,24 @@ export default function Operations() {
   // ── Szerkesztés ────────────────────────────────────────────────────────────
 
   const openEdit = (item: OperationItem) => {
-    const organizer = item.source === "training"
-      ? (rawTrainings.find((t) => t.id === item.id)?.organizer ?? "")
-      : "";
+    const rawTraining = item.source === "training" ? rawTrainings.find((t) => t.id === item.id) : undefined;
+    const rawExercise = item.source === "exercise" ? rawExercises.find((e) => e.id === item.id) : undefined;
+    const raw = rawTraining ?? rawExercise;
     setEditForm({
       name: item.name, type: item.type,
       startDate: item.startDate, endDate: item.endDate,
-      location: item.location, organizer,
+      location: item.location, organizer: rawTraining?.organizer ?? "",
       maxPersonnel: item.maxPersonnel, description: item.description,
       status: item.status,
+      qualificationId: raw?.qualificationId ?? "", level: raw?.level ?? "", prerequisiteIds: [],
     });
+    setEditPrereqSearch("");
     setEditErrors({});
     setEditing(item);
+    // A követelmények külön végponton élnek; betöltjük, hogy szerkeszthetők legyenek.
+    prerequisites.get(item.source, item.id)
+      .then((pr) => setEditForm((prev) => ({ ...prev, prerequisiteIds: pr.qualTypeIds })))
+      .catch(() => { /* nincs követelmény vagy nem elérhető — üres lista marad */ });
   };
 
   const handleEdit = async () => {
@@ -478,7 +492,9 @@ export default function Operations() {
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, maxPersonnel: editForm.maxPersonnel,
           description: editForm.description, status: editForm.status as Exercise["status"],
-        });      } else {
+          qualificationId: editForm.qualificationId, level: editForm.level,
+        });
+      } else {
         const raw = rawTrainings.find((t) => t.id === editing.id);
         if (!raw) return;
         await trainings.update({
@@ -486,8 +502,10 @@ export default function Operations() {
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, organizer: editForm.organizer,
           maxPersonnel: editForm.maxPersonnel, description: editForm.description,
-          status: editForm.status,
-        });      }
+          status: editForm.status, qualificationId: editForm.qualificationId, level: editForm.level,
+        });
+      }
+      await prerequisites.set(editing.source, editing.id, editForm.prerequisiteIds);
       toast.success("Sikeresen mentve");
       setEditing(null);
       await refresh();
@@ -1033,7 +1051,7 @@ export default function Operations() {
               <option value="">— nem ad képesítést —</option>
               {qualTypeOptions.map((qt) => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
             </select>
-            <p className="text-[11px] text-muted-foreground mt-1">A megjelent résztvevők „Befejezett" státusznál automatikusan megkapják.</p>
+            <p className="text-[11px] text-muted-foreground mt-1">A „Megjelent" résztvevők automatikusan megkapják (a lemondott művelet nem ad).</p>
           </div>
 
           <div>
@@ -1292,6 +1310,51 @@ export default function Operations() {
               <input type="number" value={editForm.maxPersonnel} onChange={(e) => setEditForm({ ...editForm, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
             </div>
 
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mit ad teljesítéskor (képesítés)</label>
+                <select value={editForm.qualificationId} onChange={(e) => setEditForm({ ...editForm, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+                  <option value="">— nem ad képesítést —</option>
+                  {qualTypeOptions.map((qt) => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szint</label>
+                <select value={editForm.level} onChange={(e) => setEditForm({ ...editForm, level: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+                  <option value="">—</option>
+                  <option value="Alap">Alap</option>
+                  <option value="Haladó">Haladó</option>
+                  <option value="Emelt">Emelt</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belépési követelmény(ek)</label>
+              <input value={editPrereqSearch} onChange={(e) => setEditPrereqSearch(e.target.value)} placeholder="Képesítés keresése…" className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: "2px" }} />
+              <div className="border border-border max-h-40 overflow-auto" style={{ borderRadius: "2px" }}>
+                {qualTypeOptions
+                  .filter((qt) => !editPrereqSearch.trim() || qt.name.toLowerCase().includes(editPrereqSearch.trim().toLowerCase()))
+                  .map((qt) => {
+                    const checked = editForm.prerequisiteIds.includes(qt.id);
+                    return (
+                      <label key={qt.id} className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer hover:bg-secondary">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setEditForm((prev) => ({
+                            ...prev,
+                            prerequisiteIds: checked ? prev.prerequisiteIds.filter((id) => id !== qt.id) : [...prev.prerequisiteIds, qt.id],
+                          }))}
+                        />
+                        <span className="text-foreground">{qt.name}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+              {editForm.prerequisiteIds.length > 0 && <p className="text-[11px] text-muted-foreground mt-1">{editForm.prerequisiteIds.length} követelmény kiválasztva</p>}
+            </div>
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Leírás</label>

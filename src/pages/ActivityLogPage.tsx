@@ -113,6 +113,10 @@ const actionVerb: Record<ActivityLogEntry['action'], string> = { létrehozva: 'l
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' });
 const day = (iso: string) => iso.slice(0, 10);
+const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+// Alapból az utolsó két hét jön le; a napló idővel tízezres, a szűrés a szerveren van.
+const DEFAULT_DAYS = 14;
+const FETCH_LIMIT = 2000;
 const dayLabel = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('hu-HU', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
 
 // Egy „munkamenet": ugyanaz a felhasználó, egymást követő bejegyzések, ennél
@@ -149,18 +153,25 @@ export default function ActivityLogPage() {
   const [moduleFilter, setModuleFilter] = useState('');
   const [userFilter, setUserFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
+  const [dateFrom, setDateFrom] = useState(isoDaysAgo(DEFAULT_DAYS));
   const [dateTo, setDateTo] = useState('');
+  const [facets, setFacets] = useState<{ users: string[]; modules: string[] }>({ users: [], modules: [] });
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ActivityLogEntry | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<ActivityLogEntry | null>(null);
 
+  // A dátum/felhasználó/modul szűrés a szerveren fut; a szabad szöveg itt is szűr
+  // (a lekérdezés a rekord nevére megy, a kliens a felhasználóra/modulra is).
   const refresh = useCallback(async () => {
     try {
-      setData(await activityLog.getAll());
+      setData(await activityLog.getAll({ dateFrom, dateTo, user: userFilter, module: moduleFilter, limit: FETCH_LIMIT }));
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
+  }, [dateFrom, dateTo, userFilter, moduleFilter]);
+
+  useEffect(() => {
+    activityLog.facets().then(setFacets).catch(() => setFacets({ users: [], modules: [] }));
   }, []);
 
   useEffect(() => {
@@ -169,22 +180,17 @@ export default function ActivityLogPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  const modules = useMemo(() => Array.from(new Set(data.map((d) => d.module))).sort((a, b) => a.localeCompare(b, 'hu')), [data]);
-  const users = useMemo(() => Array.from(new Set(data.map((d) => d.userName))).sort((a, b) => a.localeCompare(b, 'hu')), [data]);
+  const modules = facets.modules;
+  const users = facets.users;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return data.filter((item) => {
       if (q && ![item.userName, item.module, item.recordName].some((v) => v?.toLowerCase().includes(q))) return false;
-      if (moduleFilter && item.module !== moduleFilter) return false;
-      if (userFilter && item.userName !== userFilter) return false;
       if (actionFilter && item.action !== actionFilter) return false;
-      const d = day(item.timestamp);
-      if (dateFrom && d < dateFrom) return false;
-      if (dateTo && d > dateTo) return false;
       return true;
     });
-  }, [data, search, moduleFilter, userFilter, actionFilter, dateFrom, dateTo]);
+  }, [data, search, actionFilter]);
 
   // Nap → munkamenetek
   const byDay = useMemo(() => {
@@ -212,8 +218,8 @@ export default function ActivityLogPage() {
     return next;
   });
 
-  const clearFilters = () => { setSearch(''); setModuleFilter(''); setUserFilter(''); setActionFilter(''); setDateFrom(''); setDateTo(''); };
-  const hasFilter = search || moduleFilter || userFilter || actionFilter || dateFrom || dateTo;
+  const clearFilters = () => { setSearch(''); setModuleFilter(''); setUserFilter(''); setActionFilter(''); setDateFrom(isoDaysAgo(DEFAULT_DAYS)); setDateTo(''); };
+  const hasFilter = search || moduleFilter || userFilter || actionFilter || dateFrom !== isoDaysAgo(DEFAULT_DAYS) || dateTo;
 
   const canRestore = (entry: ActivityLogEntry | null) => {
     if (!entry?.payload) return false;
@@ -308,7 +314,7 @@ export default function ActivityLogPage() {
           <DatePickerInput value={dateTo} onChange={setDateTo} className="px-2 py-2 text-xs" />
         </div>
         {hasFilter && <button onClick={clearFilters} className="btn-mil-secondary text-xs">Szűrők törlése</button>}
-        <span className="text-xs font-mono text-muted-foreground ml-auto">{filtered.length} bejegyzés</span>
+        <span className="text-xs font-mono text-muted-foreground ml-auto">{filtered.length} bejegyzés{data.length >= FETCH_LIMIT ? ` (az első ${FETCH_LIMIT} — szűkítsd a dátumot)` : ''}</span>
       </div>
 
       {filtered.length === 0 && (
