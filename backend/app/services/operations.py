@@ -13,11 +13,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..appliers import apply_event
+from ..constants import DUTY_EXERCISE_TYPES
 from ..core.time import parse_iso_date, utc_now
 from ..participants import load_participants_by_event
 from ..serializers import serialize_event, serialize_exercise, serialize_training
 from ..models import (
-    DutyModel,
     EventModel,
     ExerciseModel,
     MaterialRequirementModel,
@@ -260,7 +260,8 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
     plus14_day = base + timedelta(days=14)
 
     exercises = db.scalars(select(ExerciseModel).where(ExerciseModel.status.in_(["Tervezett", "Folyamatban"]))).all()
-    duties = db.scalars(select(DutyModel).where(DutyModel.status.in_(["Tervezett", "Teljesített"]))).all()
+    # A szolgálat is gyakorlat (DUTY_EXERCISE_TYPES), csak a típusa mondja meg.
+    duties = [item for item in exercises if item.type in DUTY_EXERCISE_TYPES]
 
     shooting_kw = ["lőtér", "loter"]
     next_week_shooting = []
@@ -285,9 +286,9 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
             continue
         if start <= plus14_day <= end:
             plus14_duties.append({
-                "id": item.id, "type": item.type, "startDate": item.start_date,
-                "endDate": item.end_date, "location": item.location,
-                "personId": item.person_id, "personName": item.person_name, "status": item.status,
+                "id": item.id, "name": item.name, "type": item.type, "startDate": item.start_date,
+                "endDate": item.end_date, "location": item.location, "status": item.status,
+                "assignedCount": len(item.assigned or []),
             })
 
     return {

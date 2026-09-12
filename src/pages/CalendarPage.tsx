@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Modal from "@/components/Modal";
-import { duties, events, exercises, getErrorMessage, trainings } from "@/lib/store";
-import type { AppEvent, Duty, Exercise, Training } from "@/lib/types";
+import { events, exercises, getErrorMessage, trainings } from "@/lib/store";
+import type { AppEvent, Exercise, Training } from "@/lib/types";
+import { isDutyType } from "@/lib/dutyTypes";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-type CalendarSource = "duty" | "exercise" | "training" | "event";
+type CalendarSource = "duty" | "exercise" | "training" | "event"; // duty = szolgálat-típusú gyakorlat
 type SegmentPosition = "single" | "start" | "middle" | "end";
 
 type CalendarItem = {
@@ -104,7 +105,6 @@ export default function CalendarPage() {
   const navigate = useNavigate();
   const [tick, setTick] = useState(0);
   const [monthCursor, setMonthCursor] = useState(new Date());
-  const [dutiesData, setDutiesData] = useState<Duty[]>([]);
   const [exercisesData, setExercisesData] = useState<Exercise[]>([]);
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
@@ -116,13 +116,11 @@ export default function CalendarPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextDuties, nextExercises, nextTrainings, nextEvents] = await Promise.all([
-        duties.getAll(),
+      const [nextExercises, nextTrainings, nextEvents] = await Promise.all([
         exercises.getAll(),
         trainings.getAll(),
         events.getAll(),
       ]);
-      setDutiesData(nextDuties);
       setExercisesData(nextExercises);
       setTrainingsData(nextTrainings);
       setEventsData(nextEvents);
@@ -141,37 +139,23 @@ export default function CalendarPage() {
   }, [refresh]);
 
   const allItems = useMemo<CalendarItem[]>(() => {
-    const dutyItems: CalendarItem[] = dutiesData
-      .filter((item) => item.status !== "Lemondva")
-      .map((item) => {
-        const names = item.assigned.map((a) => a.personName).filter(Boolean);
-        const peopleSummary = names.length > 0 ? names.join(", ") : item.personName || "Nincs kijelölt személy";
-        return {
-          id: item.id,
-          source: "duty",
-          name: item.personName || "Szolgálat",
-          dutyType: item.type,
-          startDate: item.startDate,
-          endDate: item.endDate,
-          location: item.location || "Nincs helyszín",
-          status: item.status,
-          peopleSummary,
-          peopleCount: names.length > 0 ? names.length : (item.personName ? 1 : 0),
-        };
-      });
-
-    const exerciseItems: CalendarItem[] = exercisesData.map((item) => ({
-      id: item.id,
-      source: "exercise",
-      name: item.name,
-      dutyType: "",
-      startDate: item.startDate,
-      endDate: item.endDate,
-      location: item.location || "Nincs helyszín",
-      status: item.status,
-      peopleSummary: `${item.assigned.length}/${item.maxPersonnel} fő`,
-      peopleCount: item.assigned.length,
-    }));
+    // A szolgálat is gyakorlat: a típusa mondja meg, a naptárban külön színt kap.
+    const exerciseItems: CalendarItem[] = exercisesData.map((item) => {
+      const duty = isDutyType(item.type);
+      const names = item.assigned.map((a) => a.personName).filter(Boolean);
+      return {
+        id: item.id,
+        source: duty ? "duty" : "exercise",
+        name: item.name,
+        dutyType: duty ? item.type : "",
+        startDate: item.startDate,
+        endDate: item.endDate,
+        location: item.location || "Nincs helyszín",
+        status: item.status,
+        peopleSummary: duty && names.length > 0 ? names.join(", ") : `${item.assigned.length}/${item.maxPersonnel} fő`,
+        peopleCount: item.assigned.length,
+      };
+    });
 
     const trainingItems: CalendarItem[] = trainingsData.map((item) => ({
       id: item.id,
@@ -199,10 +183,10 @@ export default function CalendarPage() {
       peopleCount: item.assigned.length,
     }));
 
-    return [...dutyItems, ...exerciseItems, ...trainingItems, ...eventItems].sort((a, b) => {
+    return [...exerciseItems, ...trainingItems, ...eventItems].sort((a, b) => {
       return a.startDate.localeCompare(b.startDate) || a.name.localeCompare(b.name, "hu");
     });
-  }, [dutiesData, eventsData, exercisesData, trainingsData]);
+  }, [eventsData, exercisesData, trainingsData]);
 
   const days = useMemo(() => monthGrid(year, monthIndex), [monthIndex, year]);
 
@@ -226,9 +210,7 @@ export default function CalendarPage() {
   const openSelectedItem = useCallback(() => {
     if (!selectedItem) return;
 
-    if (selectedItem.source === "duty") {
-      navigate("/duties", { state: { openDutyId: selectedItem.id } });
-    } else if (selectedItem.source === "exercise") {
+    if (selectedItem.source === "duty" || selectedItem.source === "exercise") {
       navigate("/operations?source=exercise", {
         state: { openOperationId: selectedItem.id, openOperationSource: "exercise" },
       });

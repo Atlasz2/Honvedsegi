@@ -7,6 +7,7 @@ Idempotens – biztonságos többször is futtatni.
 from __future__ import annotations
 
 import json
+import uuid
 import logging
 from datetime import date, timedelta
 
@@ -379,6 +380,56 @@ def _migrate_cancelled_status(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _migrate_duties_into_exercises(db: Session) -> None:
+    """A szolgálatok a Műveletekbe olvadnak (döntés: 2026-09-12). Minden szolgálat
+    gyakorlat lesz a szolgálat típusával, a beosztottak résztvevők; az azonosító
+    megmarad. A duties tábla üresen marad, a kód nem használja többé."""
+    key = "v4_duties_into_exercises"
+    if _migration_done(db, key) or not _table_exists(db, "duties"):
+        _mark_done(db, key) if not _migration_done(db, key) else None
+        return
+    from .services.lifecycle import derive_temporal_status
+
+    rows = db.execute(text(
+        "SELECT id, type, start_date, end_date, location, person_id, person_name, assigned, notes, status FROM duties"
+    )).fetchall()
+    moved = 0
+    for (duty_id, dtype, start, end, location, person_id, person_name, assigned_json, notes, dstatus) in rows:
+        if db.execute(text("SELECT 1 FROM exercises WHERE id=:id"), {"id": duty_id}).first():
+            continue
+        assigned = json.loads(assigned_json) if isinstance(assigned_json, str) and assigned_json else (assigned_json or [])
+        people = [{"personId": person_id, "personName": person_name}] if person_id else []
+        people += [a for a in assigned if isinstance(a, dict) and a.get("personId")]
+        status = "Lemondva" if dstatus == "Lemondva" else derive_temporal_status(start or "", end or "")
+        db.execute(text(
+            "INSERT INTO exercises (id, name, type, start_date, end_date, location, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+            "VALUES (:id, :name, :type, :start, :end, :location, :maxp, :desc, :status, '', '', '', '[]')"
+        ), {
+            "id": duty_id, "name": f"{dtype} – {location}".strip(" –") if location else dtype, "type": dtype,
+            "start": start or "", "end": end or start or "", "location": location or "",
+            "maxp": max(1, len(people)), "desc": notes or "", "status": status,
+        })
+        participant_status = "Megjelent" if dstatus == "Teljesített" else "Tervezett"
+        seen: set[str] = set()
+        for person in people:
+            pid = str(person.get("personId", ""))
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            db.execute(text(
+                "INSERT INTO participants (id, event_type, event_id, personnel_id, person_name, rank, rank_short, sztsz, role, status, qualification_approved, notes) "
+                "VALUES (:id, 'exercise', :eid, :pid, :pname, '', '', '', 'szolgálat', :status, 0, '')"
+            ), {"id": uuid.uuid4().hex, "eid": duty_id, "pid": pid, "pname": person.get("personName", ""), "status": participant_status})
+        # a korábban duty-ként rögzített résztvevők is átkerülnek
+        db.execute(text("UPDATE participants SET event_type='exercise' WHERE event_type='duty' AND event_id=:eid"), {"eid": duty_id})
+        moved += 1
+    db.execute(text("DELETE FROM duties"))
+    if moved:
+        log.info("Szolgálatok átvezetve a Műveletekbe: %d", moved)
+    db.commit()
+    _mark_done(db, key)
+
+
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
 def run_all(db: Session) -> None:
@@ -389,3 +440,4 @@ def run_all(db: Session) -> None:
     _migrate_qualifications_from_trainings(db)
     _migrate_rank_names(db)
     _migrate_cancelled_status(db)
+    _migrate_duties_into_exercises(db)

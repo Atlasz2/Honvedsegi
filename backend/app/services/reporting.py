@@ -8,14 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.time import date_overlap, parse_iso_date, utc_now
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
+from ..models import EventModel, ExerciseModel, TrainingModel
 
 
 def report_title(template: str) -> str:
     return {
         "overview": "Összesített műveleti riport",
         "operations": "Műveleti naptár riport",
-        "duties": "Szolgálati kivonat",
         "events": "Eseménynaptár riport",
         "focus": "Részletes fókusz riport",
     }.get(template, template)
@@ -25,7 +24,6 @@ def report_filename_base(template: str, focus_type: str | None = None) -> str:
     return {
         "overview": "osszesitett-muveleti-riport",
         "operations": "muveleti-naptar-riport",
-        "duties": "szolgalati-kivonat",
         "events": "esemenynaptar-riport",
         "focus": f"fokusz-riport-{focus_type or 'elem'}",
     }.get(template, "riport")
@@ -117,8 +115,8 @@ def build_report_data(
     focus_type: str | None,
     focus_id: str | None,
 ) -> dict[str, Any]:
-    allowed_templates = {"overview", "operations", "duties", "events", "focus"}
-    allowed_focus = {"exercise", "training", "event", "duty"}
+    allowed_templates = {"overview", "operations", "events", "focus"}
+    allowed_focus = {"exercise", "training", "event"}
 
     if template not in allowed_templates:
         raise HTTPException(status_code=400, detail="Nem tamogatott riportminta")
@@ -147,11 +145,6 @@ def build_report_data(
         for i in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
         if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
-    duties = [
-        i
-        for i in db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
-        if date_overlap(i.start_date, i.end_date, start_date, end_date)
-    ]
 
     sections: list[dict[str, Any]] = []
 
@@ -175,7 +168,6 @@ def build_report_data(
             "exercise": ExerciseModel,
             "training": TrainingModel,
             "event": EventModel,
-            "duty": DutyModel,
         }
         model = model_map[focus_type]
         item = db.scalar(select(model).where(model.id == focus_id))
@@ -188,9 +180,6 @@ def build_report_data(
             add_section("trainings", "Kikepzesek", trainings, "training", 300)
         if template == "overview":
             add_section("events", "Esemenyek", events, "event", 300)
-            add_section("duties", "Szolgalatok", duties, "duty", 400)
-        elif template == "duties":
-            add_section("duties", "Szolgalatok", duties, "duty", 400)
         elif template == "events":
             add_section("events", "Esemenyek", events, "event", 300)
 
@@ -204,7 +193,6 @@ def build_report_data(
             "exercises": len(exercises),
             "trainings": len(trainings),
             "events": len(events),
-            "duties": len(duties),
         },
         "sections": sections,
         "focus": focus_payload,
@@ -236,7 +224,6 @@ def build_excel_report_bytes(data: dict[str, Any], template: str, focus_type: st
     ws["A6"] = "Esemenyek"
     ws["B6"] = data["summary"]["events"]
     ws["A7"] = "Szolgalatok"
-    ws["B7"] = data["summary"]["duties"]
 
     row = 9
     if data["focus"]:
@@ -343,7 +330,7 @@ def build_docx_report_bytes(data: dict[str, Any], template: str, focus_type: str
     doc.add_paragraph(f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}")
     s = data["summary"]
     doc.add_paragraph(
-        f"Osszesites: Gyakorlatok {s['exercises']}, Kikepzesek {s['trainings']}, Esemenyek {s['events']}, Szolgalatok {s['duties']}"
+        f"Osszesites: Gyakorlatok {s['exercises']}, Kikepzesek {s['trainings']}, Esemenyek {s['events']}"
     )
 
     if data["focus"]:
@@ -513,7 +500,6 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
         ("Gyakorlatok", str(summary["exercises"])),
         ("Kikepzesek", str(summary["trainings"])),
         ("Esemenyek", str(summary["events"])),
-        ("Szolgalatok", str(summary["duties"])),
     ]
     card_w = W_pt / 4 - 0.1 * cm
     card_data = [
@@ -659,7 +645,6 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
     filename_map = {
         "overview": "osszesitett-muveleti-riport.pdf",
         "operations": "muveleti-naptar-riport.pdf",
-        "duties": "szolgalati-kivonat.pdf",
         "events": "esemenynaptar-riport.pdf",
         "focus": f"fokusz-riport-{focus_type or 'elem'}.pdf",
     }

@@ -190,19 +190,6 @@ export interface Vehicle {
   serviceLog: ServiceRecord[];
 }
 
-export interface Duty {
-  id: string;
-  type: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  personId: string;
-  personName: string;
-  assigned: BasicAssignment[];
-  notes: string;
-  status: 'Tervezett' | 'Teljesített' | 'Lemondva';
-}
-
 export interface Announcement {
   id: string;
   title: string;
@@ -296,7 +283,7 @@ export interface Participant {
 // ── Személytörténet ────────────────────────────────────────────────────────────
 
 export interface PersonHistoryEntry {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'training' | 'event';
   eventId: string;
   status: string;
   role: string;

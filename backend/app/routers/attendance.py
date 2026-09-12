@@ -20,7 +20,6 @@ from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import (
     AttendanceModel,
-    DutyModel,
     EventModel,
     ExerciseModel,
     LeaveRequestModel,
@@ -36,7 +35,6 @@ _EVENT_SOURCES = [
     ("exercise", ExerciseModel),
     ("training", TrainingModel),
     ("event", EventModel),
-    ("duty", DutyModel),
 ]
 _INACTIVE_EVENT_STATUSES = {"Törölve", "Befejezett", "Lemondva"}
 

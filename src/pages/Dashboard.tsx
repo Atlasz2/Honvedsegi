@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
-import { exercises, duties, trainings, events, reports, qualificationAlerts, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
-import type { Exercise, Duty, Training, AppEvent, QualificationAlert } from "@/lib/types";
+import { exercises, trainings, events, reports, qualificationAlerts, getErrorMessage, type ReportPreviewResponse } from "@/lib/store";
+import type { Exercise, Training, AppEvent, QualificationAlert } from "@/lib/types";
+import { isDutyType } from "@/lib/dutyTypes";
 import { Users, Crosshair, FileText, BookOpen, Calendar, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
-type ReportTemplate = "overview" | "operations" | "duties" | "events" | "focus";
-type ReportFocusType = "exercise" | "training" | "event" | "duty";
+type ReportTemplate = "overview" | "operations" | "events" | "focus";
+type ReportFocusType = "exercise" | "training" | "event";
 
 type ExportOption = {
   id: string;
@@ -19,7 +20,6 @@ type ExportOption = {
 const REPORT_TEMPLATES: Array<{ value: ReportTemplate; label: string; description: string }> = [
   { value: "overview", label: "Összesített riport", description: "Gyakorlatok, kiképzések, események és szolgálatok egy PDF-ben." },
   { value: "operations", label: "Műveleti naptár", description: "Csak gyakorlatok és kiképzések az adott időszakra." },
-  { value: "duties", label: "Szolgálati kivonat", description: "Szolgálatok időszak szerint szűrve." },
   { value: "events", label: "Eseménynaptár", description: "Kizárólag események exportja." },
   { value: "focus", label: "Konkrét elem riport", description: "Egy kiválasztott gyakorlat, kiképzés, esemény vagy szolgálat részletes exportja." },
 ];
@@ -28,7 +28,6 @@ const FOCUS_TYPES: Array<{ value: ReportFocusType; label: string }> = [
   { value: "exercise", label: "Gyakorlat" },
   { value: "training", label: "Kiképzés" },
   { value: "event", label: "Esemény" },
-  { value: "duty", label: "Szolgálat" },
 ];
 
 export default function Dashboard() {
@@ -36,7 +35,6 @@ export default function Dashboard() {
   const [, setTick] = useState(0);
   const [exs, setExs] = useState<Exercise[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
-  const [dutiesData, setDutiesData] = useState<Duty[]>([]);
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [alertsData, setAlertsData] = useState<QualificationAlert[]>([]);
   const [showOnDutyDetails, setShowOnDutyDetails] = useState(false);
@@ -52,22 +50,20 @@ export default function Dashboard() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState<ReportPreviewResponse | null>(null);
 
-  const openDuty = (dutyId: string) => navigate("/duties", { state: { openDutyId: dutyId } });
+  const openDuty = (id: string) => navigate("/operations?source=exercise", { state: { openOperationId: id, openOperationSource: "exercise" } });
   const openOperation = (itemId: string, source: "exercise" | "training") => navigate("/operations", { state: { openOperationId: itemId, openOperationSource: source } });
   const openEvent = (eventId: string) => navigate("/events", { state: { openEventId: eventId } });
 
   const refresh = useCallback(async () => {
     try {
-      const [nextExs, nextEvents, nextDuties, nextTrainings, nextAlerts] = await Promise.all([
+      const [nextExs, nextEvents, nextTrainings, nextAlerts] = await Promise.all([
         exercises.getAll(),
         events.getAll(),
-        duties.getAll(),
         trainings.getAll(),
         qualificationAlerts.getAlerts(30),
       ]);
       setExs(nextExs);
       setEventsData(nextEvents);
-      setDutiesData(nextDuties);
       setTrainingsData(nextTrainings);
       setAlertsData(nextAlerts);
     } catch (error) {
@@ -112,14 +108,8 @@ export default function Dashboard() {
           subtitle: `${item.startDate} | ${item.location || "Nincs helyszín"}`,
         }));
     }
-    return [...dutiesData]
-      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.personName.localeCompare(b.personName))
-      .map((item) => ({
-        id: item.id,
-        label: `${item.type} - ${item.personName}`,
-        subtitle: `${item.startDate} | ${item.location || "Nincs helyszín"}`,
-      }));
-  }, [dutiesData, eventsData, exs, reportFocusType, trainingsData]);
+    return [];
+  }, [eventsData, exs, reportFocusType, trainingsData]);
 
   useEffect(() => {
     if (reportTemplate !== "focus") return;
@@ -133,10 +123,11 @@ export default function Dashboard() {
   const selectedTemplate = REPORT_TEMPLATES.find((item) => item.value === reportTemplate) ?? REPORT_TEMPLATES[0];
 
   const todayIso = new Date().toISOString().slice(0, 10);
-  const onDutyToday = dutiesData
-    .filter((d) => d.status !== "Lemondva" && d.startDate.slice(0, 10) <= todayIso && d.endDate.slice(0, 10) >= todayIso)
+  // Szolgálat = szolgálat-típusú gyakorlat; a beosztottak adják a mai szolgálati létszámot.
+  const onDutyToday = exs
+    .filter((e) => isDutyType(e.type) && e.status !== "Lemondva" && e.startDate.slice(0, 10) <= todayIso && e.endDate.slice(0, 10) >= todayIso)
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  const onDutyTodayCount = new Set(onDutyToday.map((d) => d.personId)).size;
+  const onDutyTodayCount = new Set(onDutyToday.flatMap((e) => e.assigned.map((a) => a.personId))).size;
 
   const ongoingExercises = exs.filter((e) => e.status === "Folyamatban").sort((a, b) => a.startDate.localeCompare(b.startDate));
   const ongoingTrainingsList = trainingsData.filter((t) => t.status === "Folyamatban").sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -277,7 +268,7 @@ export default function Dashboard() {
             {onDutyToday.length === 0 && <p className="text-xs text-muted-foreground font-mono">Ma nincs aktív szolgálat.</p>}
             {onDutyToday.map((item) => (
               <button key={item.id} onClick={() => openDuty(item.id)} className="w-full text-left border border-border px-3 py-2 hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }}>
-                <p className="text-sm"><span className="text-primary font-mono">{item.type}</span> — {item.personName}</p>
+                <p className="text-sm"><span className="text-primary font-mono">{item.type}</span> — {item.assigned.map((a) => a.personName).join(", ") || "nincs beosztott"}</p>
               </button>
             ))}
           </div>
@@ -546,7 +537,7 @@ export default function Dashboard() {
               <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
                 <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Összesítés</p>
                 <p className="text-sm font-mono">Gy: {previewData.summary.exercises} | Ki: {previewData.summary.trainings}</p>
-                <p className="text-sm font-mono">Es: {previewData.summary.events} | Sz: {previewData.summary.duties}</p>
+                <p className="text-sm font-mono">Es: {previewData.summary.events}</p>
               </div>
               <div className="border border-border p-3" style={{ borderRadius: "2px" }}>
                 <p className="text-[10px] uppercase tracking-military text-muted-foreground mb-1">Fókusz</p>
@@ -615,7 +606,7 @@ export default function Dashboard() {
                       <tbody>
                         {section.items.map((item) => (
                           <tr key={item.id}>
-                            <td>{item.itemType === "duty" ? `${item.type} - ${item.personName}` : item.name}</td>
+                            <td>{item.name}</td>
                             <td className="font-mono text-xs">{item.startDate} → {item.endDate}</td>
                             <td>{item.location}</td>
                             <td>{item.status}</td>

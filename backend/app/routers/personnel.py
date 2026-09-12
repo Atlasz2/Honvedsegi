@@ -8,7 +8,7 @@ from sqlalchemy import select
 from ..appliers import apply_person
 from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
-from ..models import DutyModel, EventModel, ExerciseModel, ParticipantModel, PersonModel, TrainingModel
+from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel, TrainingModel
 from ..repository import require_model
 from ..schemas import PersonCreate, PersonRead, PersonUpdate
 from ..serializers import load_qualification_ids_by_person, serialize_person_with_qual_table, serialize_person_with_quals
@@ -126,7 +126,6 @@ _EVENT_MODELS = {
     "exercise": ExerciseModel,
     "training":  TrainingModel,
     "event":     EventModel,
-    "duty":      DutyModel,
 }
 
 

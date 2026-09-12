@@ -4,9 +4,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from ..appliers import apply_duty, apply_event, apply_exercise, apply_person, apply_training
+from ..appliers import apply_event, apply_exercise, apply_person, apply_training
 from ..core.dependencies import DB, Reader, Editor
-from ..models import ActivityLogModel, DutyModel, EventModel, ExerciseModel, PersonModel, TrainingModel
+from ..models import ActivityLogModel, EventModel, ExerciseModel, PersonModel, TrainingModel
 from ..schemas import (
     ActivityLogCreate,
     ActivityLogRead,
@@ -32,7 +32,6 @@ def _entity_model(entity: str):
         "exercise": ExerciseModel,
         "training": TrainingModel,
         "event": EventModel,
-        "duty": DutyModel,
     }
     return mapping.get(entity)
 
@@ -47,8 +46,6 @@ def apply_entity_payload(entity: str, item, data: dict) -> None:
             apply_training(item, TrainingUpdate(**data))
         elif entity == "event":
             apply_event(item, EventUpdate(**data))
-        elif entity == "duty":
-            apply_duty(item, DutyUpdate(**data))
         else:
             raise HTTPException(status_code=400, detail="Ismeretlen entitás")
     except ValidationError as exc:

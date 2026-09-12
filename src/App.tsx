@@ -17,7 +17,6 @@ const Events = lazy(() => import("@/pages/Events"));
 const Equipment = lazy(() => import("@/pages/Equipment"));
 const Inventory = lazy(() => import("@/pages/Inventory"));
 const Vehicles = lazy(() => import("@/pages/Vehicles"));
-const Duties = lazy(() => import("@/pages/Duties"));
 const Announcements = lazy(() => import("@/pages/Announcements"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ActivityLogPage = lazy(() => import("@/pages/ActivityLogPage"));
@@ -62,7 +61,6 @@ function AppRoutes() {
           <Route path="/equipment" element={<Equipment />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/vehicles" element={<Vehicles />} />
-          <Route path="/duties" element={<Duties />} />
           <Route path="/announcements" element={<Announcements />} />
           <Route path="/figyelmeztetesek" element={<Alerts />} />
           {canEdit && <Route path="/settings" element={<SettingsPage />} />}

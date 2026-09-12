@@ -10,7 +10,7 @@ from sqlalchemy import event
 
 from app.db import engine
 
-LIST_ENDPOINTS = ["/api/exercises", "/api/trainings", "/api/events", "/api/duties"]
+LIST_ENDPOINTS = ["/api/exercises", "/api/trainings", "/api/events"]
 
 
 @pytest.mark.parametrize("endpoint", LIST_ENDPOINTS)

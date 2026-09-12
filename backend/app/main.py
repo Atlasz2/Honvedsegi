@@ -19,7 +19,7 @@ from .startup import _enforce_single_god_user, _ensure_personnel_sztsz_schema, _
 from .static_serving import mount_frontend
 
 from .routers import (
-    activity_log, alerts, announcements, attendance, auth, availability, campaign, conflicts, documents, duties, equipment,
+    activity_log, alerts, announcements, attendance, auth, availability, campaign, conflicts, documents, equipment,
     events, exercises, imports, leave, maintenance, operations, orders, personnel, prerequisites,
     qualifications, reference, reports, series, supplies, trainings, users, vehicles,
 )
@@ -101,7 +101,7 @@ async def security_headers_middleware(request: Request, call_next):
 
 for _router_module in (
     auth, users, personnel, attendance, leave, exercises, trainings, events,
-    operations, equipment, supplies, vehicles, duties,
+    operations, equipment, supplies, vehicles,
     announcements, activity_log, qualifications, prerequisites, reference, reports, series, imports, conflicts, availability, alerts, documents, maintenance, campaign, orders,
 ):
     app.include_router(_router_module.router)

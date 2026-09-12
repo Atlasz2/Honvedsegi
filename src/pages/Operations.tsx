@@ -11,6 +11,7 @@ import DateTimePickerInput from "@/components/DateTimePickerInput";
 import OperationDetailTabs from "@/components/operations/OperationDetailTabs";
 import CampaignPanel from "@/components/operations/CampaignPanel";
 import { shortRank, rankWeight } from "@/lib/rank";
+import { DUTY_TYPES } from "@/lib/dutyTypes";
 import { toast } from "sonner";
 
 // A művelet státusza megegyezik a gyakorlatéval — egy igazságforrás, nincs másolat.
@@ -953,7 +954,12 @@ export default function Operations() {
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Alkategória</label>
-            <input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            <input list="operation-type-options" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="pl. Lövészet, Őrszolgálat, Ügyeleti szolgálat…" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+            <datalist id="operation-type-options">
+              {DUTY_TYPES.map((t) => <option key={t} value={t} />)}
+              {Array.from(new Set(data.map((d) => d.type).filter(Boolean))).map((t) => <option key={t} value={t} />)}
+            </datalist>
+            <p className="text-[11px] font-mono text-muted-foreground mt-1">A szolgálat is művelet: a szolgálat-típusok ({DUTY_TYPES.join(", ")}) a naptárban és a helyzetképben szolgálatként jelennek meg.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

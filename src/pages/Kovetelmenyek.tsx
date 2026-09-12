@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   prerequisites as store,
-  exercises, trainings, events, duties, qualificationTypes,
+  exercises, trainings, events, qualificationTypes,
   getErrorMessage, logAction, EligibilityPerson,
 } from '@/lib/store';
 import { QualificationType } from '@/lib/types';
@@ -9,19 +9,18 @@ import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import { Check, GraduationCap, Save, Search, X } from 'lucide-react';
 
-type EventType = 'exercise' | 'training' | 'event' | 'duty';
+type EventType = 'exercise' | 'training' | 'event';
 
 const EVENT_TYPES: { key: EventType; label: string }[] = [
   { key: 'training', label: 'Kiképzés' },
   { key: 'exercise', label: 'Gyakorlat' },
   { key: 'event', label: 'Esemény' },
-  { key: 'duty', label: 'Ügyelet' },
 ];
 
 type EventOption = { id: string; label: string };
 
 function loadEventOptions(type: EventType): Promise<EventOption[]> {
-  const source = { exercise: exercises, training: trainings, event: events, duty: duties }[type];
+  const source = { exercise: exercises, training: trainings, event: events }[type];
   return source.getAll().then((items: Array<{ id: string; name?: string; type?: string }>) =>
     items.map(i => ({ id: i.id, label: i.name || i.type || i.id })),
   );

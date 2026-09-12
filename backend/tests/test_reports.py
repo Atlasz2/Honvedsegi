@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-TEMPLATES = ["overview", "operations", "duties", "events"]
+TEMPLATES = ["overview", "operations", "events"]
 
 FORMATS = [
     ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
@@ -31,7 +31,7 @@ def test_preview_returns_summary_and_sections(client, admin_headers, template):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["title"]
-    assert set(body["summary"]) == {"exercises", "trainings", "events", "duties"}
+    assert set(body["summary"]) == {"exercises", "trainings", "events"}
     assert body["interval"]["dateFrom"]
     assert body["interval"]["dateTo"]
 
@@ -129,3 +129,9 @@ def test_generic_table_export_returns_xlsx(client, admin_headers):
     }, headers=admin_headers)
     assert r.status_code == 200, r.text
     assert r.content[:2] == b"PK"
+
+
+def test_duty_templates_are_gone(client, admin_headers):
+    """A szolgálatok a Műveletekbe olvadtak: nincs külön szolgálati riport/fókusz."""
+    assert client.get("/api/reports/operations/preview?template=duties", headers=admin_headers).status_code == 400
+    assert client.get("/api/duties", headers=admin_headers).status_code == 404

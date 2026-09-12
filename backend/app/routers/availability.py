@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from ..core.dependencies import DB, Reader
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
+from ..models import EventModel, ExerciseModel, TrainingModel
 
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
@@ -22,7 +22,6 @@ _SOURCES = [
     ("exercise", ExerciseModel),
     ("training", TrainingModel),
     ("event", EventModel),
-    ("duty", DutyModel),
 ]
 # Ezek nem foglalják az erőforrást.
 _INACTIVE_STATUSES = {"Törölve", "Befejezett", "Lemondva"}

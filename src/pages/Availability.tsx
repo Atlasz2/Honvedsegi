@@ -8,7 +8,6 @@ const TYPE_LABEL: Record<Booking['eventType'], string> = {
   exercise: 'Gyakorlat',
   training: 'Kiképzés',
   event: 'Esemény',
-  duty: 'Ügyelet',
 };
 
 function addDays(days: number): string {

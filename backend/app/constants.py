@@ -74,6 +74,9 @@ SERVICE_MINIMUM_DAYS = 7
 # Ennyi nappal a határidő előtt jelezzük előre a riasztásokat.
 ALERT_WARN_DAYS = 30
 
+# A szolgálatok a Műveletekbe olvadtak: ezek a gyakorlat-típusok jelentik a szolgálatot.
+DUTY_EXERCISE_TYPES: tuple[str, ...] = ("Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás")
+
 # Parancs-műhely: a fejezetekért felelős szervezeti egységek (a felhasználó
 # által leírt sorrendben) és az állapotok.
 # Az ellenjegyzés nem részleg, hanem a záró aláírás (2-3 illetékes parancsnok).

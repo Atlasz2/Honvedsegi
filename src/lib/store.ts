@@ -2,7 +2,6 @@ import {
   ActivityLogEntry,
   Announcement,
   AuthToken,
-  Duty,
   Equipment,
   Exercise,
   Person,
@@ -305,7 +304,7 @@ export const qualificationAlerts = {
 };
 
 export type LocationConflict = {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'training' | 'event';
   eventId: string;
   eventName: string;
   startDate: string;
@@ -452,7 +451,6 @@ export const documents = {
   expiring: (days = 60) => request<ExpiringDocument[]>(`/documents/expiring?days=${days}`),
 };
 export const events = createCrud<AppEvent>('/events');
-export const duties = createCrud<Duty>('/duties');
 export const announcements = createCrud<Announcement>('/announcements',);
 
 export const equipment = {
@@ -551,7 +549,7 @@ export function initializeData() {
 
 export type ReportPreviewListItem = {
   id: string;
-  itemType: 'exercise' | 'training' | 'event' | 'duty';
+  itemType: 'exercise' | 'training' | 'event';
   name?: string;
   type?: string;
   personId?: string;
@@ -585,7 +583,7 @@ export type ReportPreviewFocusParticipant = {
 };
 
 export type ReportPreviewFocus = {
-  type: 'exercise' | 'training' | 'event' | 'duty';
+  type: 'exercise' | 'training' | 'event';
   id: string;
   headline: string;
   description: string;
@@ -594,19 +592,18 @@ export type ReportPreviewFocus = {
 };
 
 export type ReportPreviewResponse = {
-  template: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
+  template: 'overview' | 'operations' | 'events' | 'focus';
   title: string;
   interval: {
     dateFrom: string;
     dateTo: string;
   };
-  focusType: 'exercise' | 'training' | 'event' | 'duty' | null;
+  focusType: 'exercise' | 'training' | 'event' | null;
   focusId: string | null;
   summary: {
     exercises: number;
     trainings: number;
     events: number;
-    duties: number;
   };
   sections: ReportPreviewSection[];
   focus: ReportPreviewFocus | null;
@@ -615,8 +612,8 @@ export const reports = {
   previewOperationsReport: (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    template?: 'overview' | 'operations' | 'events' | 'focus';
+    focusType?: 'exercise' | 'training' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -630,8 +627,8 @@ export const reports = {
   downloadOperationsPdf: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    template?: 'overview' | 'operations' | 'events' | 'focus';
+    focusType?: 'exercise' | 'training' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -679,8 +676,8 @@ export const reports = {
   downloadOperationsExcel: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: "overview" | "operations" | "duties" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event" | "duty";
+    template?: "overview" | "operations" | "events" | "focus";
+    focusType?: "exercise" | "training" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -728,8 +725,8 @@ export const reports = {
   downloadOperationsWord: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: "overview" | "operations" | "duties" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event" | "duty";
+    template?: "overview" | "operations" | "events" | "focus";
+    focusType?: "exercise" | "training" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -829,7 +826,7 @@ async function downloadBlob(path: string, filename: string, body?: unknown): Pro
 }
 
 export type AttendanceEventOption = {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'training' | 'event';
   eventId: string;
   name: string;
   participantCount: number;
@@ -886,7 +883,7 @@ export const leave = {
 
 export type Booking = {
   location: string;
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'training' | 'event';
   eventId: string;
   eventName: string;
   startDate: string;

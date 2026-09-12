@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from .models import (
     ActivityLogModel,
     AnnouncementModel,
-    DutyModel,
     EquipmentModel,
     EventModel,
     ExerciseModel,
@@ -131,11 +130,12 @@ def seed_database(db: Session) -> None:
         VehicleModel(id="v3", plate_number="GHI-789", type="Tehergépjármű", make_model="MAN TGS", year=2017, km=187600, next_service="2026-04-30", next_inspection="2026-05-12", status="Szervizben", service_log=[]),
     ]
 
+    # A szolgálat is művelet: gyakorlat a szolgálat típusával, a szolgálatot adó a beosztott.
     duties = [
-        DutyModel(id="d1", type="Őrszolgálat", start_date="2026-03-21T08:00", end_date="2026-03-22T08:00", location="Laktanya főbejárat", person_id="p6", person_name="Varga Gábor", status="Tervezett"),
-        DutyModel(id="d2", type="Ügyeleti szolgálat", start_date="2026-03-22T00:00", end_date="2026-03-23T00:00", location="Parancsnoki épület", person_id="p11", person_name="Lukács Béla", status="Tervezett"),
-        DutyModel(id="d3", type="Készenléti szolgálat", start_date="2026-03-25T06:00", end_date="2026-03-26T06:00", location="Laktanya", person_id="p4", person_name="Horváth Zoltán", status="Tervezett"),
-        DutyModel(id="d4", type="Rendezvénybiztosítás", start_date="2026-04-02T09:00", end_date="2026-04-02T18:00", location="Városháza tér", person_id="p2", person_name="Kovács János", status="Tervezett"),
+        ExerciseModel(id="d1", name="Őrszolgálat – Laktanya főbejárat", type="Őrszolgálat", start_date="2026-03-21T08:00", end_date="2026-03-22T08:00", location="Laktanya főbejárat", max_personnel=1, status="Tervezett", assigned=[{"personId": "p6", "personName": "Varga Gábor", "role": "szolgálat"}]),
+        ExerciseModel(id="d2", name="Ügyeleti szolgálat – Parancsnoki épület", type="Ügyeleti szolgálat", start_date="2026-03-22T00:00", end_date="2026-03-23T00:00", location="Parancsnoki épület", max_personnel=1, status="Tervezett", assigned=[{"personId": "p11", "personName": "Lukács Béla", "role": "szolgálat"}]),
+        ExerciseModel(id="d3", name="Készenléti szolgálat – Laktanya", type="Készenléti szolgálat", start_date="2026-03-25T06:00", end_date="2026-03-26T06:00", location="Laktanya", max_personnel=1, status="Tervezett", assigned=[{"personId": "p4", "personName": "Horváth Zoltán", "role": "szolgálat"}]),
+        ExerciseModel(id="d4", name="Rendezvénybiztosítás – Városháza tér", type="Rendezvénybiztosítás", start_date="2026-04-02T09:00", end_date="2026-04-02T18:00", location="Városháza tér", max_personnel=1, status="Tervezett", assigned=[{"personId": "p2", "personName": "Kovács János", "role": "szolgálat"}]),
     ]
 
     announcements = [
@@ -279,7 +279,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     exercise_name_prefixes = ["Acél Pajzs", "Vihar", "Őrszem", "Turul", "Hajnal", "Kard", "Fokozott Készenlét", "Zrínyi"]
     training_types = ["Alapkiképzés", "Szakmai kiképzés", "Parancsnoki tanfolyam", "Elsősegély", "Lövészeti", "Híradó"]
     training_name_prefixes = ["Törzsvezetési", "Rádióforgalmi", "Harcászati", "Lövészeti", "Logisztikai", "Egészségügyi"]
-    duty_types = ["Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás", "Egyéb"]
+    duty_types = ["Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás"]
 
     base_date = datetime(2026, 1, 1)
 
@@ -381,28 +381,32 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
             )
         )
 
-    duties: list[DutyModel] = []
+    # Szolgálatok = gyakorlatok szolgálat-típussal (a Műveletekbe olvadtak).
+    duties: list[ExerciseModel] = []
     for index in range(1, 361):
         start = base_date + timedelta(days=rng.randint(0, 365), hours=rng.choice([0, 6, 8, 12, 18]))
         duration_hours = rng.choice([8, 12, 24, 36])
         end = start + timedelta(hours=duration_hours)
         pid = rng.choice(active_or_reserve)
+        dtype = rng.choice(duty_types)
+        location = rng.choice(["Laktanya", "Főkapu", "Parancsnoki épület", "Lőtér", "Raktárbázis"])
         duties.append(
-            DutyModel(
+            ExerciseModel(
                 id=f"d{index}",
-                type=rng.choice(duty_types),
+                name=f"{dtype} – {location}",
+                type=dtype,
                 start_date=start.strftime("%Y-%m-%dT%H:%M"),
                 end_date=end.strftime("%Y-%m-%dT%H:%M"),
-                location=rng.choice(["Laktanya", "Főkapu", "Parancsnoki épület", "Lőtér", "Raktárbázis"]),
-                person_id=pid,
-                person_name=person_names[pid],
-                notes=rng.choice([
+                location=location,
+                max_personnel=1,
+                description=rng.choice([
                     "Váltás átadás-átvétel naplózva.",
                     "Szolgálati eligazítás megtartva.",
                     "Rendkívüli esemény nem történt.",
                     "Megerősített készültségi fokozat.",
                 ]),
-                status=rng.choice(["Tervezett", "Teljesített", "Lemondva"]),
+                status=rng.choice(["Tervezett", "Befejezett", "Lemondva"]),
+                assigned=[{"personId": pid, "personName": person_names[pid], "role": "szolgálat", "attendance": "Megjelent"}],
             )
         )
 
