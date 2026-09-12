@@ -343,9 +343,10 @@ Ez a terhelési szint (kb. 10 egyidejű szerkesztő + 40 olvasó, ~1000 fő adat
 A következő scriptek a `ops/windows` mappában találhatók:
 
 - `set-guardduty-secrets.ps1`
-- `install-guardduty-service.ps1`
+- `install-guardduty-autostart-task.ps1` — gépindításkor indul, hiba után újraindul (ajánlott)
+- `install-guardduty-service.ps1` — Windows-szolgálat (csak burkolóval, pl. NSSM, működik megbízhatóan)
 - `new-guardduty-firewall-rules.ps1`
-- `backup-guardduty-db.ps1`
+- `backup-guardduty-db.ps1` — konzisztens SQLite-mentés + visszaállítás-próba (`python -m app.backup`), majd tömörített archívum
 - `install-guardduty-backup-task.ps1`
 - `test-guardduty-health.ps1`
 
@@ -365,14 +366,15 @@ cd <repo>\ops\windows
   -AllowedHosts "192.168.1.50,localhost"
 
 .\new-guardduty-firewall-rules.ps1 -BackendPort 8000 -AllowedSubnet "192.168.1.0/24"
-.\install-guardduty-service.ps1 -BackendHost "0.0.0.0" -BackendPort 8000
+.\install-guardduty-autostart-task.ps1 -BackendHost "0.0.0.0" -BackendPort 8000
 .\install-guardduty-backup-task.ps1 -DailyAt "02:00"
 ```
 
-Szolgáltatás ellenőrzés:
+Ellenőrzés:
 
 ```powershell
-Get-Service GuardGuardDutyApi
+Get-ScheduledTaskInfo -TaskName GuardGuardDuty-Backend
+Get-Service GuardGuardDutyApi   # ha szolgálatként telepítetted
 ```
 
 Kézi mentés futtatása:

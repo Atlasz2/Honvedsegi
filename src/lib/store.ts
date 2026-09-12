@@ -529,22 +529,32 @@ export const users = {
   remove: (username: string) => request<void>(`/users/${username}`, { method: 'DELETE' }),
 };
 
+export type BackupResult = {
+  ok: boolean; file: string | null; sizeBytes?: number; createdAt?: string;
+  verification: { ok: boolean; integrity: string; counts: Record<string, number | null> };
+  removedOld: number;
+};
+
 export type SystemStatus = {
   time: string;
+  startedAt: string;
+  uptimeSeconds: number;
   database: { path: string; sizeBytes: number };
   lastBackup: { name: string; sizeBytes: number; modifiedAt: string; count: number } | null;
-  sessions: { active: number; expired: number };
+  backups: { name: string; sizeBytes: number; createdAt: string }[];
+  sessions: { active: number; expired: number; activeUsers: number };
   users: { byRole: Record<string, number> };
   lockedAccounts: number;
 };
 
 /**
- * Karbantartás — kizárólag a god (dev_master) éri el. Nem-god hívónál a backend
+ * Karbantartás — kizárólag a god (devmaster) éri el. Nem-god hívónál a backend
  * semleges 403-at ad, ezért a felület ezt a szekciót csak god esetén jeleníti meg.
  */
 export const maintenance = {
   status: () => request<SystemStatus>('/maintenance/status'),
   purgeSessions: () => request<{ removed: number }>('/maintenance/sessions/purge', { method: 'POST' }),
+  backupNow: () => request<BackupResult>('/maintenance/backup', { method: 'POST' }),
   forceLogout: (username: string) => request<{ revoked: number }>(`/maintenance/users/${username}/logout`, { method: 'POST' }),
   unlock: (username: string) => request<{ status: string }>(`/maintenance/users/${username}/unlock`, { method: 'POST' }),
 };

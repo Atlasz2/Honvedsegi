@@ -47,13 +47,35 @@ export default function SystemStatusPanel() {
     }
   };
 
+  const backup = async () => {
+    setBusy(true);
+    try {
+      const result = await maintenance.backupNow();
+      const counts = result.verification.counts;
+      toast.success(`Mentés kész és visszaállítás-próbán ellenőrizve: ${result.file} (${formatBytes(result.sizeBytes ?? 0)}, ${counts.personnel ?? '?'} személy).`);
+      await refresh();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!status) return null;
 
+  const uptime = (() => {
+    const s = status.uptimeSeconds;
+    const d = Math.floor(s / 86400); const h = Math.floor((s % 86400) / 3600); const m = Math.floor((s % 3600) / 60);
+    return d > 0 ? `${d} nap ${h} óra` : h > 0 ? `${h} óra ${m} perc` : `${m} perc`;
+  })();
+
   const rows: [string, string][] = [
+    ['Fut', `${uptime} (indult: ${formatWhen(status.startedAt)})`],
     ['Adatbázis mérete', formatBytes(status.database.sizeBytes)],
     ['Utolsó mentés', status.lastBackup
       ? `${formatWhen(status.lastBackup.modifiedAt)} (${status.lastBackup.count} db)`
       : 'nincs mentés'],
+    ['Aktív felhasználók', `${status.sessions.activeUsers} fő`],
     ['Aktív munkamenetek', String(status.sessions.active)],
     ['Lejárt munkamenetek', String(status.sessions.expired)],
     ['Zárolt fiókok', String(status.lockedAccounts)],
@@ -83,6 +105,7 @@ export default function SystemStatusPanel() {
 
       <div className="flex gap-2 mt-3">
         <button onClick={() => { void refresh(); }} className="btn-mil-secondary text-xs">Frissítés</button>
+        <button onClick={() => { void backup(); }} disabled={busy} className="btn-mil-primary text-xs">{busy ? 'Dolgozik…' : 'Mentés most'}</button>
         <button onClick={() => { void purge(); }} disabled={busy} className="btn-mil-secondary text-xs disabled:opacity-50">
           Lejárt munkamenetek törlése
         </button>

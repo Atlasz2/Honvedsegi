@@ -15,7 +15,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..core.auth import purge_expired_sessions
-from ..core.time import as_utc, utc_now
+from ..core.time import PROCESS_STARTED_AT, as_utc, utc_now
+from ..backup import list_backups
 from ..db import DB_PATH
 from ..models import LoginAttemptModel, SessionTokenModel, UserModel
 
@@ -62,11 +63,19 @@ def system_status(db: Session) -> dict[str, object]:
         select(func.count()).select_from(LoginAttemptModel).where(LoginAttemptModel.locked_until > now)
     ) or 0
 
+    # Aktív felhasználó: akinek van élő munkamenete (több gépről is egynek számít).
+    active_users = db.scalar(
+        select(func.count(func.distinct(SessionTokenModel.user_id))).where(SessionTokenModel.expires_at >= now)
+    ) or 0
+    uptime_seconds = int((now - PROCESS_STARTED_AT).total_seconds())
     return {
         "time": now.isoformat(),
+        "startedAt": PROCESS_STARTED_AT.isoformat(),
+        "uptimeSeconds": uptime_seconds,
         "database": {"path": str(DB_PATH), "sizeBytes": _db_file_bytes()},
         "lastBackup": _last_backup(),
-        "sessions": {"active": int(active_sessions), "expired": int(expired_sessions)},
+        "backups": list_backups()[:10],
+        "sessions": {"active": int(active_sessions), "expired": int(expired_sessions), "activeUsers": int(active_users)},
         "users": {"byRole": {role: int(count) for role, count in role_counts.items()}},
         "lockedAccounts": int(locked_accounts),
     }

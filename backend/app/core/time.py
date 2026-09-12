@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+# A folyamat indulása — az állapot-oldal ebből számol futásidőt.
+PROCESS_STARTED_AT = datetime.now(timezone.utc)
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 

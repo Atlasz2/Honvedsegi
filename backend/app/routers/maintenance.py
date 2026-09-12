@@ -6,7 +6,9 @@ kérésekre ugyanazt a semleges 403-at adja, mint bármely más jogosultsági hi
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+
+from ..backup import create_backup
 
 from ..core.dependencies import DB, GodUser
 from ..services.maintenance import (
@@ -22,6 +24,15 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 @router.get("/status")
 def get_system_status(db: DB, _: GodUser):
     return system_status(db)
+
+
+@router.post("/backup")
+def backup_now(_: GodUser):
+    """Mentés most: konzisztens pillanatkép + visszaállítás-próba."""
+    result = create_backup()
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=f"A mentés nem állt át az ellenőrzésen: {result['verification']}")
+    return result
 
 
 @router.post("/sessions/purge")

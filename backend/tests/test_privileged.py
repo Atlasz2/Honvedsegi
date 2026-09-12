@@ -185,3 +185,16 @@ def test_god_actions_are_hidden_from_admin_in_the_audit_log(client, admin_header
 
     god_logs = client.get("/api/activity-log", headers=god_headers).json()
     assert any(l.get("userRole") == "fejleszto" for l in god_logs), "a god látja a saját műveleteit"
+
+
+def test_backup_now_creates_verified_snapshot(client, god_headers, tmp_path, monkeypatch):
+    import app.backup as backup
+    monkeypatch.setattr(backup, "BACKUP_DIR", tmp_path)
+    r = client.post("/api/maintenance/backup", headers=god_headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] and body["verification"]["integrity"] == "ok"
+    assert body["verification"]["counts"]["personnel"] >= 1
+    assert (tmp_path / body["file"]).exists()
+    status = client.get("/api/maintenance/status", headers=god_headers).json()
+    assert "uptimeSeconds" in status and "activeUsers" in status["sessions"]
