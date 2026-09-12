@@ -74,3 +74,18 @@ def test_changes_version_grows_on_write(client, admin_headers):
     after = client.get("/api/changes", headers=admin_headers).json()["version"]
     assert after > before
     assert client.get("/api/changes").status_code == 401
+
+
+def test_non_admin_sees_only_own_entries(client, admin_headers):
+    reader = _reader_headers(client)
+    _log(client, admin_headers, "csak-admin-latja")
+    _log(client, reader, "olvaso-sajat")
+    login = client.post("/api/auth/login", json={"username": "szerkeszto", "password": "szerkeszto123"}).json()
+    editor = {"Authorization": f"Bearer {login['token']}"}
+    _log(client, editor, "szerkeszto-sajat")
+
+    editor_names = {e["recordName"] for e in client.get("/api/activity-log", headers=editor).json()}
+    assert "szerkeszto-sajat" in editor_names
+    assert "olvaso-sajat" not in editor_names and "csak-admin-latja" not in editor_names, "a szerkesztő sem nézegeti a többieket"
+    facets = client.get("/api/activity-log/facets", headers=editor).json()
+    assert facets["users"] and all(u == login["user"]["displayName"] for u in facets["users"])

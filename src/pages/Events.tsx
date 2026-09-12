@@ -9,6 +9,7 @@ import { rankWeight, shortRank } from '@/lib/rank';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DatePickerInput from '@/components/DatePickerInput';
+import DateTimePickerInput from '@/components/DateTimePickerInput';
 import { toast } from 'sonner';
 
 type EventStatus = 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
@@ -223,10 +224,14 @@ export default function Events() {
     }
   };
 
+  // Az eseménynél az óra a lényeg (állománygyűlés 18:00): ha van idő, mutatjuk.
   const formatDate = (value: string) => {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString('hu-HU');
+    const hasTime = value.includes('T');
+    return hasTime
+      ? parsed.toLocaleString('hu-HU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : parsed.toLocaleDateString('hu-HU');
   };
 
   return (
@@ -392,13 +397,13 @@ export default function Events() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label>
-              <DatePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} />
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete (dátum és óra) *</label>
+              <DateTimePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} />
               {errors.startDate && <p className="text-destructive text-xs mt-1">{errors.startDate}</p>}
             </div>
             <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label>
-              <DatePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} />
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége (dátum és óra) *</label>
+              <DateTimePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} />
               {errors.endDate && <p className="text-destructive text-xs mt-1">{errors.endDate}</p>}
             </div>
           </div>

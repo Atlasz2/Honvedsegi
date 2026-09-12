@@ -1,34 +1,38 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ListChecks, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, Activity, CalendarSearch, History, FileSignature,
+  Package, Truck, CalendarRange, CalendarDays, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, History, FileSignature,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
 import CommandPalette, { openCommandPalette } from '@/components/CommandPalette';
 import { useConnection, setOnline } from '@/lib/connection';
 import { Search, WifiOff } from 'lucide-react';
 
-const navItems = [
+// A menü sorrendje a napi munka sorrendje: ami rám vár → mi a helyzet → naptár →
+// emberek → feladatok → parancsok → figyelmeztetések → napló → beállítások.
+// A Helyzetkép az Áttekintésbe, a Foglaltság a Közös naptárba, a Hírek az
+// Áttekintésbe olvadt; a logisztika (felszerelés/készlet/jármű) külön csoport a
+// végén — 2 hét múlva dől el, kell-e egyáltalán.
+type NavItem = { path: string; label: string; icon: typeof Users; alertBadge?: boolean; editorOnly?: boolean; group?: string };
+
+const navItems: NavItem[] = [
   { path: '/', label: 'Teendőim', icon: ListChecks },
   { path: '/attekintes', label: 'Áttekintés', icon: LayoutDashboard },
-  { path: '/helyzetkep', label: 'Helyzetkép', icon: Activity },
   { path: '/kozos-naptar', label: 'Közös naptár', icon: CalendarRange },
-  { path: '/foglaltsag', label: 'Foglaltság', icon: CalendarSearch },
   { path: '/personnel', label: 'Személyek', icon: Users },
   { path: '/letszam', label: 'Létszám', icon: ClipboardCheck },
   { path: '/szabadsag', label: 'Szabadság', icon: Palmtree },
-  { path: '/parancsok', label: 'Parancsok', icon: FileSignature },
   { path: '/operations', label: 'Műveletek', icon: Crosshair },
   { path: '/events', label: 'Események', icon: CalendarDays },
-  { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon },
-  { path: '/inventory', label: 'Készletek', icon: Package },
-  { path: '/vehicles', label: 'Járművek', icon: Truck },
-  { path: '/announcements', label: 'Hírek', icon: Megaphone },
+  { path: '/parancsok', label: 'Parancsok', icon: FileSignature },
   { path: '/figyelmeztetesek', label: 'Figyelmeztetések', icon: BellRing, alertBadge: true },
   { path: '/activity-log', label: 'Napló', icon: History },
   { path: '/settings', label: 'Beállítások', icon: Settings, editorOnly: true },
+  { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon, group: 'Logisztika' },
+  { path: '/inventory', label: 'Készletek', icon: Package, group: 'Logisztika' },
+  { path: '/vehicles', label: 'Járművek', icon: Truck, group: 'Logisztika' },
 ];
 
 const roleBadge: Record<string, string> = {
@@ -43,6 +47,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const online = useConnection();
+  const location = useLocation();
 
   // Kapcsolat-vesztéskor 5 másodpercenként megpróbáljuk a health-végpontot,
   // és amint válaszol, a sáv eltűnik.
@@ -72,37 +77,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const iv = setInterval(() => { void fetchAlertCount(); }, 5 * 60 * 1000);
     return () => clearInterval(iv);
   }, []);
-  // A koppintás-számláló nem vezérel megjelenítést, ezért ref és nem state:
-  // így nem okoz felesleges újrarajzolást minden koppintásnál.
-  const devTapCountRef = useRef(0);
-  const [showEasterEgg, setShowEasterEgg] = useState(false);
-  const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const eggHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const location = useLocation();
-
-  useEffect(() => {
-    return () => {
-      if (tapResetRef.current) clearTimeout(tapResetRef.current);
-      if (eggHideRef.current) clearTimeout(eggHideRef.current);
-    };
-  }, []);
-
-  const handleDevNamesClick = () => {
-    const next = devTapCountRef.current + 1;
-    devTapCountRef.current = next;
-
-    if (tapResetRef.current) clearTimeout(tapResetRef.current);
-    tapResetRef.current = setTimeout(() => { devTapCountRef.current = 0; }, 3000);
-
-    if (next >= 5) {
-      devTapCountRef.current = 0;
-      clearTimeout(tapResetRef.current);
-      setShowEasterEgg(true);
-      if (eggHideRef.current) clearTimeout(eggHideRef.current);
-      eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
-    }
-  };
-
   return (
     <div className="flex min-h-screen bg-background">
       <CommandPalette />
@@ -124,13 +98,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 py-2 overflow-y-auto">
-          {navItems.map(item => {
+          {navItems.map((item, index) => {
             if (item.editorOnly && !canEdit) return null;
+            const groupStart = item.group && navItems[index - 1]?.group !== item.group;
             const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
             const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;
             return (
+              <React.Fragment key={item.path}>
+              {groupStart && !collapsed && (
+                <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-military font-mono text-muted-foreground/70">{item.group}</p>
+              )}
+              {groupStart && collapsed && <div className="mx-3 my-2 h-px bg-border" />}
               <NavLink
-                key={item.path}
                 to={item.path}
                 className={`flex items-center gap-3 px-3 py-2.5 mx-1 my-0.5 text-sm transition-colors ${
                   active
@@ -155,6 +134,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </span>
                 )}
               </NavLink>
+              </React.Fragment>
             );
           })}
         </nav>
@@ -205,19 +185,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Page content */}
         <main className="flex-1 p-6 crosshair-bg overflow-auto">
           {children}
-          <button
-            type="button"
-            onClick={handleDevNamesClick}
-            className="mt-8 w-full text-center text-[10px] tracking-military text-muted-foreground opacity-30 hover:opacity-60 transition-opacity select-none cursor-default"
-          >
-            Fejlesztők: Kovács Martin · Rédli Máté · Tóth Rafael
-          </button>
-
-          {showEasterEgg && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md" style={{ borderRadius: '2px' }}>
-              🍓 Málnás édesség unlocked!
-            </div>
-          )}
         </main>
       </div>
     </div>

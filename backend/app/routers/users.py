@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from ..audit import record_activity
-from ..constants import ORDER_RESPONSIBLES
+from ..constants import USER_DEPARTMENTS
 from ..core.auth import to_user_read
 from ..core.dependencies import DB, Admin
 from ..core.privileged import assert_role_assignable, assert_user_manageable, filter_visible_users
@@ -39,8 +39,8 @@ def list_users(db: DB, current_user: Admin) -> list[UserRead]:
 def _check_department(department: str) -> str:
     """Csak ismert részleg (vagy üres) — elgépelt részleghez nem tartozna teendő."""
     value = (department or "").strip()
-    if value and value not in ORDER_RESPONSIBLES:
-        raise HTTPException(status_code=400, detail=f"Ismeretlen részleg: {value}. Választható: {', '.join(ORDER_RESPONSIBLES)}")
+    if value and value not in USER_DEPARTMENTS:
+        raise HTTPException(status_code=400, detail=f"Ismeretlen részleg: {value}. Választható: {', '.join(USER_DEPARTMENTS)}")
     return value
 
 

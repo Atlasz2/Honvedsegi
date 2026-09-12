@@ -46,7 +46,7 @@ export default function BasicTrainingImportPanel() {
   };
 
   return (
-    <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
+    <div className="mt-4 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
       <h2 className="text-sm uppercase tracking-military text-primary font-mono">Alapkiképzés-tábla importja</h2>
       <p className="text-xs text-muted-foreground mt-1">
         Excel/CSV: az első sorban „Név” és/vagy „SZTSZ”, mellette modulonként egy oszlop; a cellában a teljesítés dátuma (vagy „x”).

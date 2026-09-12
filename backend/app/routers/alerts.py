@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from ..basic_training import completion_map
-from ..constants import ALERT_WARN_DAYS, BASIC_TRAINING_DEADLINE_DAYS, LEAVE_MINIMUM_DAYS, SERVICE_MINIMUM_DAYS
+from ..settings_store import get_int
 from ..core.dependencies import DB, Reader
 from ..models import (
     AttendanceModel,
@@ -102,11 +102,12 @@ def leave_minimum(
     db: DB,
     _: Reader,
     year: int | None = Query(None, ge=2000, le=2100),
-    min_days: int = Query(LEAVE_MINIMUM_DAYS, ge=1, le=366),
+    min_days: int | None = Query(None, ge=1, le=366),
 ):
     """Aktív állomány, aki az adott évben még nem vett ki `min_days` munkanap
     jóváhagyott szabadságot. A 0 napos is szerepel — pont ők a lényeg."""
     year = year or date.today().year
+    min_days = min_days or get_int(db, "leave_minimum_days")
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
     taken: dict[str, int] = defaultdict(int)
@@ -132,14 +133,15 @@ def leave_minimum(
         for p in persons if taken[p.id] < min_days
     ]
     result.sort(key=lambda x: (x["takenDays"], x["unit"], x["name"].lower()))
-    return {"year": year, "minDays": min_days, **_year_deadline(year), "items": result}
+    return {"year": year, "minDays": min_days, **_year_deadline(db, year), "items": result}
 
 
-def _year_deadline(year: int) -> dict:
-    """Az éves kötelezettségek határideje dec. 31.; előre jelzünk ALERT_WARN_DAYS nappal."""
+def _year_deadline(db, year: int) -> dict:
+    """Az éves kötelezettségek határideje dec. 31.; a beállított napszámmal előre jelzünk."""
+    warn = get_int(db, "year_end_warn_days")
     days_left = (date(year, 12, 31) - date.today()).days
     return {"deadline": date(year, 12, 31).isoformat(), "daysLeft": days_left,
-            "warnDays": ALERT_WARN_DAYS, "isOverdue": days_left < 0, "isDueSoon": 0 <= days_left <= ALERT_WARN_DAYS}
+            "warnDays": warn, "isOverdue": days_left < 0, "isDueSoon": 0 <= days_left <= warn}
 
 
 def _overlap_days(start: str, end: str, year_start: date, year_end: date) -> int:
@@ -156,12 +158,13 @@ def service_minimum(
     db: DB,
     _: Reader,
     year: int | None = Query(None, ge=2000, le=2100),
-    min_days: int = Query(SERVICE_MINIMUM_DAYS, ge=1, le=366),
+    min_days: int | None = Query(None, ge=1, le=366),
 ):
     """Tartalékosok, akik az adott évben még nem szolgáltak `min_days` napot.
     Szolgált nap = gyakorlat/kiképzés napjai, ahol a résztvevő „Megjelent" vagy
     „Teljesített" és az esemény nincs lemondva; az évre vágva, naptári nap."""
     year = year or date.today().year
+    min_days = min_days or get_int(db, "service_minimum_days")
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
     events: dict[tuple[str, str], tuple[str, str]] = {}
@@ -198,26 +201,28 @@ def service_minimum(
         for p in persons if served[p.id] < min_days
     ]
     result.sort(key=lambda x: (x["servedDays"], x["unit"], x["name"].lower()))
-    return {"year": year, "minDays": min_days, **_year_deadline(year), "items": result}
+    return {"year": year, "minDays": min_days, **_year_deadline(db, year), "items": result}
 
 
 @router.get("/basic-training")
 def basic_training_deadline(
     db: DB,
     _: Reader,
-    deadline_days: int = Query(BASIC_TRAINING_DEADLINE_DAYS, ge=1, le=3650),
+    deadline_days: int | None = Query(None, ge=1, le=3650),
 ):
     """Tartalékosok, akiknek nincs meg az alapkiképzése. A határidő a jogviszony
     kezdete (join_date) + `deadline_days`; lejárt határidő = leszerelendő, a
-    határidő előtti ALERT_WARN_DAYS napban „hamarosan lejár".
+    határidő előtti (beállított) napokban „hamarosan lejár".
 
     Kész = megvan az összesítő „Alapkiképzés" képesítés VAGY minden modul
     (lejárat nem számít, az alapkiképzés nem évül)."""
+    deadline_days = deadline_days or get_int(db, "basic_training_deadline_days")
+    warn_days = get_int(db, "basic_training_warn_days")
     modules, completed, has_summary = completion_map(db)
     module_ids = [m.id for m in modules]
     module_names = {m.id: m.name for m in modules}
     if not module_ids:
-        return {"modules": [], "deadlineDays": deadline_days, "warnDays": ALERT_WARN_DAYS, "items": []}
+        return {"modules": [], "deadlineDays": deadline_days, "warnDays": warn_days, "items": []}
 
     today = date.today()
     items = []
@@ -235,7 +240,7 @@ def basic_training_deadline(
             "deadline": deadline.isoformat() if deadline else None,
             "daysLeft": days_left,
             "isOverdue": days_left is not None and days_left < 0,
-            "isDueSoon": days_left is not None and 0 <= days_left <= ALERT_WARN_DAYS,
+            "isDueSoon": days_left is not None and 0 <= days_left <= warn_days,
             "completedModules": len(done),
             "totalModules": len(module_ids),
             "missingModules": [module_names[m] for m in module_ids if m not in done],
@@ -245,18 +250,19 @@ def basic_training_deadline(
     return {
         "modules": [{"id": m.id, "name": m.name} for m in modules],
         "deadlineDays": deadline_days,
-        "warnDays": ALERT_WARN_DAYS,
+        "warnDays": warn_days,
         "items": items,
     }
 
 
 @router.get("/order-deadlines")
-def order_deadlines(db: DB, _: Reader, warn_days: int = Query(ALERT_WARN_DAYS, ge=0, le=365)):
+def order_deadlines(db: DB, _: Reader, warn_days: int | None = Query(None, ge=0, le=365)):
     """Nyitott parancsok lejárt vagy hamarosan lejáró határidői: a parancs
     egésze és az el nem készült fejezetek, felelős részleggel. A vezető és a
     részleg is ebből látja, mi csúszik."""
     from ..models import OrderChapterModel, OrderModel  # itt, hogy az alerts ne függjön mindig a parancsoktól
 
+    warn_days = get_int(db, "order_deadline_warn_days") if warn_days is None else warn_days
     today = date.today()
     horizon = (today + timedelta(days=warn_days)).isoformat()
     open_orders = db.scalars(select(OrderModel).where(OrderModel.status.in_(("Előkészítés", "Aláírásra vár")))).all()

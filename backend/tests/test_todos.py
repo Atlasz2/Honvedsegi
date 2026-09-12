@@ -42,3 +42,24 @@ def test_todos_show_my_departments_open_chapters(client, admin_headers):
     plain = client.get("/api/me/todos", headers=admin_headers).json()
     assert plain["department"] == "" and plain["myChapters"] == []
     assert client.get("/api/me/todos").status_code == 401
+
+
+def test_event_time_change_creates_a_change_notice(client, admin_headers):
+    created = client.post("/api/events", json={
+        "name": "Állománygyűlés", "type": "Gyűlés", "startDate": "2099-09-20T19:00", "endDate": "2099-09-20T20:00",
+        "location": "Klub", "organizer": "", "maxPersonnel": 0, "description": "", "status": "Tervezett", "assigned": [],
+    }, headers=admin_headers)
+    assert created.status_code == 201, created.text
+    ev = created.json()
+    r = client.put(f"/api/events/{ev['id']}", json={**{k: v for k, v in ev.items() if k != 'id'}, "startDate": "2099-09-20T20:00", "endDate": "2099-09-20T21:00"}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    notices = [a for a in client.get("/api/announcements", headers=admin_headers).json() if a["category"] == "Változás"]
+    assert any("Állománygyűlés" in a["title"] and "20:00" in a["content"] and "19:00" in a["content"] for a in notices)
+    # a Teendőim tetején is látszik — ha a dátum a mai (a közlemény dátuma mindig ma)
+    todos = client.get("/api/me/todos", headers=admin_headers).json()
+    assert any("Állománygyűlés" in c["title"] for c in todos["changes"])
+    # név-módosítás önmagában nem szül közleményt
+    before = len(notices)
+    client.put(f"/api/events/{ev['id']}", json={**{k: v for k, v in ev.items() if k != 'id'}, "startDate": "2099-09-20T20:00", "endDate": "2099-09-20T21:00", "name": "Állománygyűlés (frissítve)"}, headers=admin_headers)
+    after = [a for a in client.get("/api/announcements", headers=admin_headers).json() if a["category"] == "Változás"]
+    assert len(after) == before

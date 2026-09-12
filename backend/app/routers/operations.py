@@ -29,6 +29,7 @@ from ..schemas import (
     OperationTreeNode,
 )
 from ..services.operations import (
+    operations_now_data,
     create_operation_node_data,
     create_requirement_data,
     delete_document_data,
@@ -62,6 +63,13 @@ def list_operations(db: DB, _: Reader):
 @router.get("/summary")
 def operations_summary(db: DB, _: Reader, base_date: str | None = None):
     return operations_summary_data(base_date, db)
+
+
+@router.get("/now")
+def operations_now(db: DB, _: Reader):
+    """Mi van most: futó műveletek, ki van feladatban (mikortól meddig), a mai
+    események. Az Áttekintés ebből ad gyors képet — egy kérés, nem négy lista."""
+    return operations_now_data(db)
 
 
 # ── Művelet-fa ────────────────────────────────────────────────────────────

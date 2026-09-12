@@ -13,11 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..appliers import apply_event
-from ..constants import DUTY_EXERCISE_TYPES
+from ..constants import DUTY_EXERCISE_TYPES, SHADOW_EVENT_TYPE
 from ..core.time import parse_iso_date, utc_now
 from ..participants import load_participants_by_event
 from ..serializers import serialize_event, serialize_exercise, serialize_training
 from ..models import (
+    visible_events,
     EventModel,
     ExerciseModel,
     MaterialRequirementModel,
@@ -63,7 +64,7 @@ def _build_shadow_event(operation_id: str, source: ExerciseModel | TrainingModel
     organizer = "" if source_kind == "exercise" else (source.organizer or "")
     return EventModel(
         id=operation_id,
-        event_type="esemeny",
+        event_type=SHADOW_EVENT_TYPE,
         name=source.name,
         type=source.type,
         start_date=source.start_date,
@@ -212,6 +213,63 @@ def _operation_upload_dir(operation_id: str) -> Path:
     return target
 
 
+def operations_now_data(db: Session) -> dict[str, Any]:
+    """Futó (ma zajló, nem lemondott) műveletek a beosztottakkal, és a mai események."""
+    from ..constants import DUTY_EXERCISE_TYPES
+    from ..models import ParticipantModel, PersonModel
+
+    today = utc_now().date().isoformat()
+    running: list[dict[str, Any]] = []
+    for source, model in (("exercise", ExerciseModel), ("training", TrainingModel)):
+        for item in db.scalars(
+            select(model).where(model.status != "Lemondva", model.start_date <= today + "T23:59", model.end_date >= today)
+            .order_by(model.start_date)
+        ).all():
+            running.append({
+                "id": item.id, "source": source, "name": item.name, "type": item.type,
+                "isDuty": item.type in DUTY_EXERCISE_TYPES,
+                "startDate": item.start_date, "endDate": item.end_date, "location": item.location or "",
+                "assignedCount": 0,
+            })
+    by_id = {r["id"]: r for r in running}
+
+    on_task: list[dict[str, Any]] = []
+    if by_id:
+        parts = db.scalars(
+            select(ParticipantModel).where(
+                ParticipantModel.event_id.in_(list(by_id)),
+                ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+            )
+        ).all()
+        persons = {
+            p.id: p for p in db.scalars(select(PersonModel).where(PersonModel.id.in_(list({x.personnel_id for x in parts})))).all()
+        } if parts else {}
+        for part in parts:
+            op = by_id.get(part.event_id)
+            if not op:
+                continue
+            op["assignedCount"] += 1
+            person = persons.get(part.personnel_id)
+            on_task.append({
+                "personnelId": part.personnel_id, "name": part.person_name or (person.name if person else "?"),
+                "rank": person.rank if person else part.rank, "unit": person.unit if person else "",
+                "personStatus": person.status if person else "",
+                "operationId": op["id"], "source": op["source"], "operationName": op["name"], "isDuty": op["isDuty"],
+                "startDate": op["startDate"], "endDate": op["endDate"], "participantStatus": part.status,
+            })
+    on_task.sort(key=lambda x: (x["unit"], x["name"].lower()))
+
+    today_events = [
+        {"id": e.id, "name": e.name, "type": e.type, "startDate": e.start_date, "endDate": e.end_date,
+         "location": e.location or "", "status": e.status}
+        for e in db.scalars(
+            visible_events().where(EventModel.status.notin_(("Törölve", "Lemondva")), EventModel.start_date <= today + "T23:59", EventModel.end_date >= today)
+            .order_by(EventModel.start_date)
+        ).all()
+    ]
+    return {"date": today, "running": running, "onTask": on_task, "onTaskPeople": len({x["personnelId"] for x in on_task}), "todayEvents": today_events}
+
+
 def list_operations_data(db: Session) -> list[OperationRead]:
     """Gyakorlatok és kiképzések egy listában, művelet-nézethez.
 
@@ -301,7 +359,7 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
 
 
 def get_operations_tree_data(db: Session) -> list[OperationTreeNode]:
-    events = db.scalars(select(EventModel).order_by(EventModel.start_date, EventModel.name)).all()
+    events = db.scalars(visible_events().order_by(EventModel.start_date, EventModel.name)).all()
     node_map = {item.id: _event_to_tree_node(item) for item in events}
 
     roots: list[OperationTreeNode] = []

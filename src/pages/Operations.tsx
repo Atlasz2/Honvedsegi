@@ -73,6 +73,7 @@ type EditForm = {
   qualificationId: string;
   level: string;
   prerequisiteIds: string[];
+  seriesId: string;
 };
 
 // Az időbeli állapotot (közelgő / folyamatban / lezajlott) a rendszer a dátumokból
@@ -185,7 +186,13 @@ export default function Operations() {
   const [creating, setCreating] = useState(false);
   const [qualTypeOptions, setQualTypeOptions] = useState<QualificationType[]>([]);
   const [prereqSearch, setPrereqSearch] = useState("");
+  // A követelmény-listában az Alapkiképzés (és moduljai) legfelül: ez a leggyakoribb feltétel.
+  const prereqOrdered = useMemo(() => {
+    const rank = (qt: QualificationType) => (qt.name === "Alapkiképzés" ? 0 : qt.category === "Alapkiképzés" ? 1 : 2);
+    return [...qualTypeOptions].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, "hu"));
+  }, [qualTypeOptions]);
   const [qualMgrOpen, setQualMgrOpen] = useState(false);
+  const [qualMgrSearch, setQualMgrSearch] = useState("");
   const [newTypeName, setNewTypeName] = useState("");
   const [newTypeCategory, setNewTypeCategory] = useState("");
   const [savingType, setSavingType] = useState(false);
@@ -193,7 +200,7 @@ export default function Operations() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [editing, setEditing] = useState<OperationItem | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett", qualificationId: "", level: "", prerequisiteIds: [] });
+  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett", qualificationId: "", level: "", prerequisiteIds: [], seriesId: "" });
   const [editPrereqSearch, setEditPrereqSearch] = useState("");
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
@@ -468,7 +475,7 @@ export default function Operations() {
       location: item.location, organizer: rawTraining?.organizer ?? "",
       maxPersonnel: item.maxPersonnel, description: item.description,
       status: item.status,
-      qualificationId: raw?.qualificationId ?? "", level: raw?.level ?? "", prerequisiteIds: [],
+      qualificationId: raw?.qualificationId ?? "", level: raw?.level ?? "", prerequisiteIds: [], seriesId: raw?.seriesId ?? "",
     });
     setEditPrereqSearch("");
     setEditErrors({});
@@ -497,7 +504,7 @@ export default function Operations() {
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, maxPersonnel: editForm.maxPersonnel,
           description: editForm.description, status: editForm.status as Exercise["status"],
-          qualificationId: editForm.qualificationId, level: editForm.level,
+          qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
         });
       } else {
         const raw = rawTrainings.find((t) => t.id === editing.id);
@@ -507,7 +514,7 @@ export default function Operations() {
           startDate: editForm.startDate, endDate: editForm.endDate,
           location: editForm.location, organizer: editForm.organizer,
           maxPersonnel: editForm.maxPersonnel, description: editForm.description,
-          status: editForm.status, qualificationId: editForm.qualificationId, level: editForm.level,
+          status: editForm.status, qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
         });
       }
       await prerequisites.set(editing.source, editing.id, editForm.prerequisiteIds);
@@ -928,22 +935,24 @@ export default function Operations() {
               <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs">Létrehoz</button>
             </div>
           )}
-          <div className="border border-border max-h-80 overflow-auto" style={{ borderRadius: "2px" }}>
+          <input value={qualMgrSearch} onChange={(e) => setQualMgrSearch(e.target.value)} placeholder="Szűrés név vagy kategória szerint…" className="w-full bg-input border border-border px-3 py-1.5 text-sm" style={{ borderRadius: "2px" }} />
+          <div className="border border-border max-h-[28rem] overflow-auto" style={{ borderRadius: "2px" }}>
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-card">
                 <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
                   <th className="px-3 py-2">Név</th>
                   <th className="px-3 py-2">Kategória</th>
+                  <th className="px-3 py-2">Lejárat (nap)</th>
+                  {canEdit && <th className="px-3 py-2"></th>}
                 </tr>
               </thead>
               <tbody>
                 {qualTypeOptions.length === 0 ? (
-                  <tr><td colSpan={2} className="px-3 py-4 text-center text-muted-foreground">Nincs képzettség.</td></tr>
-                ) : qualTypeOptions.map((qt) => (
-                  <tr key={qt.id} className="border-b border-border/50">
-                    <td className="px-3 py-1.5 text-foreground font-rajdhani">{qt.name}</td>
-                    <td className="px-3 py-1.5 text-muted-foreground">{qt.category}</td>
-                  </tr>
+                  <tr><td colSpan={4} className="px-3 py-4 text-center text-muted-foreground">Nincs képzettség.</td></tr>
+                ) : qualTypeOptions
+                  .filter((qt) => !qualMgrSearch.trim() || `${qt.name} ${qt.category}`.toLowerCase().includes(qualMgrSearch.trim().toLowerCase()))
+                  .map((qt) => (
+                  <QualTypeRow key={qt.id} item={qt} canEdit={canEdit} onSaved={(saved) => setQualTypeOptions((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))} onDeleted={() => setQualTypeOptions((prev) => prev.filter((x) => x.id !== qt.id))} />
                 ))}
               </tbody>
             </table>
@@ -988,9 +997,20 @@ export default function Operations() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felkészítés-sorozat</label>
-              <div className="w-full bg-input border border-border px-3 py-2 text-sm text-muted-foreground" style={{ borderRadius: "2px" }}>
-                {form.seriesId ? (seriesList.find((s) => s.id === form.seriesId)?.name ?? "Sorozat") : "Önálló (nincs sorozat)"}
-              </div>
+              <select
+                value={form.seriesId}
+                onChange={(e) => {
+                  if (e.target.value === "__new__") { setNewSeriesOpen(true); return; }
+                  setForm({ ...form, seriesId: e.target.value });
+                }}
+                className="w-full bg-input border border-border px-3 py-2 text-sm"
+                style={{ borderRadius: "2px" }}
+              >
+                <option value="">Önálló (nincs sorozat)</option>
+                {seriesList.map((sr) => <option key={sr.id} value={sr.id}>{sr.name}</option>)}
+                <option value="__new__">+ Új sorozat…</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">Sorozat = összetartozó modulok (pl. 7×20). A sorozat kártyáján belül is létrehozhatsz elemet.</p>
             </div>
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szint</label>
@@ -1061,10 +1081,14 @@ export default function Operations() {
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belépési követelmény(ek)</label>
+            <label className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer border border-border mb-1" style={{ borderRadius: "2px" }}>
+              <input type="checkbox" checked={form.prerequisiteIds.length === 0} onChange={() => setForm((prev) => ({ ...prev, prerequisiteIds: [] }))} />
+              <span className="text-foreground">Nincs követelmény — bárki beosztható</span>
+            </label>
             <input value={prereqSearch} onChange={(e) => setPrereqSearch(e.target.value)} placeholder="Képesítés keresése…" className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: "2px" }} />
             <div className="border border-border max-h-40 overflow-auto" style={{ borderRadius: "2px" }}>
               {qualTypeOptions.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">Nincs képesítés-típus.</p>}
-              {qualTypeOptions
+              {prereqOrdered
                 .filter((qt) => !prereqSearch.trim() || qt.name.toLowerCase().includes(prereqSearch.trim().toLowerCase()))
                 .map((qt) => {
                   const checked = form.prerequisiteIds.includes(qt.id);
@@ -1325,6 +1349,13 @@ export default function Operations() {
                 </select>
               </div>
               <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felkészítés-sorozat</label>
+                <select value={editForm.seriesId} onChange={(e) => setEditForm({ ...editForm, seriesId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+                  <option value="">Önálló (nincs sorozat)</option>
+                  {seriesList.map((sr) => <option key={sr.id} value={sr.id}>{sr.name}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szint</label>
                 <select value={editForm.level} onChange={(e) => setEditForm({ ...editForm, level: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
                   <option value="">—</option>
@@ -1337,9 +1368,13 @@ export default function Operations() {
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belépési követelmény(ek)</label>
+              <label className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer border border-border mb-1" style={{ borderRadius: "2px" }}>
+                <input type="checkbox" checked={editForm.prerequisiteIds.length === 0} onChange={() => setEditForm((prev) => ({ ...prev, prerequisiteIds: [] }))} />
+                <span className="text-foreground">Nincs követelmény — bárki beosztható</span>
+              </label>
               <input value={editPrereqSearch} onChange={(e) => setEditPrereqSearch(e.target.value)} placeholder="Képesítés keresése…" className="w-full bg-input border border-border px-3 py-1.5 text-sm mb-1" style={{ borderRadius: "2px" }} />
               <div className="border border-border max-h-40 overflow-auto" style={{ borderRadius: "2px" }}>
-                {qualTypeOptions
+                {prereqOrdered
                   .filter((qt) => !editPrereqSearch.trim() || qt.name.toLowerCase().includes(editPrereqSearch.trim().toLowerCase()))
                   .map((qt) => {
                     const checked = editForm.prerequisiteIds.includes(qt.id);
@@ -1394,5 +1429,76 @@ export default function Operations() {
         message={`Törli a(z) „${seriesDeleteTarget?.name}" sorozatot? Az elemei nem törlődnek, csak önállóvá válnak.`}
       />
     </div>
+  );
+}
+
+/** Egy képzettség-típus sora a kezelőben: a helyén szerkeszthető, törölhető (ha senkinek nincs kiadva). */
+function QualTypeRow({ item, canEdit, onSaved, onDeleted }: {
+  item: QualificationType; canEdit: boolean; onSaved: (saved: QualificationType) => void; onDeleted: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [category, setCategory] = useState(item.category);
+  const [validity, setValidity] = useState(item.validityDays === null ? "" : String(item.validityDays));
+  const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const save = async () => {
+    const days = validity.trim() === "" ? null : Number(validity);
+    if (days !== null && (!Number.isInteger(days) || days <= 0)) { toast.error("A lejárat pozitív egész nap legyen, vagy üres (nem jár le)."); return; }
+    if (!name.trim()) { toast.error("A név kötelező."); return; }
+    setBusy(true);
+    try {
+      const saved = await qualificationTypes.update(item.id, { name: name.trim(), category: category.trim() || "Általános", validityDays: days, description: item.description ?? "" });
+      onSaved(saved);
+      setEditing(false);
+      toast.success("Képzettség mentve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await qualificationTypes.remove(item.id);
+      onDeleted();
+      toast.success("Képzettség törölve");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <tr className="border-b border-border/50 hover:bg-secondary/40">
+        <td className="px-3 py-1.5 text-foreground font-rajdhani">{item.name}</td>
+        <td className="px-3 py-1.5 text-muted-foreground">{item.category}</td>
+        <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{item.validityDays === null ? "nem jár le" : `${item.validityDays} nap`}</td>
+        {canEdit && (
+          <td className="px-3 py-1.5 whitespace-nowrap text-right">
+            <button onClick={() => setEditing(true)} className="text-xs text-primary hover:underline px-1">Szerkesztés</button>
+            <button onClick={() => setConfirmDelete(true)} className="text-xs text-destructive hover:underline px-1">Törlés</button>
+            <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={() => { void remove(); }} message={`Törlöd a képzettséget: „${item.name}"? Csak akkor lehet, ha senkinek nincs kiadva.`} />
+          </td>
+        )}
+      </tr>
+    );
+  }
+  return (
+    <tr className="border-b border-border/50 bg-primary/5">
+      <td className="px-3 py-1.5"><input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-sm" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-1.5"><input value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-input border border-border px-2 py-1 text-sm" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-1.5"><input type="number" min={1} value={validity} onChange={(e) => setValidity(e.target.value)} placeholder="nem jár le" className="w-24 bg-input border border-border px-2 py-1 text-sm font-mono" style={{ borderRadius: "2px" }} /></td>
+      <td className="px-3 py-1.5 whitespace-nowrap text-right">
+        <button onClick={() => { void save(); }} disabled={busy} className="btn-mil-primary text-[11px] px-2 py-0.5">Mentés</button>
+        <button onClick={() => { setEditing(false); setName(item.name); setCategory(item.category); setValidity(item.validityDays === null ? "" : String(item.validityDays)); }} className="text-xs text-muted-foreground hover:underline px-2">Mégsem</button>
+      </td>
+    </tr>
   );
 }

@@ -16,9 +16,10 @@ function addDays(days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function Availability() {
+/** Beágyazható foglaltság-kereső (a Közös naptár tetején is ez ül). */
+export function AvailabilityPanel({ embedded = false }: { embedded?: boolean }) {
   const [location, setLocation] = useState('');
-  const [fromDate, setFromDate] = useState(addDays(14));
+  const [fromDate, setFromDate] = useState(addDays(0));
   const [toDate, setToDate] = useState('');
   const [locations, setLocations] = useState<string[]>([]);
   const [result, setResult] = useState<Booking[] | null>(null);
@@ -55,16 +56,21 @@ export default function Availability() {
 
   const isFree = result !== null && result.length === 0;
 
+  // Gyors időablakok: ma / egy héten belül / egy hónapon belül.
+  const quick = (days: number) => { setFromDate(addDays(0)); setToDate(days ? addDays(days) : ''); };
+
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold font-rajdhani tracking-military-wide text-primary flex items-center gap-2">
-          <CalendarSearch className="w-6 h-6" /> Foglaltság kereső
-        </h1>
-        <p className="text-xs text-muted-foreground tracking-military">
-          Szabad-e egy helyszín (pl. lőtér) egy adott napon vagy időszakban?
-        </p>
-      </div>
+    <div className={embedded ? 'space-y-3' : 'space-y-5 max-w-3xl'}>
+      {!embedded && (
+        <div>
+          <h1 className="text-2xl font-bold font-rajdhani tracking-military-wide text-primary flex items-center gap-2">
+            <CalendarSearch className="w-6 h-6" /> Foglaltság kereső
+          </h1>
+          <p className="text-xs text-muted-foreground tracking-military">
+            Szabad-e egy helyszín (pl. lőtér) egy adott napon vagy időszakban?
+          </p>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="bg-card border border-border p-4 space-y-3" style={{ borderRadius: '2px' }}>
@@ -104,8 +110,9 @@ export default function Availability() {
           >
             Ellenőrzés
           </button>
-          <button onClick={() => setFromDate(addDays(0))} className="px-3 py-2 text-sm border border-border text-muted-foreground hover:text-foreground" style={{ borderRadius: '2px' }}>Ma</button>
-          <button onClick={() => setFromDate(addDays(14))} className="px-3 py-2 text-sm border border-border text-muted-foreground hover:text-foreground" style={{ borderRadius: '2px' }}>2 hét múlva</button>
+          <button onClick={() => quick(0)} className="px-3 py-2 text-sm border border-border text-muted-foreground hover:text-foreground" style={{ borderRadius: '2px' }}>Ma</button>
+          <button onClick={() => quick(7)} className="px-3 py-2 text-sm border border-border text-muted-foreground hover:text-foreground" style={{ borderRadius: '2px' }}>Héten belül</button>
+          <button onClick={() => quick(30)} className="px-3 py-2 text-sm border border-border text-muted-foreground hover:text-foreground" style={{ borderRadius: '2px' }}>Hónapon belül</button>
         </div>
       </div>
 
@@ -144,4 +151,8 @@ export default function Availability() {
       )}
     </div>
   );
+}
+
+export default function Availability() {
+  return <AvailabilityPanel />;
 }

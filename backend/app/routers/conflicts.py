@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from ..core.dependencies import DB, Reader
-from ..models import EventModel, ExerciseModel, TrainingModel
+from ..models import EventModel, ExerciseModel, TrainingModel, visible_events
 
 router = APIRouter(prefix="/api/conflicts", tags=["conflicts"])
 
@@ -68,7 +68,7 @@ def check_conflicts(
 
     _add("exercise", db.scalars(select(ExerciseModel)).all())
     _add("training", db.scalars(select(TrainingModel)).all())
-    _add("event", db.scalars(select(EventModel)).all())
+    _add("event", db.scalars(visible_events()).all())
 
     return conflicts
 

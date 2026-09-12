@@ -1033,6 +1033,17 @@ export type OperationNodePayload = {
   parentId?: string | null;
 };
 
+export type OperationsNow = {
+  date: string;
+  running: { id: string; source: 'exercise' | 'training'; name: string; type: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
+  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise' | 'training'; operationName: string; isDuty: boolean; startDate: string; endDate: string; participantStatus: string }[];
+  onTaskPeople: number;
+  todayEvents: { id: string; name: string; type: string; startDate: string; endDate: string; location: string; status: string }[];
+};
+export const operations = {
+  now: () => request<OperationsNow>('/operations/now'),
+};
+
 export const operationTree = {
   get: () => request<OperationTreeNode[]>('/operations/tree'),
   create: (payload: OperationNodePayload) =>
@@ -1190,6 +1201,10 @@ export const basicTrainingImport = {
 
 export type MyTodos = {
   department: string;
+  /** Mi tartozik hozzám a részleg szerint: chapters | orders | leave | training | operations */
+  duties: string[];
+  /** Időpont/helyszín módosulások az elmúlt 7 napból — mindenkinek. */
+  changes: { id: string; title: string; content: string; date: string; author: string }[];
   myChapters: { orderId: string; number: string; subject: string; chapterId: string; chapter: string; status: string; assignee: string; dueDate: string; daysLeft: number | null; isOverdue: boolean; hasText: boolean }[];
   waitingSignature: number;
   pendingLeave: { id: string; personName: string; type: string; startDate: string; endDate: string }[];
@@ -1199,6 +1214,14 @@ export type MyTodos = {
   upcomingCount: number;
 };
 
+export type AlertSetting = { key: string; label: string; value: number; default: number; min: number; max: number; help: string };
+export const settings = {
+  alerts: () => request<{ items: AlertSetting[] }>('/settings/alerts'),
+  updateAlerts: (values: Record<string, number>) =>
+    request<{ items: AlertSetting[]; changed: string[] }>('/settings/alerts', { method: 'PUT', body: JSON.stringify({ values }) }),
+};
+
 export const me = {
   todos: () => request<MyTodos>('/me/todos'),
 };
+

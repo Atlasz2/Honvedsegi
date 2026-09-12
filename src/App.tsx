@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import LoginPage from "@/components/LoginPage";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
 
 // Útvonalanként külön csomag: az első betöltés csak a bejelentkezést és az
 // áttekintőt hozza le. A Dashboard szándékosan NEM lazy — az a kezdőoldal.
@@ -25,8 +24,8 @@ const Attendance = lazy(() => import("@/pages/Attendance"));
 const Leave = lazy(() => import("@/pages/Leave"));
 const Parancsok = lazy(() => import("@/pages/Parancsok"));
 const Teendoim = lazy(() => import("@/pages/Teendoim"));
-const Helyzetkep = lazy(() => import("@/pages/Helyzetkep"));
-const Availability = lazy(() => import("@/pages/Availability"));
+const Attekintes = lazy(() => import("@/pages/Attekintes"));
+const Riportok = lazy(() => import("@/pages/Riportok"));
 const Kovetelmenyek = lazy(() => import("@/pages/Kovetelmenyek"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
@@ -46,7 +45,8 @@ function AppRoutes() {
       <Suspense fallback={<p className="text-xs text-muted-foreground font-mono p-6">Betöltés…</p>}>
         <Routes>
           <Route path="/" element={<Teendoim />} />
-          <Route path="/attekintes" element={<Dashboard />} />
+          <Route path="/attekintes" element={<Attekintes />} />
+          <Route path="/riportok" element={<Riportok />} />
           <Route path="/kozos-naptar" element={<CalendarPage />} />
           <Route path="/kozos-naptar/*" element={<CalendarPage />} />
           <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />
@@ -55,8 +55,8 @@ function AppRoutes() {
           <Route path="/letszam" element={<Attendance />} />
           <Route path="/szabadsag" element={<Leave />} />
           <Route path="/parancsok" element={<Parancsok />} />
-          <Route path="/helyzetkep" element={<Helyzetkep />} />
-          <Route path="/foglaltsag" element={<Availability />} />
+          <Route path="/helyzetkep" element={<Navigate to="/attekintes" replace />} />
+          <Route path="/foglaltsag" element={<Navigate to="/kozos-naptar" replace />} />
           <Route path="/kovetelmenyek" element={<Kovetelmenyek />} />
           <Route path="/operations" element={<Operations />} />
           <Route path="/events" element={<Events />} />

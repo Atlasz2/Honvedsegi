@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from ..core.dependencies import DB, Reader
-from ..models import EventModel, ExerciseModel, TrainingModel
+from ..models import visible_events, EventModel, ExerciseModel, TrainingModel
 
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
@@ -72,7 +72,7 @@ def check_availability(
     needle = _norm(q)
     bookings: list[dict] = []
     for event_type, model in _SOURCES:
-        for item in db.scalars(select(model)).all():
+        for item in db.scalars(visible_events() if model is EventModel else select(model)).all():
             location = (getattr(item, "location", "") or "").strip()
             if not location:
                 continue

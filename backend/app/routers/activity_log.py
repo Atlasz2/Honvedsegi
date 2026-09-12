@@ -64,11 +64,18 @@ def list_activity_logs(
 ):
     """A napló idővel tízezres lesz — a szűrés és a korlát a szerveren van,
     a láthatóság (szerepkör-szint) is SQL-ben, nem Pythonban."""
-    viewer_level = _ROLE_LEVEL.get(current_user.role, 1)
-    visible_roles = [role for role, level in _ROLE_LEVEL.items() if level <= viewer_level]
-    query = select(ActivityLogModel).where(
-        or_(ActivityLogModel.user_role.in_(visible_roles), ActivityLogModel.user_role == "", ActivityLogModel.user_role.is_(None))
-    )
+    # Ki mit lát: olvasó és szerkesztő CSAK a saját bejegyzéseit — senki ne
+    # csekkolgassa a másikat, akihez semmi köze. Admin és alkotó az egészet
+    # (az alkotó szintjét az admin nem látja).
+    query = select(ActivityLogModel)
+    if current_user.role in ("admin", "fejleszto"):
+        viewer_level = _ROLE_LEVEL.get(current_user.role, 1)
+        visible_roles = [role for role, level in _ROLE_LEVEL.items() if level <= viewer_level]
+        query = query.where(
+            or_(ActivityLogModel.user_role.in_(visible_roles), ActivityLogModel.user_role == "", ActivityLogModel.user_role.is_(None))
+        )
+    else:
+        query = query.where(ActivityLogModel.user_id == current_user.username)
     if date_from:
         query = query.where(ActivityLogModel.timestamp >= f"{date_from}T00:00:00")
     if date_to:
@@ -86,16 +93,23 @@ def list_activity_logs(
 @router.get("/facets")
 def activity_log_facets(db: DB, _: Reader):
     """A szűrők listái (felhasználók, modulok) — nem a teljes napló letöltéséből."""
-    users = [u for (u,) in db.execute(select(ActivityLogModel.user_name).distinct().order_by(ActivityLogModel.user_name))]
-    modules = [m for (m,) in db.execute(select(ActivityLogModel.module).distinct().order_by(ActivityLogModel.module))]
+    base_users = select(ActivityLogModel.user_name).distinct().order_by(ActivityLogModel.user_name)
+    base_modules = select(ActivityLogModel.module).distinct().order_by(ActivityLogModel.module)
+    if _.role not in ("admin", "fejleszto"):
+        base_users = base_users.where(ActivityLogModel.user_id == _.username)
+        base_modules = base_modules.where(ActivityLogModel.user_id == _.username)
+    users = [u for (u,) in db.execute(base_users)]
+    modules = [m for (m,) in db.execute(base_modules)]
     return {"users": users, "modules": modules}
 
 
 @router.post("", response_model=ActivityLogRead)
 def create_activity_log(payload: ActivityLogCreate, db: DB, current_user: Reader):
+    # A bejegyzés a HITELESÍTETT felhasználóé — a kliens által küldött név csak
+    # tájékoztató; így a „saját bejegyzéseim" szűrés és a napló hiteles marad.
     item = ActivityLogModel(
-        user_id=payload.userId,
-        user_name=payload.userName,
+        user_id=current_user.username,
+        user_name=current_user.display_name or payload.userName,
         user_role=current_user.role,
         action=payload.action,
         module=payload.module,
@@ -162,7 +176,8 @@ def restore_activity(item_id: str, db: DB, user: Editor):
         action="módosítva",
         module="Tevékenységnapló",
         record_name=f"Visszaállítás: {log_item.record_name}",
-        payload={"restoreOf": log_item.id, "entity": entity},
+        payload={"restoreOf": log_item.id, "entity": entity, "mode": "update",
+                 "before": {"visszaállítás": "—"}, "after": {"visszaállítás": f"{log_item.record_name} ({log_item.timestamp:%Y-%m-%d %H:%M} állapotára)"}},
     )
     db.add(restore_log)
     db.commit()

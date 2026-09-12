@@ -430,6 +430,22 @@ def _migrate_duties_into_exercises(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _mark_shadow_events(db: Session) -> None:
+    """A gyakorlat/kiképzés azonosítójával létrejött event-sorok árnyékok, nem
+    események — eddig duplán látszottak a naptárban és a foglaltságban."""
+    key = "v5_mark_shadow_events"
+    if _migration_done(db, key):
+        return
+    from .constants import SHADOW_EVENT_TYPE
+    result = db.execute(text(
+        "UPDATE events SET event_type = :t WHERE id IN (SELECT id FROM exercises) OR id IN (SELECT id FROM trainings)"
+    ), {"t": SHADOW_EVENT_TYPE})
+    if result.rowcount:
+        log.info("Árnyék-esemény megjelölve: %d", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
 def run_all(db: Session) -> None:
@@ -441,3 +457,4 @@ def run_all(db: Session) -> None:
     _migrate_rank_names(db)
     _migrate_cancelled_status(db)
     _migrate_duties_into_exercises(db)
+    _mark_shadow_events(db)

@@ -151,6 +151,13 @@ class EventModel(Base):
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
+def visible_events():
+    """Valódi események (az árnyék-sorok nélkül) — minden listázás ezt használja."""
+    from sqlalchemy import select as _select
+    from .constants import SHADOW_EVENT_TYPE
+    return _select(EventModel).where(EventModel.event_type != SHADOW_EVENT_TYPE)
+
+
 class ExerciseModel(Base):
     __tablename__ = "exercises"
 
@@ -399,6 +406,14 @@ class OperationDocumentModel(Base):
     uploaded_by: Mapped[str] = mapped_column(String, default="")
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class AppSettingModel(Base):
+    """Admin által állítható kulcs → érték (pl. riasztási küszöbök)."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String, default="")
 
 
 # ── Parancs-műhely (I5) ───────────────────────────────────────────────────────

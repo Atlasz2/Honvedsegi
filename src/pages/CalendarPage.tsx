@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import Modal from "@/components/Modal";
 import { events, exercises, getErrorMessage, trainings } from "@/lib/store";
+import { AvailabilityPanel } from "@/pages/Availability";
+import { CalendarSearch, ChevronDown, ChevronRight } from "lucide-react";
 import type { AppEvent, Exercise, Training } from "@/lib/types";
 import { isDutyType } from "@/lib/dutyTypes";
 import { useNavigate } from "react-router-dom";
@@ -30,11 +32,13 @@ type DayEntry = {
 
 const weekdayLabels = ["H", "K", "Sz", "Cs", "P", "Sz", "V"];
 
+// Erős, egymástól jól elkülönülő színek, fehér felirattal — a naptárban nem
+// keret és halvány háttér kell, hanem ránézésre olvasható csík.
 const sourceClass: Record<CalendarSource, string> = {
-  duty: "badge-reserve",
-  exercise: "badge-planned",
-  training: "badge-ongoing",
-  event: "badge-cancelled",
+  duty: "bg-amber-600 text-white",
+  exercise: "bg-sky-600 text-white",
+  training: "bg-emerald-600 text-white",
+  event: "bg-violet-600 text-white",
 };
 
 const sourceLabel: Record<CalendarSource, string> = {
@@ -109,6 +113,7 @@ export default function CalendarPage() {
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
+  const [availabilityOpen, setAvailabilityOpen] = useState(false);
 
   const year = monthCursor.getFullYear();
   const monthIndex = monthCursor.getMonth();
@@ -220,8 +225,9 @@ export default function CalendarPage() {
   }, [navigate, selectedItem]);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    // A naptár a képernyőhöz igazodik: az oldal nem görget, a napok cellái belül görgetnek.
+    <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[520px]">
+      <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Közös naptár</h1>
         <div className="flex items-center gap-2">
           <button onClick={() => setMonthCursor(new Date(year, monthIndex - 1, 1))} className="btn-mil-secondary text-xs">◀</button>
@@ -232,7 +238,16 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      <div className="mb-3 bg-card border border-border" style={{ borderRadius: "2px" }}>
+        <button onClick={() => setAvailabilityOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs uppercase tracking-military font-mono text-primary hover:bg-secondary/40">
+          {availabilityOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <CalendarSearch className="w-4 h-4" />
+          Foglaltság-kereső — szabad-e a helyszín?
+        </button>
+        {availabilityOpen && <div className="px-3 pb-3"><AvailabilityPanel embedded /></div>}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         {(["duty", "exercise", "training", "event"] as CalendarSource[]).map((source) => (
           <span
             key={source}
@@ -244,14 +259,14 @@ export default function CalendarPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-px bg-border">
+      <div className="grid grid-cols-7 gap-px bg-border flex-1 min-h-0" style={{ gridTemplateRows: "auto repeat(6, minmax(0, 1fr))" }}>
         {weekdayLabels.map((label) => (
-          <div key={label} className="bg-background px-2 py-2 text-center text-xs uppercase tracking-military text-muted-foreground">{label}</div>
+          <div key={label} className="bg-background px-2 py-1.5 text-center text-xs uppercase tracking-military text-muted-foreground">{label}</div>
         ))}
 
         {days.map((day, index) => {
           if (!day) {
-            return <div key={`empty-${index}`} className="bg-card min-h-[132px] opacity-30" />;
+            return <div key={`empty-${index}`} className="bg-card opacity-30" />;
           }
 
           const dateStr = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -260,17 +275,17 @@ export default function CalendarPage() {
           return (
             <div
               key={`${index}-${day}`}
-              className={`bg-card min-h-[132px] p-1.5 ${isToday ? "ring-2 ring-primary/80 bg-primary/5" : ""}`}
+              className={`bg-card p-1.5 flex flex-col min-h-0 ${isToday ? "ring-2 ring-primary/80 bg-primary/5" : ""}`}
             >
-              <p className={`text-xs font-mono mb-1 ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>{day}</p>
-              <div className="space-y-1 max-h-[104px] overflow-y-auto pr-0.5">
+              <p className={`text-xs font-mono mb-1 shrink-0 ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>{day}</p>
+              <div className="space-y-1 flex-1 min-h-0 overflow-y-auto pr-0.5">
                 {(dayEntries.get(day) || []).map(({ item, segment }) => {
                   const line = item.source === "duty" ? item.peopleSummary : item.name;
                   return (
                     <button
                       key={`${item.source}-${item.id}-${day}`}
                       onClick={() => setSelectedItem(item)}
-                      className={`w-full text-left text-[10px] px-1.5 py-1 transition-all hover:brightness-110 ${sourceClass[item.source]}`}
+                      className={`w-full text-left text-[11px] px-1.5 py-0.5 leading-tight transition-all hover:brightness-110 ${sourceClass[item.source]}`}
                       style={segmentStyle(segment)}
                       title={line}
                       aria-label={line}
@@ -292,7 +307,6 @@ export default function CalendarPage() {
         })}
       </div>
 
-      <p className="text-xs text-muted-foreground font-mono mt-4">Automatikus frissítés: csak ha az ablak látszik és változott valami.</p>
 
       <Modal open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem ? `${sourceLabel[selectedItem.source]} részletei` : "Részletek"}>
         {selectedItem && (

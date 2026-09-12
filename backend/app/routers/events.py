@@ -6,7 +6,7 @@ from sqlalchemy import select
 from ..appliers import apply_event
 from ..audit import record_activity
 from ..core.dependencies import DB, Reader, Editor
-from ..models import EventModel, ParticipantModel, new_id
+from ..models import AnnouncementModel, visible_events, EventModel, ParticipantModel, new_id
 from ..participants import load_participants_by_event, sync_participants
 from ..repository import require_model
 from ..schemas import (
@@ -31,7 +31,7 @@ def _snapshot(item: EventModel) -> dict:
 
 @router.get("", response_model=list[EventRead])
 def list_events(db: DB, _: Reader):
-    items = db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
+    items = db.scalars(visible_events().order_by(EventModel.start_date)).all()
     participants_by_event = load_participants_by_event(db, "event")
     return [serialize_event(db, i, participants_by_event.get(i.id, [])) for i in items]
 
@@ -56,11 +56,39 @@ def update_event(item_id: str, payload: EventUpdate, db: DB, user: Editor):
     before = _snapshot(item)
     apply_event(item, payload)
     sync_participants(db, "event", item_id, payload.assigned)
+    after = _snapshot(item)
     record_activity(db, user, mode="update", module=MODULE, record_name=item.name,
-                    entity="event", before=before, after=_snapshot(item))
+                    entity="event", before=before, after=after)
+    _announce_change(db, user, item, before, after)
     db.commit()
     db.refresh(item)
     return serialize_event(db, item)
+
+
+def _fmt_when(value: str) -> str:
+    """'2026-09-20T19:00' → '2026-09-20 19:00'; dátum önmagában marad."""
+    return (value or "").replace("T", " ")[:16]
+
+
+def _announce_change(db, user, item: EventModel, before: dict, after: dict) -> None:
+    """Ha az időpont vagy a helyszín változik, MINDENKI tudjon róla: automatikus,
+    kitűzött közlemény (pl. állománygyűlés 19:00 → 20:00). A Teendőim és az
+    Áttekintés felül mutatja; ez az, amit ma szóban/Messengeren próbálnak elérni."""
+    lines = []
+    if before["startDate"] != after["startDate"] or before["endDate"] != after["endDate"]:
+        lines.append(f"Új időpont: {_fmt_when(after['startDate'])} → {_fmt_when(after['endDate'])} (volt: {_fmt_when(before['startDate'])} → {_fmt_when(before['endDate'])})")
+    if before["location"] != after["location"]:
+        lines.append(f"Új helyszín: {after['location'] or '—'} (volt: {before['location'] or '—'})")
+    if before["status"] != after["status"] and after["status"] in ("Törölve", "Lemondva"):
+        lines.append("Az esemény LEMONDVA.")
+    if not lines:
+        return
+    from datetime import date as _date
+    db.add(AnnouncementModel(
+        id=new_id(), title=f"Módosult: {item.name}", category="Változás",
+        content="\n".join(lines), author=user.display_name or user.username,
+        date=_date.today().isoformat(), pinned=True,
+    ))
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -11,7 +11,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
-import { CalendarPlus, Download, Save, Search, Users } from 'lucide-react';
+import { CalendarPlus, ChevronDown, ChevronRight, Download, Save, Search, Users } from 'lucide-react';
 
 const STATUS_OPTIONS: AttendanceStatus[] = [
   'Jelen', 'Szabadság', 'Betegállomány', 'Vezényelve',
@@ -52,6 +52,8 @@ export default function Attendance() {
   const [selectedEventKey, setSelectedEventKey] = useState('');
   const [fillStatus, setFillStatus] = useState<AttendanceStatus>('Szolgálatban');
   const [filling, setFilling] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [onlyExceptions, setOnlyExceptions] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -96,9 +98,10 @@ export default function Attendance() {
     return (day?.items ?? []).filter(entry => {
       if (unitFilter !== 'Összes' && entry.unit !== unitFilter) return false;
       if (needle && !entry.name.toLowerCase().includes(needle)) return false;
+      if (onlyExceptions && (edits[entry.personnelId]?.status ?? entry.status) === 'Jelen') return false;
       return true;
     });
-  }, [day, unitFilter, search]);
+  }, [day, unitFilter, search, onlyExceptions, edits]);
 
   // Summary of the currently visible scope, with unsaved edits applied live.
   const summary = useMemo(() => {
@@ -231,118 +234,127 @@ export default function Attendance() {
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex items-end gap-3 flex-wrap">
-        <div className="w-44">
-          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Dátum</label>
-          <DatePickerInput value={date} onChange={setDate} />
-        </div>
-        <div>
-          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Egység</label>
-          <select
-            value={unitFilter}
-            onChange={e => setUnitFilter(e.target.value)}
-            className="bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
-            style={{ borderRadius: '2px' }}
-          >
-            {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-        </div>
-        <div className="flex-1 min-w-[180px]">
-          <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Keresés (név)</label>
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Név…"
-              className="w-full bg-input border border-border pl-8 pr-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
-              style={{ borderRadius: '2px' }}
-            />
+      {/* 1. Mikor és ki: dátum, egység, keresés — egy sorban, a számokkal együtt */}
+      <div className="bg-card border border-border p-3" style={{ borderRadius: '2px' }}>
+        <div className="flex items-end gap-3 flex-wrap">
+          <div className="w-44">
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Dátum</label>
+            <DatePickerInput value={date} onChange={setDate} />
           </div>
-        </div>
-      </div>
-
-      {/* Reserve toggle + tömeges állítás */}
-      <div className="flex items-center gap-4 flex-wrap">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-          <input type="checkbox" checked={includeReserve} onChange={e => setIncludeReserve(e.target.checked)} />
-          Tartalékosok mutatása
-        </label>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs uppercase tracking-military text-muted-foreground">Tömeges állítás</span>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Egység</label>
             <select
-              value={bulkStatus}
-              onChange={e => setBulkStatus(e.target.value as AttendanceStatus)}
-              className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
+              value={unitFilter}
+              onChange={e => setUnitFilter(e.target.value)}
+              className="bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
               style={{ borderRadius: '2px' }}
             >
-              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
             </select>
-            <button
-              onClick={applyBulk}
-              className="px-3 py-1.5 text-sm border border-border text-foreground hover:bg-secondary transition-colors"
-              style={{ borderRadius: '2px' }}
-            >
-              Alkalmaz a listára ({visible.length})
-            </button>
           </div>
-        )}
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Keresés (név)</label>
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Név…"
+                className="w-full bg-input border border-border pl-8 pr-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
+                style={{ borderRadius: '2px' }}
+              />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none pb-2">
+            <input type="checkbox" checked={includeReserve} onChange={e => setIncludeReserve(e.target.checked)} />
+            Tartalékosok is
+          </label>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none pb-2">
+            <input type="checkbox" checked={onlyExceptions} onChange={e => setOnlyExceptions(e.target.checked)} />
+            Csak az eltérések
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <span className="px-3 py-1.5 bg-background border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
+            Létszám: <span className="font-bold text-foreground">{visible.length}</span>
+          </span>
+          <span className="px-3 py-1.5 bg-background border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
+            Jelen: <span className="font-bold text-emerald-400">{presentCount}</span>
+          </span>
+          {STATUS_OPTIONS.filter(s => s !== 'Jelen' && (summary[s] ?? 0) > 0).map(s => (
+            <span key={s} className="px-3 py-1.5 bg-background border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
+              {s}: <span className={`font-bold ${statusColor[s]}`}>{summary[s]}</span>
+            </span>
+          ))}
+          {dirtyMarks.length > 0 && (
+            <span className="px-3 py-1.5 bg-amber-400/10 border border-amber-400/40 text-amber-400 text-sm font-mono" style={{ borderRadius: '2px' }}>
+              {dirtyMarks.length} mentetlen változás
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Esemény-alapú kitöltés (G2) */}
-      {canEdit && events.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap bg-card border border-border px-3 py-2" style={{ borderRadius: '2px' }}>
-          <span className="text-xs uppercase tracking-military text-muted-foreground flex items-center gap-1">
-            <CalendarPlus className="w-4 h-4" /> Esemény-alapú kitöltés
-          </span>
-          <select
-            value={selectedEventKey}
-            onChange={e => setSelectedEventKey(e.target.value)}
-            className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary max-w-[280px]"
-            style={{ borderRadius: '2px' }}
-          >
-            {events.map(ev => (
-              <option key={`${ev.eventType}|${ev.eventId}`} value={`${ev.eventType}|${ev.eventId}`}>
-                {ev.name} ({ev.participantCount} fő)
-              </option>
-            ))}
-          </select>
-          <span className="text-muted-foreground text-sm">→</span>
-          <select
-            value={fillStatus}
-            onChange={e => setFillStatus(e.target.value as AttendanceStatus)}
-            className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
-            style={{ borderRadius: '2px' }}
-          >
-            {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <button
-            onClick={applyEventFill}
-            disabled={filling}
-            className="px-3 py-1.5 text-sm border border-border text-foreground hover:bg-secondary disabled:opacity-40 transition-colors"
-            style={{ borderRadius: '2px' }}
-          >
-            Kitöltés
+      {/* 2. Gyors kitöltés — mindenki „Jelen”, csak a kivételeket kell jelölni. Két eszköz egy helyen. */}
+      {canEdit && (
+        <div className="bg-card border border-border" style={{ borderRadius: '2px' }}>
+          <button onClick={() => setQuickOpen(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs uppercase tracking-military font-mono text-primary hover:bg-secondary/40">
+            {quickOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            <CalendarPlus className="w-4 h-4" />
+            Gyors kitöltés — akik gyakorlaton vannak, vagy egy egész egység ugyanabban az állapotban
           </button>
+          {quickOpen && (
+            <div className="px-3 pb-3 grid gap-3 md:grid-cols-2">
+              <div className="border border-border p-3" style={{ borderRadius: '2px' }}>
+                <p className="text-xs uppercase tracking-military text-muted-foreground mb-1">A) Mai művelet résztvevői</p>
+                <p className="text-[11px] text-muted-foreground mb-2">A kiválasztott gyakorlat/kiképzés beosztottjai egy gombbal a megadott állapotot kapják (pl. „Szolgálatban”).</p>
+                {events.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-mono">Ma nincs művelet beosztott résztvevővel.</p>
+                ) : (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={selectedEventKey}
+                      onChange={e => setSelectedEventKey(e.target.value)}
+                      className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary max-w-[240px]"
+                      style={{ borderRadius: '2px' }}
+                    >
+                      {events.map(ev => (
+                        <option key={`${ev.eventType}|${ev.eventId}`} value={`${ev.eventType}|${ev.eventId}`}>
+                          {ev.name} ({ev.participantCount} fő)
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-muted-foreground text-sm">→</span>
+                    <select
+                      value={fillStatus}
+                      onChange={e => setFillStatus(e.target.value as AttendanceStatus)}
+                      className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
+                      style={{ borderRadius: '2px' }}
+                    >
+                      {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button onClick={applyEventFill} disabled={filling} className="btn-mil-primary text-xs">Kitöltés</button>
+                  </div>
+                )}
+              </div>
+              <div className="border border-border p-3" style={{ borderRadius: '2px' }}>
+                <p className="text-xs uppercase tracking-military text-muted-foreground mb-1">B) A szűrt lista egyben</p>
+                <p className="text-[11px] text-muted-foreground mb-2">Szűrd le fent az egységet vagy a nevet, és a listában lévő mindenki ({visible.length} fő) ezt az állapotot kapja. Utána mentés.</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select
+                    value={bulkStatus}
+                    onChange={e => setBulkStatus(e.target.value as AttendanceStatus)}
+                    className="bg-input border border-border px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
+                    style={{ borderRadius: '2px' }}
+                  >
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button onClick={applyBulk} className="btn-mil-secondary text-xs">Alkalmaz a listára ({visible.length})</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Summary */}
-      <div className="flex flex-wrap gap-2">
-        <span className="px-3 py-1.5 bg-card border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
-          Létszám: <span className="font-bold text-foreground">{visible.length}</span>
-        </span>
-        <span className="px-3 py-1.5 bg-card border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
-          Jelen: <span className="font-bold text-emerald-400">{presentCount}</span>
-        </span>
-        {STATUS_OPTIONS.filter(s => s !== 'Jelen' && (summary[s] ?? 0) > 0).map(s => (
-          <span key={s} className="px-3 py-1.5 bg-card border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
-            {s}: <span className={`font-bold ${statusColor[s]}`}>{summary[s]}</span>
-          </span>
-        ))}
-      </div>
 
       {/* Roster */}
       <div className="border border-border" style={{ borderRadius: '2px' }}>
@@ -362,7 +374,7 @@ export default function Attendance() {
             ) : visible.length === 0 ? (
               <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">Nincs találat.</td></tr>
             ) : visible.map(entry => (
-              <tr key={entry.personnelId} className="border-b border-border/50 hover:bg-secondary/40">
+              <tr key={entry.personnelId} className={`border-b border-border/50 hover:bg-secondary/40 ${edits[entry.personnelId] ? 'bg-amber-400/5' : effectiveStatus(entry) !== 'Jelen' ? 'bg-secondary/20' : ''}`}>
                 <td className="px-3 py-1.5 font-rajdhani text-foreground">{entry.name}</td>
                 <td className="px-3 py-1.5 text-muted-foreground">{entry.rank}</td>
                 <td className="px-3 py-1.5 text-muted-foreground">{entry.unit}</td>

@@ -19,6 +19,7 @@ from ..constants import LEAVE_TO_ATTENDANCE_STATUS
 from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import (
+    visible_events,
     AttendanceModel,
     EventModel,
     ExerciseModel,
@@ -148,7 +149,7 @@ def events_on_day(db: DB, _: Reader, date: str = Query(..., description="ÉÉÉ�
     day = _parse_day(date)
     result: list[dict] = []
     for event_type, model in _EVENT_SOURCES:
-        for item in db.scalars(select(model)).all():
+        for item in db.scalars(visible_events() if model is EventModel else select(model)).all():
             if not (item.start_date[:10] <= day <= item.end_date[:10]):
                 continue
             if getattr(item, "status", "") in _INACTIVE_EVENT_STATUSES:

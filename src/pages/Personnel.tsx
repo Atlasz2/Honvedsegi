@@ -321,15 +321,16 @@ export default function Personnel() {
           <option value="">Minden képzettség</option>
           {qualTypeOptions.map(qt => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
         </select>
-        {['Összes', ...statuses].map(s => (
-          <button
-            key={s}
-            onClick={() => { setStatusFilter(s); setPage(1); }}
-            className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono transition-colors ${statusFilter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}
-          >
-            {s}
-          </button>
-        ))}
+        {/* Státusz: legördülő, nem gombsor — a Szabadságon/Leszerelt ritkán kell, ne foglalja a helyet. */}
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+          className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
+          style={{ borderRadius: '2px' }}
+        >
+          <option value="Összes">Minden státusz</option>
+          {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
 
       </div>
 

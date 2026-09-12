@@ -37,7 +37,56 @@
     --mil-brass: 45 53% 54%;
     --mil-warning: 28 64% 53%;
     --mil-surface-elevated: 218 20% 15%;
+    --mil-table-odd: 216 17% 8%;
+    --mil-table-even: 216 17% 7.5%;
+    --mil-table-hover: 220 25% 12%;
+    --mil-grid-line: rgba(255, 255, 255, 0.02);
   }
+
+  /* Világos téma: ugyanaz a felépítés, papír-szerű háttérrel. A Beállításokban
+     kapcsolható; a választás a böngészőben marad (localStorage). */
+  :root[data-theme="light"] {
+    --background: 210 20% 96%;
+    --foreground: 220 25% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 12%;
+    --primary: 148 40% 34%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 20% 92%;
+    --secondary-foreground: 220 25% 12%;
+    --muted: 210 20% 92%;
+    --muted-foreground: 216 12% 40%;
+    --accent: 40 60% 40%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 6 63% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 18% 82%;
+    --input: 0 0% 100%;
+    --ring: 148 40% 34%;
+
+    --sidebar-background: 216 22% 14%;
+    --sidebar-foreground: 210 27% 93%;
+    --sidebar-border: 216 20% 24%;
+
+    --mil-brass: 40 60% 38%;
+    --mil-warning: 28 70% 42%;
+    --mil-surface-elevated: 210 20% 90%;
+    --mil-table-odd: 0 0% 100%;
+    --mil-table-even: 210 20% 97%;
+    --mil-table-hover: 148 40% 94%;
+    --mil-grid-line: rgba(0, 0, 0, 0.035);
+    color-scheme: light;
+  }
+  /* A világos témában a sárga/zöld/kék feliratok sötétebb árnyalatot kapnak, hogy olvashatók maradjanak. */
+  :root[data-theme="light"] .text-amber-400 { color: #b45309; }
+  :root[data-theme="light"] .text-emerald-400 { color: #047857; }
+  :root[data-theme="light"] .text-sky-400 { color: #0369a1; }
+  :root[data-theme="light"] .text-violet-400 { color: #6d28d9; }
+  :root[data-theme="light"] .text-red-400 { color: #b91c1c; }
+  :root[data-theme="light"] .text-blue-400 { color: #1d4ed8; }
+  :root[data-theme="light"] .text-orange-500 { color: #c2410c; }
 }
 
 @layer base {
@@ -146,8 +195,8 @@
   /* Crosshair background */
   .crosshair-bg {
     background-image:
-      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      linear-gradient(var(--mil-grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--mil-grid-line) 1px, transparent 1px);
     background-size: 40px 40px;
   }
 
@@ -160,13 +209,13 @@
     @apply border-b border-border/50 transition-colors;
   }
   .mil-table tbody tr:nth-child(odd) {
-    background: hsl(216 17% 8%);
+    background: hsl(var(--mil-table-odd));
   }
   .mil-table tbody tr:nth-child(even) {
-    background: hsl(216 17% 7.5%);
+    background: hsl(var(--mil-table-even));
   }
   .mil-table tbody tr:hover {
-    background: hsl(220 25% 12%);
+    background: hsl(var(--mil-table-hover));
     @apply border-l-2 border-l-primary;
   }
   .mil-table td {

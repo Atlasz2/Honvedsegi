@@ -56,6 +56,15 @@ export default function Parancsok() {
   const [openOnly, setOpenOnly] = useState(true);
   // A felső kártyák szűrőként működnek: 'overdue' vagy egy részleg neve.
   const [cardFilter, setCardFilter] = useState<string | null>(null);
+  // Rendezés: kattintható fejléc (szám, tárgy, határidő, állapot).
+  type SortKey = 'number' | 'subject' | 'dueDate' | 'status' | 'typeName';
+  const [sortKey, setSortKey] = useState<SortKey>('dueDate');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortIndicator = (key: SortKey) => (sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
   const [loading, setLoading] = useState(true);
 
   const [detail, setDetail] = useState<Order | null>(null);
@@ -89,8 +98,21 @@ export default function Parancsok() {
     window.history.replaceState({}, '');
   }, [location.state]);
 
-  const visibleList = list.filter((o) =>
-    cardFilter === null ? true : cardFilter === 'overdue' ? o.isOverdue : o.pendingResponsibles.includes(cardFilter));
+  // Parancsszám: "12/2026" → év, majd sorszám; üres a végére.
+  const numberKey = (n: string) => {
+    const m = /^(\d+)\s*\/\s*(\d{4})/.exec(n.trim());
+    return m ? Number(m[2]) * 100000 + Number(m[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  const visibleList = list
+    .filter((o) => (cardFilter === null ? true : cardFilter === 'overdue' ? o.isOverdue : o.pendingResponsibles.includes(cardFilter)))
+    .slice()
+    .sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'number') cmp = numberKey(a.number) - numberKey(b.number);
+      else if (sortKey === 'dueDate') cmp = (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+      else cmp = String(a[sortKey]).localeCompare(String(b[sortKey]), 'hu');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
 
   const openDetail = async (order: Order) => {
     try {
@@ -186,7 +208,14 @@ export default function Parancsok() {
         <div className="overflow-x-auto">
           <table className="w-full mil-table">
             <thead>
-              <tr><th>Szám</th><th>Tárgy</th><th>Típus</th><th>Határidő</th><th>Állapot</th><th>Fejezetek</th><th>Aláírás</th><th>Még dolgozik rajta</th></tr>
+              <tr>
+                <th><button onClick={() => toggleSort('number')} className="text-left w-full">Szám{sortIndicator('number')}</button></th>
+                <th><button onClick={() => toggleSort('subject')} className="text-left w-full">Tárgy{sortIndicator('subject')}</button></th>
+                <th><button onClick={() => toggleSort('typeName')} className="text-left w-full">Típus{sortIndicator('typeName')}</button></th>
+                <th><button onClick={() => toggleSort('dueDate')} className="text-left w-full">Határidő{sortIndicator('dueDate')}</button></th>
+                <th><button onClick={() => toggleSort('status')} className="text-left w-full">Állapot{sortIndicator('status')}</button></th>
+                <th>Fejezetek</th><th>Aláírás</th><th>Még dolgozik rajta</th>
+              </tr>
             </thead>
             <tbody>
               {visibleList.map((o) => (
@@ -649,7 +678,7 @@ function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             </button>
           ))}
           <button onClick={() => { store.exportStatsPdf(year).catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-primary text-xs flex items-center gap-1.5 ml-auto">
-            <FileDown className="w-3.5 h-3.5" />PDF az ezredesnek
+            <FileDown className="w-3.5 h-3.5" />PDF
           </button>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}

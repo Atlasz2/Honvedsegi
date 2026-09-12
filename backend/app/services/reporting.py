@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.time import date_overlap, parse_iso_date, utc_now
-from ..models import EventModel, ExerciseModel, TrainingModel
+from ..models import EventModel, ExerciseModel, TrainingModel, visible_events
 
 
 def report_title(template: str) -> str:
@@ -142,7 +142,7 @@ def build_report_data(
     ]
     events = [
         i
-        for i in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
+        for i in db.scalars(visible_events().order_by(EventModel.start_date)).all()
         if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
 

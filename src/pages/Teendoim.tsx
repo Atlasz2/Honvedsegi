@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CalendarDays, CheckCircle2, FileSignature, Palmtree, PenLine } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, FileSignature, Megaphone, Palmtree, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { me as meStore, getErrorMessage, type MyTodos } from '@/lib/store';
 import { useAuth } from '@/lib/auth';
@@ -35,6 +35,11 @@ export default function Teendoim() {
   const openOrder = (orderId: string) => navigate('/parancsok', { state: { openOrderId: orderId } });
   const alertTotal = todos ? Object.values(todos.alerts).reduce((a, b) => a + b, 0) : 0;
   const overdueChapters = todos?.myChapters.filter((c) => c.isOverdue).length ?? 0;
+  const has = (duty: string) => todos?.duties.includes(duty) ?? false;
+  const showChapters = has('chapters');
+  const showLeave = canEdit && has('leave');
+  const showTraining = has('training');
+  const showOrderAlerts = has('chapters') || has('orders');
 
   return (
     <div>
@@ -54,16 +59,38 @@ export default function Teendoim() {
 
       {todos && (
         <>
+          {todos.changes.length > 0 && (
+            <section className="mb-6 bg-card border border-amber-400/50" style={radius}>
+              <header className="flex items-center gap-2 px-4 py-2 border-b border-amber-400/30">
+                <Megaphone className="w-4 h-4 text-amber-400" />
+                <h2 className="text-sm font-bold uppercase tracking-military flex-1">Változott az elmúlt napokban — nézd meg, mielőtt elindulsz</h2>
+              </header>
+              <ul>
+                {todos.changes.map((c) => (
+                  <li key={c.id} className="px-4 py-2 border-b border-border/50 last:border-0 text-sm">
+                    <span className="font-medium">{c.title}</span>
+                    <span className="block text-xs text-muted-foreground whitespace-pre-line">{c.content}</span>
+                    <span className="block text-[11px] font-mono text-muted-foreground">{c.date} · {c.author}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <button onClick={() => navigate('/parancsok')} className={`stats-card text-left border-l-2 ${overdueChapters ? 'border-l-destructive' : todos.myChapters.length ? 'border-l-amber-400' : 'border-l-border'} hover:bg-secondary/40`}>
-              <div className="stats-number">{todos.myChapters.length}</div>
-              <div className="stats-label">Fejezet vár rám{overdueChapters ? ` · ${overdueChapters} lejárt` : ''}</div>
-            </button>
-            <button onClick={() => navigate('/parancsok')} className={`stats-card text-left border-l-2 ${todos.waitingSignature ? 'border-l-primary' : 'border-l-border'} hover:bg-secondary/40`}>
-              <div className="stats-number">{todos.waitingSignature}</div>
-              <div className="stats-label">Parancs aláírásra vár</div>
-            </button>
-            {canEdit && (
+            {showChapters && (
+              <button onClick={() => navigate('/parancsok')} className={`stats-card text-left border-l-2 ${overdueChapters ? 'border-l-destructive' : todos.myChapters.length ? 'border-l-amber-400' : 'border-l-border'} hover:bg-secondary/40`}>
+                <div className="stats-number">{todos.myChapters.length}</div>
+                <div className="stats-label">Fejezet vár rám{overdueChapters ? ` · ${overdueChapters} lejárt` : ''}</div>
+              </button>
+            )}
+            {showOrderAlerts && (
+              <button onClick={() => navigate('/parancsok')} className={`stats-card text-left border-l-2 ${todos.waitingSignature ? 'border-l-primary' : 'border-l-border'} hover:bg-secondary/40`}>
+                <div className="stats-number">{todos.waitingSignature}</div>
+                <div className="stats-label">Parancs aláírásra vár</div>
+              </button>
+            )}
+            {showLeave && (
               <button onClick={() => navigate('/szabadsag')} className={`stats-card text-left border-l-2 ${todos.pendingLeaveCount ? 'border-l-amber-400' : 'border-l-border'} hover:bg-secondary/40`}>
                 <div className="stats-number">{todos.pendingLeaveCount}</div>
                 <div className="stats-label">Szabadság jóváhagyásra</div>
@@ -77,7 +104,15 @@ export default function Teendoim() {
 
           <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
             <div className="space-y-6">
+              {!todos.department && (
+                <div className="bg-card border border-amber-400/40 p-4 text-sm" style={radius}>
+                  <p className="font-medium">Még nincs beállítva, mi tartozik hozzád.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Az admin a Beállítások → Felhasználók alatt ad részleget (Ügyvitel, Jog, Kiképzés, Személyügy, Pénzügy, Hadművelet). Addig itt csak a heti műveletek látszanak.</p>
+                </div>
+              )}
+
               {/* A részlegem fejezetei */}
+              {showChapters && (
               <section className="bg-card border border-border" style={radius}>
                 <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
                   <PenLine className="w-4 h-4 text-primary" />
@@ -111,9 +146,10 @@ export default function Teendoim() {
                   </ul>
                 )}
               </section>
+              )}
 
               {/* Szabadságok */}
-              {canEdit && (
+              {showLeave && (
                 <section className="bg-card border border-border" style={radius}>
                   <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
                     <Palmtree className="w-4 h-4 text-primary" />
@@ -142,7 +178,8 @@ export default function Teendoim() {
             </div>
 
             <div className="space-y-6">
-              {/* Riasztások számokban */}
+              {/* Riasztások számokban — csak ami az én részlegemé */}
+              {(showOrderAlerts || showTraining) && (
               <section className="bg-card border border-border" style={radius}>
                 <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -150,10 +187,14 @@ export default function Teendoim() {
                 </header>
                 <ul className="text-sm">
                   {([
-                    ['Lejárt parancs-határidő', todos.alerts.overdueOrderDeadlines, 'text-destructive'],
-                    ['Parancs-határidő 30 napon belül', todos.alerts.dueSoonOrderDeadlines, 'text-amber-400'],
-                    ['Alapkiképzés lejárt — leszerelendő', todos.alerts.basicTrainingOverdue, 'text-destructive'],
-                    ['Alapkiképzés 30 napon belül lejár', todos.alerts.basicTrainingDueSoon, 'text-amber-400'],
+                    ...(showOrderAlerts ? [
+                      ['Lejárt parancs-határidő (részlegem)', todos.alerts.overdueOrderDeadlines, 'text-destructive'],
+                      ['Parancs-határidő hamarosan (részlegem)', todos.alerts.dueSoonOrderDeadlines, 'text-amber-400'],
+                    ] as const : []),
+                    ...(showTraining ? [
+                      ['Alapkiképzés lejárt — leszerelendő', todos.alerts.basicTrainingOverdue, 'text-destructive'],
+                      ['Alapkiképzés hamarosan lejár', todos.alerts.basicTrainingDueSoon, 'text-amber-400'],
+                    ] as const : []),
                   ] as const).map(([label, count, cls]) => (
                     <li key={label}>
                       <button onClick={() => navigate('/figyelmeztetesek')} className="w-full flex justify-between px-4 py-2 border-b border-border/50 hover:bg-secondary/40 text-left">
@@ -164,6 +205,7 @@ export default function Teendoim() {
                   ))}
                 </ul>
               </section>
+              )}
 
               {/* A hét műveletei */}
               <section className="bg-card border border-border" style={radius}>
@@ -191,7 +233,7 @@ export default function Teendoim() {
                 )}
               </section>
 
-              {todos.waitingSignature > 0 && (
+              {showOrderAlerts && todos.waitingSignature > 0 && (
                 <button onClick={() => navigate('/parancsok')} className="w-full bg-card border border-primary/40 p-3 text-left text-sm flex items-center gap-2 hover:bg-secondary/40" style={radius}>
                   <FileSignature className="w-4 h-4 text-primary" />
                   {todos.waitingSignature} parancs minden fejezete kész — aláírásra vár.

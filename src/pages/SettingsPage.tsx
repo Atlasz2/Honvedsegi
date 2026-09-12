@@ -17,8 +17,10 @@ import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SystemStatusPanel from '@/components/SystemStatusPanel';
+import DevelopersFooter from '@/components/DevelopersFooter';
+import AlertThresholdsPanel from '@/components/AlertThresholdsPanel';
+import { applyTheme, getTheme, type Theme } from '@/lib/theme';
 import BasicTrainingImportPanel from '@/components/BasicTrainingImportPanel';
-import { useNavigate } from 'react-router-dom';
 
 type ImportFieldConfig = {
   key: string;
@@ -92,12 +94,14 @@ function countOriginalValues(item: ImportPreviewItem) {
 
 export default function SettingsPage() {
   const { user: authUser, isDev, isAdmin } = useAuth();
+  const [theme, setTheme] = useState<Theme>(getTheme);
+  const [importTab, setImportTab] = useState<'personnel' | 'basic'>('personnel');
   const [data, setData] = useState<User[]>([]);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '' });
-  const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy'];
+  const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy', 'Hadművelet'];
   const [importEntity, setImportEntity] = useState<ImportEntity>('personnel');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
@@ -109,7 +113,6 @@ export default function SettingsPage() {
   const [selectedDraftLine, setSelectedDraftLine] = useState<number | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftDirty, setDraftDirty] = useState(false);
-  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     if (!isAdmin) return;  // a felhasználólistát csak admin töltheti/láthatja
@@ -320,7 +323,6 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Beállítások</h1>
         <div className="flex gap-2">
-          <button onClick={() => navigate('/activity-log')} className="btn-mil-secondary text-xs">Tevékenységnapló</button>
           {isAdmin && (
             <button
               onClick={() => {
@@ -421,12 +423,40 @@ export default function SettingsPage() {
       </div>
       </>)}
 
-      <BasicTrainingImportPanel />
-
+      {/* Megjelenés — mindenkinek, a saját böngészőjére */}
       <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
+        <h2 className="text-sm uppercase tracking-military text-primary font-mono">Megjelenés</h2>
+        <p className="text-xs text-muted-foreground mt-1">Sötét vagy világos felület — ezen a gépen, ebben a böngészőben marad meg.</p>
+        <div className="flex gap-2 mt-3">
+          {([['dark', 'Sötét'], ['light', 'Világos']] as const).map(([value, label]) => (
+            <button key={value} onClick={() => { applyTheme(value); setTheme(value); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${theme === value ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isAdmin && <AlertThresholdsPanel canEdit={isAdmin} />}
+
+      {/* Import — egy helyen: állomány (KGIR-export) és alapkiképzés-tábla */}
+      <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
+        <h2 className="text-sm uppercase tracking-military text-primary font-mono">Import</h2>
+        <div className="flex gap-4 border-b border-border mt-3">
+          {([['personnel', 'Állomány / KGIR-export'], ['basic', 'Alapkiképzés-tábla']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setImportTab(key)} className={`pb-2 text-xs uppercase tracking-military font-mono transition-colors ${importTab === key ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {importTab === 'basic' && <BasicTrainingImportPanel />}
+
+      {importTab === 'personnel' && (
+      <div className="mt-4 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-sm uppercase tracking-military text-primary font-mono">Importtervezet</h2>
+            <h2 className="text-sm uppercase tracking-military text-primary font-mono">Állomány importja (KGIR-export vagy gyakorlat-lista)</h2>
             <p className="text-xs text-muted-foreground mt-1">
               A rendszer megpróbálja felismerni a mezőket, megmutatja mit tudott kinyerni, és a problémás sorokat is szerkeszthetővé teszi.
             </p>
@@ -634,6 +664,7 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+      )}
 
       <Modal open={importEditorOpen} onClose={() => setImportEditorOpen(false)} title="Import tervezet szerkesztése" wide>
         {!importPreview ? (
@@ -885,7 +916,7 @@ export default function SettingsPage() {
               <option value="">— nincs részleg —</option>
               {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
-            <p className="text-[11px] text-muted-foreground mt-1">A részleg nyitott parancs-fejezetei a felhasználó Teendőim oldalán jelennek meg.</p>
+            <p className="text-[11px] text-muted-foreground mt-1">Ebből tudja a Teendőim, mi az övé: Ügyvitel/Jog/Kiképzés/Személyügy/Pénzügy a saját parancs-fejezeteit; Személyügy a szabadságokat; Kiképzés és Hadművelet az alapkiképzés-határidőket. Admin mindent lát.</p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -902,6 +933,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </Modal>
+      <DevelopersFooter />
     </div>
   );
 }

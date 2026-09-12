@@ -74,6 +74,11 @@ SERVICE_MINIMUM_DAYS = 7
 # Ennyi nappal a határidő előtt jelezzük előre a riasztásokat.
 ALERT_WARN_DAYS = 30
 
+# A művelet-adminisztráció (részfeladatok, jelenlét, dokumentumok) a gyakorlat/
+# kiképzés mellé egy „árnyék" event-sort tesz ugyanazzal az azonosítóval. Ez NEM
+# esemény: a listákból, naptárból, foglaltságból ki kell szűrni.
+SHADOW_EVENT_TYPE = "muvelet-arnyek"
+
 # A szolgálatok a Műveletekbe olvadtak: ezek a gyakorlat-típusok jelentik a szolgálatot.
 DUTY_EXERCISE_TYPES: tuple[str, ...] = ("Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás")
 
@@ -83,6 +88,19 @@ DUTY_EXERCISE_TYPES: tuple[str, ...] = ("Őrszolgálat", "Ügyeleti szolgálat",
 ORDER_RESPONSIBLES: tuple[str, ...] = ("Ügyvitel", "Jog", "Kiképzés", "Személyügy", "Pénzügy")
 ORDER_STATUSES: tuple[str, ...] = ("Előkészítés", "Aláírásra vár", "Kiadva", "Visszavonva")
 ORDER_CHAPTER_STATUSES: tuple[str, ...] = ("Nincs elkezdve", "Folyamatban", "Kész", "Nem szükséges")
+# A felhasználók részlegei: a parancs-fejezetek felelősei + a hadműveleti tiszt
+# (kiképzés-nyilvántartás, kampányterv). Ebből tudja a Teendőim, mi kinek a dolga.
+USER_DEPARTMENTS: tuple[str, ...] = ORDER_RESPONSIBLES + ("Hadművelet",)
+# Melyik részleg mit lát a Teendőim oldalon (az admin/alkotó mindent).
+DEPARTMENT_DUTIES: dict[str, tuple[str, ...]] = {
+    "Ügyvitel": ("chapters", "orders"),
+    "Jog": ("chapters",),
+    "Kiképzés": ("chapters", "training", "operations"),
+    "Személyügy": ("chapters", "leave", "training"),
+    "Pénzügy": ("chapters",),
+    "Hadművelet": ("training", "operations"),
+}
+
 # A kiadó szerv alapértelmezett neve a dokumentum fejlécében (a parancson felülírható).
 ORDER_DEFAULT_ISSUER = "MH (alakulat neve — beállítandó)"
 # A fejezet-sablonokban használható helyőrzők.
