@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertTriangle, Copy, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, BarChart3, Copy, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   orders as store,
   personnel as personnelStore,
@@ -12,6 +12,7 @@ import {
   type OrderChapterTemplate,
   type OrderOverview,
   type OrderSignature,
+  type OrderStats,
   type OrderStatus,
   type OrderType,
 } from '@/lib/store';
@@ -62,6 +63,7 @@ export default function Parancsok() {
   const [creating, setCreating] = useState(false);
   const [typesOpen, setTypesOpen] = useState(false);
   const [copySource, setCopySource] = useState<Order | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -118,6 +120,10 @@ export default function Parancsok() {
           <p className="text-xs text-muted-foreground font-mono mt-1">A részlegek a saját fejezetüket írják; a parancs ezekből áll össze, a végén az aláírásokkal</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button onClick={() => setStatsOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
+            <BarChart3 className="w-3.5 h-3.5" />
+            Átfutás
+          </button>
           <button onClick={() => setTypesOpen(true)} className="btn-mil-secondary flex items-center gap-2 text-xs">
             <Settings2 className="w-3.5 h-3.5" />
             Parancstípusok
@@ -227,6 +233,8 @@ export default function Parancsok() {
       <NewOrderModal open={creating} types={types} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await refresh(); }} />
 
       <OrderTypesModal open={typesOpen} types={types} canEdit={canEdit} onClose={() => setTypesOpen(false)} onChanged={refresh} />
+
+      <StatsModal open={statsOpen} onClose={() => setStatsOpen(false)} />
 
       <ConfirmDialog
         open={!!deleteTarget}
@@ -606,6 +614,96 @@ function InlineChapter({ index, chapter, canEdit, onSave, onRemove }: {
         )}
       </div>
     </div>
+  );
+}
+
+// ── Átfutási statisztika ───────────────────────────────────────────────────
+
+function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const thisYear = new Date().getFullYear();
+  const [year, setYear] = useState<number | undefined>(thisYear);
+  const [stats, setStats] = useState<OrderStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setStats(null);
+    setError(null);
+    store.stats(year).then(setStats).catch((e) => setError(getErrorMessage(e)));
+  }, [open, year]);
+
+  const fmt = (v: number | null) => (v === null ? '—' : `${v} nap`);
+  const periods: { label: string; value: number | undefined }[] = [
+    { label: String(thisYear), value: thisYear },
+    { label: String(thisYear - 1), value: thisYear - 1 },
+    { label: 'Teljes időszak', value: undefined },
+  ];
+
+  return (
+    <Modal open={open} onClose={onClose} title="Parancsok átfutása" wide>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {periods.map((p) => (
+            <button key={p.label} onClick={() => setYear(p.value)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${year === p.value ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+              {p.label}
+            </button>
+          ))}
+          <button onClick={() => { store.exportStatsPdf(year).catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-primary text-xs flex items-center gap-1.5 ml-auto">
+            <FileDown className="w-3.5 h-3.5" />PDF az ezredesnek
+          </button>
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!stats && !error && <p className="text-xs text-muted-foreground font-mono">Számolás…</p>}
+        {stats && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="stats-card"><div className="stats-number">{stats.totals.orders}</div><div className="stats-label">Parancs</div></div>
+              <div className="stats-card"><div className="stats-number">{stats.totals.issued}</div><div className="stats-label">Kiadva</div></div>
+              <div className="stats-card"><div className="stats-number">{stats.totals.open}</div><div className="stats-label">Folyamatban</div></div>
+              <div className={`stats-card ${stats.totals.overdue ? 'border-l-2 border-l-destructive' : ''}`}><div className="stats-number">{stats.totals.overdue}</div><div className="stats-label">Csúszott</div></div>
+              <div className="stats-card border-l-2 border-l-primary"><div className="stats-number">{stats.totals.avgLeadDays ?? '—'}</div><div className="stats-label">Átlag átfutás (nap)</div></div>
+            </div>
+            {stats.slowestResponsible && <p className="text-xs font-mono text-amber-400">A leglassabb részleg: {stats.slowestResponsible}.</p>}
+            <div className="overflow-x-auto">
+              <table className="w-full mil-table">
+                <thead><tr><th>Típus</th><th>Darab</th><th>Kiadva</th><th>Folyamatban</th><th>Csúszott</th><th>Átlag átfutás</th></tr></thead>
+                <tbody>
+                  {stats.byType.length === 0 && <tr><td colSpan={6} className="text-xs text-muted-foreground py-3">Nincs parancs ebben az időszakban.</td></tr>}
+                  {stats.byType.map((b) => (
+                    <tr key={b.type}>
+                      <td className="font-medium">{b.type}</td>
+                      <td className="font-mono text-xs">{b.count}</td>
+                      <td className="font-mono text-xs">{b.issued}</td>
+                      <td className="font-mono text-xs">{b.open}</td>
+                      <td className={`font-mono text-xs ${b.overdue ? 'text-destructive' : ''}`}>{b.overdue}</td>
+                      <td className="font-mono text-xs">{fmt(b.avgDays)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full mil-table">
+                <thead><tr><th>Részleg</th><th>Fejezet</th><th>Kész</th><th>Nyitott</th><th>Lejárt</th><th>Átlag a parancs indulásától</th></tr></thead>
+                <tbody>
+                  {stats.byResponsible.map((r) => (
+                    <tr key={r.responsible}>
+                      <td className="font-medium">{r.responsible}</td>
+                      <td className="font-mono text-xs">{r.chapters}</td>
+                      <td className="font-mono text-xs">{r.done}</td>
+                      <td className="font-mono text-xs">{r.open}</td>
+                      <td className={`font-mono text-xs ${r.overdue ? 'text-destructive' : ''}`}>{r.overdue}</td>
+                      <td className="font-mono text-xs">{fmt(r.avgDays)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        <div className="flex justify-end"><button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button></div>
+      </div>
+    </Modal>
   );
 }
 

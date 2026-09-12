@@ -13,7 +13,7 @@ e-mailben járnak körbe, nem látszik, ki mivel hol tart. Itt:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
@@ -374,6 +374,113 @@ def copy_order(order_id: str, payload: OrderCopy, db: DB, user: Editor):
     return _serialize_order(order, _chapters_of(db, order.id), date.today().isoformat(), with_chapters=True)
 
 
+# ── Átfutási statisztika (az ezredesnek) — a /{order_id} útvonal ELŐTT kell állnia ──
+
+def _as_date(value) -> date:
+    """datetime, date vagy ISO-szöveg → nap. (A datetime a date alosztálya, ezért külön ág.)"""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _days_between(start, end) -> float | None:
+    try:
+        return float((_as_date(end) - _as_date(start)).days)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_order_stats(db, year: int | None) -> dict:
+    """Típusonként: hány parancs, átlagos átfutás (létrehozás → kiadás), hány
+    csúszott; részlegenként: átlagos fejezet-idő, lejárt és nyitott fejezetek.
+    Ezek a számok mondják meg, hol lassul a folyamat — érv a megbeszélésre."""
+    today = date.today()
+    today_iso = today.isoformat()
+    orders = db.scalars(select(OrderModel)).all()
+    if year:
+        orders = [o for o in orders if o.created_at and o.created_at.year == year]
+    chapters = _chapters_by_order(db, [o.id for o in orders])
+
+    by_type: dict[str, dict] = {}
+    for order in orders:
+        name = order.type_name or "(típus nélkül)"
+        bucket = by_type.setdefault(name, {"type": name, "count": 0, "issued": 0, "open": 0, "withdrawn": 0, "overdue": 0, "leadDays": []})
+        bucket["count"] += 1
+        if order.status == "Kiadva":
+            bucket["issued"] += 1
+            lead = _days_between(order.created_at, order.issued_date) if order.issued_date else None
+            if lead is not None and lead >= 0:
+                bucket["leadDays"].append(lead)
+            if order.due_date and order.issued_date and order.issued_date[:10] > order.due_date[:10]:
+                bucket["overdue"] += 1  # kiadva, de a határidő után
+        elif order.status == "Visszavonva":
+            bucket["withdrawn"] += 1
+        else:
+            bucket["open"] += 1
+            if order.due_date and order.due_date[:10] < today_iso:
+                bucket["overdue"] += 1
+
+    by_responsible: dict[str, dict] = {
+        r: {"responsible": r, "chapters": 0, "done": 0, "open": 0, "overdue": 0, "days": []} for r in ORDER_RESPONSIBLES
+    }
+    for order in orders:
+        for ch in chapters.get(order.id, []):
+            bucket = by_responsible.setdefault(ch.responsible, {"responsible": ch.responsible, "chapters": 0, "done": 0, "open": 0, "overdue": 0, "days": []})
+            bucket["chapters"] += 1
+            if ch.status in _CHAPTER_DONE:
+                bucket["done"] += 1
+                if ch.status == "Kész" and ch.updated_at:
+                    took = _days_between(order.created_at, ch.updated_at)
+                    if took is not None and took >= 0:
+                        bucket["days"].append(took)
+            elif order.status in _OPEN_ORDER_STATUSES:
+                bucket["open"] += 1
+                if ch.due_date and ch.due_date[:10] < today_iso:
+                    bucket["overdue"] += 1
+
+    def finish(bucket: dict, key: str) -> dict:
+        values = bucket.pop(key)
+        bucket["avgDays"] = round(sum(values) / len(values), 1) if values else None
+        return bucket
+
+    types = sorted((finish(b, "leadDays") for b in by_type.values()), key=lambda b: -b["count"])
+    responsibles = [finish(b, "days") for b in by_responsible.values()]
+    measured = [b for b in types if b["avgDays"] is not None and b["issued"]]
+    avg_lead = round(sum(b["avgDays"] * b["issued"] for b in measured) / sum(b["issued"] for b in measured), 1) if measured else None
+    slowest = max((r for r in responsibles if r["avgDays"] is not None), key=lambda r: r["avgDays"], default=None)
+    return {
+        "year": year,
+        "generatedAt": today_iso,
+        "totals": {
+            "orders": len(orders),
+            "issued": sum(b["issued"] for b in types),
+            "open": sum(b["open"] for b in types),
+            "overdue": sum(b["overdue"] for b in types),
+            "avgLeadDays": avg_lead,
+        },
+        "byType": types,
+        "byResponsible": responsibles,
+        "slowestResponsible": slowest["responsible"] if slowest else None,
+    }
+
+
+@router.get("/stats")
+def order_stats(db: DB, _: Reader, year: int | None = Query(None, ge=2000, le=2100)):
+    return build_order_stats(db, year)
+
+
+@router.get("/stats/export.pdf")
+def order_stats_pdf(db: DB, _: Reader, year: int | None = Query(None, ge=2000, le=2100)):
+    from ..order_export import build_stats_pdf
+    stats = build_order_stats(db, year)
+    return Response(
+        content=build_stats_pdf(stats), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=parancs-atfutas-{year or 'osszes'}.pdf"},
+    )
+
+
 @router.get("/{order_id}", response_model=OrderRead)
 def get_order(order_id: str, db: DB, _: Reader):
     order = _require_order(db, order_id)
@@ -531,3 +638,4 @@ def export_pdf(order_id: str, db: DB, _: Reader):
         content=build_pdf(plan), media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=parancs-{order_id[:8]}.pdf"},
     )
+

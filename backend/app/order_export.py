@@ -146,3 +146,81 @@ def build_pdf(order: OrderRead) -> bytes:
     data = buf.getvalue()
     buf.close()
     return data
+
+
+def build_stats_pdf(stats: dict) -> bytes:
+    """Átfutási statisztika egy lapon: összesítő, típusonként, részlegenként."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    try:
+        pdfmetrics.registerFont(TTFont("Arial", "C:/Windows/Fonts/Arial.ttf"))
+        pdfmetrics.registerFont(TTFont("Arial-Bold", "C:/Windows/Fonts/Arialbd.ttf"))
+        body_font, bold_font = "Arial", "Arial-Bold"
+    except Exception:
+        body_font, bold_font = "Helvetica", "Helvetica-Bold"
+
+    C_DARK = colors.HexColor("#1e293b")
+    C_LIGHT = colors.HexColor("#f1f5f9")
+    C_BORDER = colors.HexColor("#cbd5e1")
+    C_MUTED = colors.HexColor("#64748b")
+
+    def ps(name, size=10, leading=13, bold=False, align=0, color=colors.black):
+        return ParagraphStyle(name, fontName=bold_font if bold else body_font, fontSize=size, leading=leading, alignment=align, textColor=color)
+
+    def fmt(value):
+        if value is None:
+            return "—"
+        return f"{value:.1f}" if isinstance(value, float) else str(value)
+
+    def table(headers, rows, widths):
+        data = [[Paragraph(h, ps("th", size=9, bold=True, color=colors.white)) for h in headers]]
+        data += [[Paragraph(str(c), ps("c", size=9)) for c in row] for row in rows]
+        t = Table(data, colWidths=widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_DARK), ("GRID", (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, C_LIGHT]),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        return t
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm, title="Parancsok átfutása")
+    width = A4[0] - 4 * cm
+    totals = stats["totals"]
+    period = f"{stats['year']}. év" if stats.get("year") else "teljes időszak"
+    slowest = f" A leglassabb részleg: <b>{stats['slowestResponsible']}</b>." if stats.get("slowestResponsible") else ""
+    type_rows = [[b["type"], b["count"], b["issued"], b["open"], b["overdue"], fmt(b["avgDays"])] for b in stats["byType"]] or [["—", 0, 0, 0, 0, "—"]]
+    story = [
+        Paragraph("Parancsok átfutása — statisztika", ps("title", size=16, leading=20, bold=True, align=TA_CENTER)),
+        Paragraph(f"{period} · készült: {stats['generatedAt']}", ps("sub", size=9, align=TA_CENTER, color=C_MUTED)),
+        Spacer(1, 14),
+        Paragraph(
+            f"Összesen <b>{totals['orders']}</b> parancs, ebből kiadva <b>{totals['issued']}</b>, folyamatban <b>{totals['open']}</b>, "
+            f"határidőt túllépett <b>{totals['overdue']}</b>. Átlagos átfutás (létrehozástól kiadásig): <b>{fmt(totals['avgLeadDays'])} nap</b>.{slowest}",
+            ps("lead", size=10, leading=14),
+        ),
+        Spacer(1, 12),
+        Paragraph("Parancstípusonként", ps("h", size=11, bold=True)),
+        Spacer(1, 4),
+        table(["Típus", "Darab", "Kiadva", "Folyamatban", "Csúszott", "Átlag átfutás (nap)"], type_rows,
+              [width * 0.34, width * 0.11, width * 0.11, width * 0.14, width * 0.12, width * 0.18]),
+        Spacer(1, 12),
+        Paragraph("Részlegenként", ps("h", size=11, bold=True)),
+        Spacer(1, 4),
+        table(["Részleg", "Fejezet összesen", "Kész", "Nyitott", "Lejárt határidejű", "Átlag (nap a parancs indulásától)"],
+              [[r["responsible"], r["chapters"], r["done"], r["open"], r["overdue"], fmt(r["avgDays"])] for r in stats["byResponsible"]],
+              [width * 0.22, width * 0.15, width * 0.11, width * 0.12, width * 0.17, width * 0.23]),
+        Spacer(1, 12),
+        Paragraph("Olvasat: a csúszott = a határidő után kiadott vagy határidőn túl még nyitott parancs; a részleg átlaga azt mutatja, a parancs indulásától hány nap alatt fogadta el a saját fejezetét.", ps("note", size=8, leading=11, color=C_MUTED)),
+    ]
+    doc.build(story)
+    data = buf.getvalue()
+    buf.close()
+    return data

@@ -1111,6 +1111,14 @@ export type Order = {
   pendingResponsibles: string[]; readyToSign: boolean; signedCount: number; isOverdue: boolean;
   signatures: OrderSignature[]; chapters: OrderChapter[];
 };
+export type OrderStats = {
+  year: number | null;
+  generatedAt: string;
+  totals: { orders: number; issued: number; open: number; overdue: number; avgLeadDays: number | null };
+  byType: { type: string; count: number; issued: number; open: number; withdrawn: number; overdue: number; avgDays: number | null }[];
+  byResponsible: { responsible: string; chapters: number; done: number; open: number; overdue: number; avgDays: number | null }[];
+  slowestResponsible: string | null;
+};
 export type OrderOverview = {
   openOrders: number; overdueOrders: number;
   byResponsible: { responsible: string; openChapters: number; overdueChapters: number; blockingOrders: number }[];
@@ -1131,6 +1139,8 @@ export const orders = {
   update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
     request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
+  stats: (year?: number) => request<OrderStats>(`/orders/stats${year ? `?year=${year}` : ''}`),
+  exportStatsPdf: (year?: number) => downloadBlob(`/orders/stats/export.pdf${year ? `?year=${year}` : ''}`, `parancs-atfutas-${year ?? 'osszes'}.pdf`),
   copy: (id: string, payload: { subject: string; personnelId?: string; number?: string; dueDate?: string }) =>
     request<Order>(`/orders/${id}/copy`, { method: 'POST', body: JSON.stringify(payload) }),
   updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>

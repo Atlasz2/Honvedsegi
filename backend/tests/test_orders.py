@@ -236,3 +236,24 @@ def test_copy_order_to_another_person_swaps_names_and_resets_state(client, admin
     assert all(c["status"] == "Nincs elkezdve" for c in copy["chapters"])
     assert copy["status"] == "Előkészítés" and copy["signedCount"] == 0
     assert [s["name"] for s in copy["signatures"]] == ["Nagy ezredes", ""], "az aláíró neve marad, az aláírás nem"
+
+
+def test_order_stats_and_pdf(client, admin_headers):
+    order_type = _type(client, admin_headers, chapters=[{"name": "Jogi rész", "responsible": "Jog"}], signers=["Parancsnok"])
+    done = _order(client, admin_headers, order_type["id"], subject="Kész parancs")
+    done = _set_chapter(client, admin_headers, done, 0, "Kész", content="x")
+    client.put(f"/api/orders/{done['id']}/signatures", json={"signatures": [{"role": "Parancsnok", "name": "N", "signed": True}]}, headers=admin_headers)
+    _order(client, admin_headers, order_type["id"], subject="Nyitott parancs", dueDate="2020-01-01")
+
+    stats = client.get("/api/orders/stats", headers=admin_headers).json()
+    mine = next(b for b in stats["byType"] if b["type"] == order_type["name"])
+    assert mine["count"] == 2 and mine["issued"] == 1 and mine["open"] == 1 and mine["overdue"] == 1
+    assert mine["avgDays"] == 0.0, "ma létrehozva, ma kiadva"
+    jog = next(r for r in stats["byResponsible"] if r["responsible"] == "Jog")
+    assert jog["done"] >= 1 and jog["open"] >= 1
+    assert stats["totals"]["orders"] >= 2
+
+    pdf = client.get("/api/orders/stats/export.pdf", headers=admin_headers)
+    assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
+    assert client.get("/api/orders/stats?year=2001", headers=admin_headers).json()["totals"]["orders"] == 0
+    assert client.get("/api/orders/stats?year=1999", headers=admin_headers).status_code == 422
