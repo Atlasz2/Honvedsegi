@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Clock, CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield } from "lucide-react";
 import {
   qualificationAlerts, alerts as alertsStore, documents as docStore,
   type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
@@ -9,25 +9,29 @@ import {
 import type { QualificationAlert, QualificationStat } from "@/lib/types";
 import { getErrorMessage } from "@/lib/store";
 import { toast } from "sonner";
+import AlertSection, { type AlertColumn } from "@/components/AlertSection";
 
 const DAYS_OPTIONS = [30, 60, 90] as const;
 type DaysAhead = (typeof DAYS_OPTIONS)[number];
 
-function urgencyClass(a: QualificationAlert): string {
-  if (a.isExpired) return "badge-cancelled";
-  if (a.daysUntilExpiry <= 14) return "badge-ongoing";
-  return "badge-planned";
+const badge = (cls: string, text: string) => (
+  <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${cls}`} style={{ borderRadius: "2px" }}>{text}</span>
+);
+
+function expiryBadge(isExpired: boolean, days: number) {
+  if (isExpired) return badge("badge-cancelled", `Lejárt ${Math.abs(days)} napja`);
+  return badge(days <= 14 ? "badge-ongoing" : "badge-planned", `${days} nap`);
 }
 
-function urgencyLabel(a: QualificationAlert): string {
-  if (a.isExpired) return `Lejárt ${Math.abs(a.daysUntilExpiry)} napja`;
-  return `${a.daysUntilExpiry} nap`;
+function deadlineBadge(item: BasicTrainingItem) {
+  if (item.daysLeft === null) return badge("badge-planned", "nincs jogviszony-kezdet");
+  if (item.isOverdue) return badge("badge-cancelled", `Lejárt ${Math.abs(item.daysLeft)} napja`);
+  return badge(item.isDueSoon ? "badge-ongoing" : "badge-planned", `${item.daysLeft} nap`);
 }
 
-function deadlineClass(item: BasicTrainingItem): string {
-  if (item.isOverdue) return "badge-cancelled";
-  if (item.isDueSoon) return "badge-ongoing";
-  return "badge-planned";
+function deadlineText(item: BasicTrainingItem): string {
+  if (item.daysLeft === null) return "nincs jogviszony-kezdet";
+  return item.isOverdue ? `lejárt ${Math.abs(item.daysLeft)} napja` : `${item.daysLeft} nap`;
 }
 
 /** Az éves kötelezettség határidő-sora: dec. 31., és egy hónappal előtte figyelmeztet. */
@@ -38,13 +42,16 @@ function YearDeadlineLine({ d }: { d: YearDeadline }) {
     : d.isDueSoon
       ? `Határidő ${d.deadline} — ${d.daysLeft} nap van hátra!`
       : `Határidő ${d.deadline} — ${d.daysLeft} nap van hátra`;
-  return <p className={`text-xs font-mono mb-3 ${cls}`}>{text}</p>;
+  return <p className={cls}>{text}</p>;
 }
 
-function deadlineLabel(item: BasicTrainingItem): string {
-  if (item.daysLeft === null) return "nincs jogviszony-kezdet";
-  if (item.daysLeft < 0) return `Lejárt ${Math.abs(item.daysLeft)} napja`;
-  return `${item.daysLeft} nap`;
+// Közös oszlopok: név / rendfokozat / alegység — minden személyes lista így kezdődik.
+function personColumns<T extends { name: string; rank: string; unit: string }>(): AlertColumn<T>[] {
+  return [
+    { header: "Név", render: (r) => <span className="font-medium">{r.name}</span>, value: (r) => r.name },
+    { header: "Rendfokozat", render: (r) => <span className="font-mono text-xs text-primary">{r.rank}</span>, value: (r) => r.rank },
+    { header: "Alegység", render: (r) => <span className="text-muted-foreground text-xs">{r.unit}</span>, value: (r) => r.unit },
+  ];
 }
 
 export default function Alerts() {
@@ -73,7 +80,6 @@ export default function Alerts() {
         alertsStore.basicTraining(),
         alertsStore.serviceMinimum(),
       ]);
-      setServiceMinimum(serviceData);
       setAlerts(alertData);
       setStats(statData);
       setUnexcused(unexcusedData);
@@ -81,6 +87,7 @@ export default function Alerts() {
       setExpiringDocs(docData);
       setLeaveMinimum(leaveData);
       setBasicTraining(basicData);
+      setServiceMinimum(serviceData);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -93,17 +100,19 @@ export default function Alerts() {
     void refresh();
   }, [refresh]);
 
-  const visible = showExpired ? alerts : alerts.filter((a) => !a.isExpired);
+  const openPerson = (personnelId: string) => navigate("/personnel", { state: { openPersonnelId: personnelId } });
+  const visibleQuals = (showExpired ? alerts : alerts.filter((a) => !a.isExpired)).slice().sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
   const expiredCount = alerts.filter((a) => a.isExpired).length;
   const urgentCount = alerts.filter((a) => !a.isExpired && a.daysUntilExpiry <= 14).length;
   const soonCount = alerts.filter((a) => !a.isExpired && a.daysUntilExpiry > 14).length;
+  const basicItems = basicTraining?.items ?? [];
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Figyelmeztetések</h1>
-          <p className="text-xs text-muted-foreground font-mono mt-1">Lejáró és lejárt képesítések nyomon követése</p>
+          <p className="text-xs text-muted-foreground font-mono mt-1">Lejáratok, határidők, hiányok — szekciónként kinyitható, szűrhető, exportálható</p>
         </div>
         <button onClick={() => { setLoading(true); void refresh(); }} className="btn-mil-secondary flex items-center gap-2 text-xs">
           <RefreshCw className="w-3.5 h-3.5" />
@@ -111,11 +120,10 @@ export default function Alerts() {
         </button>
       </div>
 
-      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="stats-card border-l-2 border-l-destructive">
           <div className="stats-number text-destructive">{expiredCount}</div>
-          <div className="stats-label">Lejárt</div>
+          <div className="stats-label">Lejárt képesítés</div>
         </div>
         <div className="stats-card border-l-2 border-l-orange-500">
           <div className="stats-number text-orange-500">{urgentCount}</div>
@@ -125,300 +133,154 @@ export default function Alerts() {
           <div className="stats-number">{soonCount}</div>
           <div className="stats-label">Hamarosan lejár</div>
         </div>
-        <div className="stats-card">
-          <div className="stats-number">{stats.filter((s) => s.validityDays !== null).length}</div>
-          <div className="stats-label">Lejáró képesítéstípus</div>
+        <div className="stats-card border-l-2 border-l-destructive">
+          <div className="stats-number text-destructive">{basicItems.filter((i) => i.isOverdue).length}</div>
+          <div className="stats-label">Alapkiképzés lejárt — leszerelendő</div>
         </div>
       </div>
 
-      {/* Filters */}
       <div className="flex gap-2 mb-6 flex-wrap items-center">
-        <span className="text-xs uppercase tracking-military text-muted-foreground font-mono">Időablak:</span>
+        <span className="text-xs uppercase tracking-military text-muted-foreground font-mono">Időablak (képesítés, okmány):</span>
         {DAYS_OPTIONS.map((d) => (
-          <button
-            key={d}
-            onClick={() => setDaysAhead(d)}
-            className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${daysAhead === d ? "btn-mil-primary" : "btn-mil-secondary"}`}
-          >
+          <button key={d} onClick={() => setDaysAhead(d)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${daysAhead === d ? "btn-mil-primary" : "btn-mil-secondary"}`}>
             {d} nap
           </button>
         ))}
-        <div className="ml-4 flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="show-expired"
-            checked={showExpired}
-            onChange={(e) => setShowExpired(e.target.checked)}
-            className="accent-primary"
-          />
-          <label htmlFor="show-expired" className="text-xs font-mono text-muted-foreground">Lejártak megjelenítése</label>
-        </div>
+        <label className="ml-4 flex items-center gap-2 text-xs font-mono text-muted-foreground cursor-pointer">
+          <input type="checkbox" checked={showExpired} onChange={(e) => setShowExpired(e.target.checked)} className="accent-primary" />
+          Lejártak megjelenítése
+        </label>
       </div>
 
-      {/* Alert table */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <AlertTriangle className="w-4 h-4 text-primary" />
-          <h2 className="text-sm font-bold uppercase tracking-military">Képesítési figyelmeztetések ({visible.length})</h2>
-        </div>
+      <AlertSection<BasicTrainingItem>
+        title="Alapkiképzés-határidő — tartalékosok, akiknek nincs meg minden modul"
+        tone="destructive"
+        icon={<GraduationCap className="w-4 h-4 text-destructive" />}
+        loading={loading}
+        rows={basicItems}
+        rowKey={(i) => i.personnelId}
+        onRowClick={(i) => openPerson(i.personnelId)}
+        emptyText={basicTraining && basicTraining.modules.length === 0 ? "Nincs „Alapkiképzés” kategóriájú képesítés-típus — a Műveletek → Képzettségek alatt hozd létre a modulokat." : "Minden tartalékosnak megvan az alapkiképzése"}
+        description={<p>Modul = „Alapkiképzés” kategóriájú képesítés-típus ({basicTraining?.modules.length ?? 0} db); mind megvan → automatikusan jár az „Alapkiképzés” képesítés. Határidő: jogviszony kezdete + {basicTraining?.deadlineDays ?? 365} nap; {basicTraining?.warnDays ?? 30} nappal előtte jelezzük. Lejárt határidő = leszerelendő.</p>}
+        groupOf={(i) => (i.isOverdue ? "Lejárt — leszerelendő" : i.isDueSoon ? `Hamarosan lejár (${basicTraining?.warnDays ?? 30} napon belül)` : "Folyamatban")}
+        columns={[
+          ...personColumns<BasicTrainingItem>(),
+          { header: "Jogviszony kezdete", render: (i) => <span className="font-mono text-xs">{i.joinDate || "—"}</span>, value: (i) => i.joinDate },
+          { header: "Határidő", render: (i) => <span className="font-mono text-xs">{i.deadline ?? "—"}</span>, value: (i) => i.deadline ?? "" },
+          { header: "Hátra", render: deadlineBadge, value: deadlineText },
+          { header: "Modulok", render: (i) => <span className="font-mono text-xs">{i.completedModules} / {i.totalModules}</span>, value: (i) => `${i.completedModules}/${i.totalModules}` },
+          { header: "Hiányzik", render: (i) => <span className="text-muted-foreground text-xs">{i.missingModules.join(", ")}</span>, value: (i) => i.missingModules.join(", ") },
+        ]}
+      />
 
-        {loading ? (
-          <div className="text-muted-foreground font-mono py-8">Betöltés...</div>
-        ) : visible.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-6">
-            <CheckCircle2 className="w-4 h-4 text-green-500" />
-            <span className="text-sm">Nincs figyelmeztetés a kiválasztott időablakban</span>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead>
-                <tr>
-                  <th>Név</th>
-                  <th>Rendfokozat</th>
-                  <th>Alegység</th>
-                  <th>Képesítés</th>
-                  <th>Kategória</th>
-                  <th>Lejárat</th>
-                  <th>Állapot</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible
-                  .sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry)
-                  .map((a) => (
-                    <tr
-                      key={`${a.personnelId}-${a.qualificationId}`}
-                      className="cursor-pointer hover:bg-secondary transition-colors"
-                      onClick={() => navigate("/personnel", { state: { openPersonnelId: a.personnelId } })}
-                    >
-                      <td className="font-medium">{a.personnelName}</td>
-                      <td className="font-mono text-xs text-primary">{a.rank}</td>
-                      <td className="text-muted-foreground text-xs">{a.unit}</td>
-                      <td>{a.qualTypeName}</td>
-                      <td><span className="mono-chip text-[10px]">{a.qualTypeCategory}</span></td>
-                      <td className="font-mono text-xs">{a.expiryDate}</td>
-                      <td>
-                        <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${urgencyClass(a)}`} style={{ borderRadius: "2px" }}>
-                          {a.isExpired ? <AlertTriangle className="w-3 h-3 inline mr-1" /> : <Clock className="w-3 h-3 inline mr-1" />}
-                          {urgencyLabel(a)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AlertSection<QualificationAlert>
+        title={`Lejáró és lejárt képesítések — ${daysAhead} napon belül`}
+        tone="warning"
+        icon={<AlertTriangle className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={visibleQuals}
+        rowKey={(a) => `${a.personnelId}-${a.qualificationId}`}
+        onRowClick={(a) => openPerson(a.personnelId)}
+        emptyText="Nincs lejáró képesítés a kiválasztott időablakban"
+        columns={[
+          { header: "Név", render: (a) => <span className="font-medium">{a.personnelName}</span>, value: (a) => a.personnelName },
+          { header: "Rendfokozat", render: (a) => <span className="font-mono text-xs text-primary">{a.rank}</span>, value: (a) => a.rank },
+          { header: "Alegység", render: (a) => <span className="text-muted-foreground text-xs">{a.unit}</span>, value: (a) => a.unit },
+          { header: "Képesítés", render: (a) => a.qualTypeName, value: (a) => a.qualTypeName },
+          { header: "Kategória", render: (a) => <span className="mono-chip text-[10px]">{a.qualTypeCategory}</span>, value: (a) => a.qualTypeCategory },
+          { header: "Lejárat", render: (a) => <span className="font-mono text-xs">{a.expiryDate}</span>, value: (a) => a.expiryDate },
+          { header: "Állapot", render: (a) => expiryBadge(a.isExpired, a.daysUntilExpiry), value: (a) => (a.isExpired ? `lejárt ${Math.abs(a.daysUntilExpiry)} napja` : `${a.daysUntilExpiry} nap`) },
+        ]}
+      />
 
-      {/* Lejáró okmányok / alkalmasság */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <AlertTriangle className="w-4 h-4 text-primary" />
-          <h2 className="text-sm font-bold uppercase tracking-military">Lejáró okmányok / alkalmasság ({expiringDocs.length})</h2>
-        </div>
-        {expiringDocs.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Nincs lejáró okmány a kiválasztott időablakban</span></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Kategória</th><th>Megnevezés</th><th>Lejárat</th><th>Állapot</th></tr></thead>
-              <tbody>
-                {expiringDocs.map((d) => (
-                  <tr key={d.documentId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: d.personnelId } })}>
-                    <td className="font-medium">{d.name}</td>
-                    <td className="font-mono text-xs text-primary">{d.rank}</td>
-                    <td className="text-muted-foreground text-xs">{d.unit}</td>
-                    <td><span className="mono-chip text-[10px]">{d.category}</span></td>
-                    <td>{d.documentName}</td>
-                    <td className="font-mono text-xs">{d.expiryDate}</td>
-                    <td>
-                      <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${d.isExpired ? "badge-cancelled" : d.daysUntilExpiry <= 14 ? "badge-ongoing" : "badge-planned"}`} style={{ borderRadius: "2px" }}>
-                        {d.isExpired ? `Lejárt ${Math.abs(d.daysUntilExpiry)} napja` : `${d.daysUntilExpiry} nap`}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AlertSection<ExpiringDocument>
+        title={`Lejáró okmányok / alkalmasság — ${daysAhead} napon belül`}
+        tone="warning"
+        icon={<FileWarning className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={expiringDocs}
+        rowKey={(d) => d.documentId}
+        onRowClick={(d) => openPerson(d.personnelId)}
+        emptyText="Nincs lejáró okmány a kiválasztott időablakban"
+        columns={[
+          ...personColumns<ExpiringDocument>(),
+          { header: "Kategória", render: (d) => <span className="mono-chip text-[10px]">{d.category}</span>, value: (d) => d.category },
+          { header: "Megnevezés", render: (d) => d.documentName, value: (d) => d.documentName },
+          { header: "Lejárat", render: (d) => <span className="font-mono text-xs">{d.expiryDate ?? "—"}</span>, value: (d) => d.expiryDate ?? "" },
+          { header: "Állapot", render: (d) => expiryBadge(d.isExpired, d.daysUntilExpiry), value: (d) => (d.isExpired ? `lejárt ${Math.abs(d.daysUntilExpiry)} napja` : `${d.daysUntilExpiry} nap`) },
+        ]}
+      />
 
-      {/* Igazolatlan távollétek */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <AlertTriangle className="w-4 h-4 text-destructive" />
-          <h2 className="text-sm font-bold uppercase tracking-military">Igazolatlan távollétek — 30 nap ({unexcused.length})</h2>
-        </div>
-        {unexcused.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Nincs igazolatlan távollét</span></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Dátum</th><th>Megjegyzés</th></tr></thead>
-              <tbody>
-                {unexcused.map((a, i) => (
-                  <tr key={`${a.personnelId}-${a.date}-${i}`} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: a.personnelId } })}>
-                    <td className="font-medium">{a.name}</td>
-                    <td className="font-mono text-xs text-primary">{a.rank}</td>
-                    <td className="text-muted-foreground text-xs">{a.unit}</td>
-                    <td className="font-mono text-xs">{a.date}</td>
-                    <td className="text-muted-foreground text-xs">{a.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AlertSection<NonNullable<ServiceMinimumResult>["items"][number]>
+        title={`Évi szolgálati minimum ${serviceMinimum?.year ?? ""} — tartalékosok ${serviceMinimum?.minDays ?? 7} nap alatt`}
+        tone="warning"
+        icon={<Shield className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={serviceMinimum?.items ?? []}
+        rowKey={(i) => i.personnelId}
+        onRowClick={(i) => openPerson(i.personnelId)}
+        emptyText="Minden tartalékos teljesítette az éves szolgálati minimumot"
+        description={<>
+          <p>Jogszabályi kötelezettség: minden tartalékos évente legalább {serviceMinimum?.minDays ?? 7} napot szolgál. Szolgált nap = gyakorlat/kiképzés napjai „Megjelent” jelenléttel; a lemondott művelet nem számít.</p>
+          {serviceMinimum && <YearDeadlineLine d={serviceMinimum} />}
+        </>}
+        columns={[
+          ...personColumns(),
+          { header: "Szolgált", render: (i) => <span className="font-mono text-xs">{i.servedDays} nap</span>, value: (i) => `${i.servedDays}` },
+          { header: "Hiányzik", render: (i) => badge(i.servedDays === 0 ? "badge-cancelled" : "badge-ongoing", `${i.missingDays} nap`), value: (i) => `${i.missingDays}` },
+        ]}
+      />
 
-      {/* Készenléti rés */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <AlertTriangle className="w-4 h-4 text-orange-500" />
-          <h2 className="text-sm font-bold uppercase tracking-military">Készenléti rés — érvényes képesítés nélkül ({gaps.length})</h2>
-        </div>
-        {gaps.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden aktív katonának van érvényes képesítése</span></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th></tr></thead>
-              <tbody>
-                {gaps.map((g) => (
-                  <tr key={g.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: g.personnelId } })}>
-                    <td className="font-medium">{g.name}</td>
-                    <td className="font-mono text-xs text-primary">{g.rank}</td>
-                    <td className="text-muted-foreground text-xs">{g.unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AlertSection<NonNullable<LeaveMinimumResult>["items"][number]>
+        title={`Szabadság-minimum ${leaveMinimum?.year ?? ""} — aktívak ${leaveMinimum?.minDays ?? 10} munkanap alatt`}
+        tone="primary"
+        icon={<Palmtree className="w-4 h-4 text-primary" />}
+        loading={loading}
+        rows={leaveMinimum?.items ?? []}
+        rowKey={(i) => i.personnelId}
+        onRowClick={(i) => openPerson(i.personnelId)}
+        emptyText="Minden aktív katona elérte a minimumot"
+        description={<>
+          <p>Jóváhagyott „Szabadság” típusú távollétek, hétfő–péntek napok (ünnepnap nélkül), az idei évből.</p>
+          {leaveMinimum && <YearDeadlineLine d={leaveMinimum} />}
+        </>}
+        columns={[
+          ...personColumns(),
+          { header: "Kivett", render: (i) => <span className="font-mono text-xs">{i.takenDays} nap</span>, value: (i) => `${i.takenDays}` },
+          { header: "Hiányzik", render: (i) => badge(i.takenDays === 0 ? "badge-cancelled" : "badge-ongoing", `${i.missingDays} nap`), value: (i) => `${i.missingDays}` },
+        ]}
+      />
 
-      {/* Alapkiképzés-határidő */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <Clock className="w-4 h-4 text-destructive" />
-          <h2 className="text-sm font-bold uppercase tracking-military">
-            Alapkiképzés-határidő — tartalékosok, akiknek nincs meg minden modul ({basicTraining?.items.length ?? 0})
-          </h2>
-        </div>
-        <p className="text-xs text-muted-foreground font-mono mb-3">
-          Modul = „Alapkiképzés" kategóriájú képesítés-típus ({basicTraining?.modules.length ?? 0} db); mind megvan → automatikusan jár az „Alapkiképzés" képesítés. Határidő: jogviszony kezdete + {basicTraining?.deadlineDays ?? 365} nap; {basicTraining?.warnDays ?? 30} nappal előtte jelezzük. Lejárt határidő = leszerelendő.
-        </p>
-        {!basicTraining || basicTraining.modules.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><AlertTriangle className="w-4 h-4 text-orange-500" /><span className="text-sm">Nincs „Alapkiképzés" kategóriájú képesítés-típus — a Műveletek → Képzettségek alatt hozd létre a modulokat.</span></div>
-        ) : basicTraining.items.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden tartalékosnak megvan az alapkiképzése</span></div>
-        ) : (
-          <div className="space-y-4">
-            {([
-              ["Lejárt — leszerelendő", basicTraining.items.filter((i) => i.isOverdue), "text-destructive"],
-              [`Hamarosan lejár (${basicTraining.warnDays} napon belül)`, basicTraining.items.filter((i) => i.isDueSoon), "text-amber-400"],
-              ["Folyamatban", basicTraining.items.filter((i) => !i.isOverdue && !i.isDueSoon), "text-muted-foreground"],
-            ] as const).map(([title, items, cls]) => items.length === 0 ? null : (
-              <div key={title}>
-                <p className={`text-xs font-mono uppercase tracking-military mb-2 ${cls}`}>{title} ({items.length})</p>
-                <div className="overflow-x-auto">
-                  <table className="w-full mil-table">
-                    <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Jogviszony kezdete</th><th>Határidő</th><th>Hátra</th><th>Modulok</th><th>Hiányzik</th></tr></thead>
-                    <tbody>
-                      {items.map((item) => (
-                        <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
-                          <td className="font-medium">{item.name}</td>
-                          <td className="font-mono text-xs text-primary">{item.rank}</td>
-                          <td className="text-muted-foreground text-xs">{item.unit}</td>
-                          <td className="font-mono text-xs">{item.joinDate || "—"}</td>
-                          <td className="font-mono text-xs">{item.deadline ?? "—"}</td>
-                          <td><span className={deadlineClass(item)}>{deadlineLabel(item)}</span></td>
-                          <td className="font-mono text-xs">{item.completedModules} / {item.totalModules}</td>
-                          <td className="text-muted-foreground text-xs">{item.missingModules.join(", ")}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <AlertSection<UnexcusedAlert>
+        title="Igazolatlan távollétek — utolsó 30 nap"
+        tone="destructive"
+        icon={<UserX className="w-4 h-4 text-destructive" />}
+        loading={loading}
+        rows={unexcused}
+        rowKey={(a) => `${a.personnelId}-${a.date}`}
+        onRowClick={(a) => openPerson(a.personnelId)}
+        emptyText="Nincs igazolatlan távollét"
+        columns={[
+          ...personColumns<UnexcusedAlert>(),
+          { header: "Dátum", render: (a) => <span className="font-mono text-xs">{a.date}</span>, value: (a) => a.date },
+          { header: "Megjegyzés", render: (a) => <span className="text-muted-foreground text-xs">{a.note}</span>, value: (a) => a.note },
+        ]}
+      />
 
-      {/* Évi 7 nap szolgálat */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <Clock className="w-4 h-4 text-orange-500" />
-          <h2 className="text-sm font-bold uppercase tracking-military">
-            Évi szolgálati minimum {serviceMinimum?.year ?? ""} — tartalékosok {serviceMinimum?.minDays ?? 7} nap alatt ({serviceMinimum?.items.length ?? 0})
-          </h2>
-        </div>
-        <p className="text-xs text-muted-foreground font-mono mb-1">
-          Jogszabályi kötelezettség: minden tartalékos évente legalább {serviceMinimum?.minDays ?? 7} napot szolgál. Szolgált nap = gyakorlat/kiképzés napjai „Megjelent" jelenléttel; a lemondott művelet nem számít.
-        </p>
-        {serviceMinimum && <YearDeadlineLine d={serviceMinimum} />}
-        {!serviceMinimum || serviceMinimum.items.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden tartalékos teljesítette az éves szolgálati minimumot</span></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Szolgált</th><th>Hiányzik</th></tr></thead>
-              <tbody>
-                {serviceMinimum.items.map((item) => (
-                  <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
-                    <td className="font-medium">{item.name}</td>
-                    <td className="font-mono text-xs text-primary">{item.rank}</td>
-                    <td className="text-muted-foreground text-xs">{item.unit}</td>
-                    <td className="font-mono text-xs">{item.servedDays} nap</td>
-                    <td><span className={item.servedDays === 0 ? "badge-cancelled" : "badge-ongoing"}>{item.missingDays} nap</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AlertSection<ReadinessGap>
+        title="Készenléti rés — aktívak érvényes képesítés nélkül"
+        tone="primary"
+        icon={<Clock className="w-4 h-4 text-primary" />}
+        loading={loading}
+        rows={gaps}
+        rowKey={(g) => g.personnelId}
+        onRowClick={(g) => openPerson(g.personnelId)}
+        emptyText="Minden aktív katonának van érvényes képesítése"
+        columns={personColumns<ReadinessGap>()}
+      />
 
-      {/* Szabadság-minimum */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <Clock className="w-4 h-4 text-orange-500" />
-          <h2 className="text-sm font-bold uppercase tracking-military">
-            Szabadság-minimum {leaveMinimum?.year ?? ""} — aktívak {leaveMinimum?.minDays ?? 10} munkanap alatt ({leaveMinimum?.items.length ?? 0})
-          </h2>
-        </div>
-        <p className="text-xs text-muted-foreground font-mono mb-1">
-          Jóváhagyott „Szabadság" típusú távollétek, hétfő–péntek napok (ünnepnap nélkül), az idei évből.
-        </p>
-        {leaveMinimum && <YearDeadlineLine d={leaveMinimum} />}
-        {!leaveMinimum || leaveMinimum.items.length === 0 ? (
-          <div className="flex items-center gap-2 text-muted-foreground font-mono py-4"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm">Minden aktív katona elérte a minimumot</span></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full mil-table">
-              <thead><tr><th>Név</th><th>Rendfokozat</th><th>Alegység</th><th>Kivett</th><th>Hiányzik</th></tr></thead>
-              <tbody>
-                {leaveMinimum.items.map((item) => (
-                  <tr key={item.personnelId} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => navigate("/personnel", { state: { openPersonnelId: item.personnelId } })}>
-                    <td className="font-medium">{item.name}</td>
-                    <td className="font-mono text-xs text-primary">{item.rank}</td>
-                    <td className="text-muted-foreground text-xs">{item.unit}</td>
-                    <td className="font-mono text-xs">{item.takenDays} nap</td>
-                    <td><span className={item.takenDays === 0 ? "badge-cancelled" : "badge-ongoing"}>{item.missingDays} nap</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Stats table */}
-      <div>
+      {/* Képesítési statisztikák — nem riasztás, áttekintő */}
+      <div className="mt-8">
         <div className="flex items-center gap-3 mb-3">
           <CheckCircle2 className="w-4 h-4 text-primary" />
           <h2 className="text-sm font-bold uppercase tracking-military">Képesítési statisztikák</h2>
@@ -427,13 +289,7 @@ export default function Alerts() {
           <table className="w-full mil-table">
             <thead>
               <tr>
-                <th>Képesítés neve</th>
-                <th>Kategória</th>
-                <th>Érvényesség</th>
-                <th>Összes állomány</th>
-                <th>Rendelkezők (összes)</th>
-                <th>Érvényes</th>
-                <th>Lefedettség</th>
+                <th>Képesítés neve</th><th>Kategória</th><th>Érvényesség</th><th>Összes állomány</th><th>Rendelkezők (összes)</th><th>Érvényes</th><th>Lefedettség</th>
               </tr>
             </thead>
             <tbody>
@@ -443,23 +299,14 @@ export default function Alerts() {
                   <tr key={s.id}>
                     <td className="font-medium">{s.name}</td>
                     <td><span className="mono-chip text-[10px]">{s.category}</span></td>
-                    <td className="font-mono text-xs">
-                      {s.validityDays === null ? (
-                        <span className="text-muted-foreground">Nem jár le</span>
-                      ) : (
-                        `${s.validityDays} nap`
-                      )}
-                    </td>
+                    <td className="font-mono text-xs">{s.validityDays === null ? <span className="text-muted-foreground">Nem jár le</span> : `${s.validityDays} nap`}</td>
                     <td className="font-mono text-center">{s.totalPersonnel}</td>
                     <td className="font-mono text-center">{s.holdersAll}</td>
                     <td className="font-mono text-center text-primary">{s.holdersValid}</td>
                     <td>
                       <div className="flex items-center gap-2">
                         <div className="flex-1 bg-border h-2" style={{ borderRadius: "1px" }}>
-                          <div
-                            className={`h-2 transition-all ${pct >= 80 ? "bg-green-600" : pct >= 50 ? "bg-yellow-500" : "bg-destructive"}`}
-                            style={{ width: `${pct}%`, borderRadius: "1px" }}
-                          />
+                          <div className={`h-2 transition-all ${pct >= 80 ? "bg-green-600" : pct >= 50 ? "bg-yellow-500" : "bg-destructive"}`} style={{ width: `${pct}%`, borderRadius: "1px" }} />
                         </div>
                         <span className="font-mono text-xs w-8 text-right">{pct}%</span>
                       </div>

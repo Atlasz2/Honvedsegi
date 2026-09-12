@@ -806,13 +806,14 @@ function attendanceQuery(date: string, unit?: string, includeReserve?: boolean):
   return query.toString();
 }
 
-async function downloadBlob(path: string, filename: string): Promise<void> {
+async function downloadBlob(path: string, filename: string, body?: unknown): Promise<void> {
   const token = getAccessToken();
   const headers = new Headers();
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${API_BASE}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
   if (!response.ok) {
     throw new Error((await response.text()) || 'A letöltés sikertelen');
   }
@@ -1054,4 +1055,10 @@ export const orders = {
     request<Order>(`/orders/${orderId}/signatures`, { method: 'PUT', body: JSON.stringify({ signatures }) }),
   exportDocx: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.docx`, `parancs-${number || orderId.slice(0, 8)}.docx`),
   exportPdf: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.pdf`, `parancs-${number || orderId.slice(0, 8)}.pdf`),
+};
+
+/** Bármely (már megszűrt) táblázat Excelbe — a szerver csak formáz. */
+export const tableExport = {
+  xlsx: (title: string, headers: string[], rows: string[][], filename: string) =>
+    downloadBlob('/reports/table.xlsx', filename, { title, headers, rows }),
 };

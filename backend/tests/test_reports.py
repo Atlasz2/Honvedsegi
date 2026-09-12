@@ -121,3 +121,11 @@ def test_focus_report_rejects_unknown_record(client, admin_headers):
         headers=admin_headers,
     )
     assert response.status_code == 404
+
+
+def test_generic_table_export_returns_xlsx(client, admin_headers):
+    r = client.post("/api/reports/table.xlsx", json={
+        "title": "Teszt lista", "headers": ["Név", "Alegység"], "rows": [["Kiss Béla", "1. század"], ["Nagy Lajos", "törzs"]],
+    }, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    assert r.content[:2] == b"PK"

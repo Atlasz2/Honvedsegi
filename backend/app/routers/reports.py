@@ -74,3 +74,47 @@ def operations_word_report(query: Query, db: DB, _: Reader) -> Response:
 @router.get("/operations.pdf")
 def operations_pdf_report(query: Query, db: DB, _: Reader) -> Response:
     return _export(build_pdf_report_bytes, query, db, PDF_MEDIA_TYPE)
+
+
+# ── Általános táblázat-export ─────────────────────────────────────────────────
+# A felület bármely (már megszűrt) táblázatát Excelbe menti — pl. a
+# Figyelmeztetések szekcióit. A tartalom a kliensé; a szerver csak formáz.
+
+from pydantic import BaseModel  # noqa: E402  (a modul többi része a services-re épül)
+
+
+class TableExportRequest(BaseModel):
+    title: str
+    headers: list[str]
+    rows: list[list[str]]
+
+
+@router.post("/table.xlsx")
+def table_excel_export(payload: TableExportRequest, _: Reader) -> Response:
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (payload.title or "Export")[:31]
+    ws["A1"] = payload.title
+    ws["A1"].font = Font(size=14, bold=True)
+    dark = PatternFill(fill_type="solid", start_color="1E293B", end_color="1E293B")
+    for col, header in enumerate(payload.headers, 1):
+        cell = ws.cell(row=3, column=col, value=header)
+        cell.fill = dark
+        cell.font = Font(color="FFFFFF", bold=True)
+    for r, row in enumerate(payload.rows, 4):
+        for col, value in enumerate(row, 1):
+            ws.cell(row=r, column=col, value=value)
+    for col in range(1, len(payload.headers) + 1):
+        longest = max([len(payload.headers[col - 1])] + [len(row[col - 1]) for row in payload.rows if len(row) >= col])
+        ws.column_dimensions[ws.cell(row=3, column=col).column_letter].width = min(60, max(10, longest + 2))
+    buf = BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(), media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": "attachment; filename=export.xlsx"},
+    )
