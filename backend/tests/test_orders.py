@@ -44,8 +44,8 @@ def _person(client, headers, name, sztsz):
 def test_type_requires_chapters_signers_and_known_responsible(client, admin_headers):
     r = client.post("/api/orders/types", json={"name": "Üres", "chapters": [], "signers": SIGNERS}, headers=admin_headers)
     assert r.status_code == 400
-    r = client.post("/api/orders/types", json={"name": "Aláíró nélkül", "chapters": LESZERELES[:1], "signers": []}, headers=admin_headers)
-    assert r.status_code == 400
+    r = client.post("/api/orders/types", json={"name": f"Aláíró nélkül {uuid.uuid4().hex[:4]}", "chapters": LESZERELES[:1], "signers": []}, headers=admin_headers)
+    assert r.status_code == 201, "aláíró nélkül is létrehozható; a parancson utólag felvehető"
     r = client.post("/api/orders/types", json={"name": "Rossz felelős", "chapters": [{"name": "x", "responsible": "Ellenjegyzés"}], "signers": SIGNERS}, headers=admin_headers)
     assert r.status_code == 400, "az ellenjegyzés nem részleg, hanem aláírás"
 
@@ -157,3 +157,18 @@ def test_delete_order_removes_chapters(client, admin_headers):
 
 def test_orders_require_auth(client):
     assert client.get("/api/orders").status_code == 401
+
+
+def test_signature_slots_can_be_added_and_removed_on_the_order(client, admin_headers):
+    order_type = _type(client, admin_headers, signers=["Parancsnok"])
+    order = _order(client, admin_headers, order_type["id"])
+    # hozzáadás + törlés pozíció szerint; az aláírt nyoma megmarad
+    r = client.put(f"/api/orders/{order['id']}/signatures", json={"signatures": [
+        {"role": "Parancsnok", "name": "Nagy ezredes", "signed": False},
+        {"role": "Törzsfőnök", "name": "", "signed": False},
+    ]}, headers=admin_headers)
+    assert [s["role"] for s in r.json()["signatures"]] == ["Parancsnok", "Törzsfőnök"]
+    r = client.put(f"/api/orders/{order['id']}/signatures", json={"signatures": [
+        {"role": "Törzsfőnök", "name": "Kis alezredes", "signed": False},
+    ]}, headers=admin_headers)
+    assert [s["role"] for s in r.json()["signatures"]] == ["Törzsfőnök"]

@@ -64,10 +64,8 @@ def _validate_chapters(chapters) -> list[dict]:
 
 
 def _validate_signers(signers: list[str]) -> list[str]:
-    cleaned = [s.strip() for s in signers if s.strip()]
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Legalább egy aláíró szerep kell (pl. Parancsnok)")
-    return cleaned
+    """Üres is lehet: a parancson utólag is felvehető aláírás-hely."""
+    return [s.strip() for s in signers if s.strip()]
 
 
 def _order_counts(db) -> dict[str, int]:
@@ -394,11 +392,12 @@ def update_signatures(order_id: str, payload: OrderSignaturesUpdate, db: DB, use
     """Az aláírók neve és az aláírás ténye. Az újonnan aláírt tételre a rendszer
     rögzíti, ki és mikor jelölte be — ez a nyoma annak, hogy ki adta ki."""
     order = _require_order(db, order_id)
-    previous = {s.get("role"): s for s in (order.signatures or [])}
+    # Pozíció szerint párosítunk (a szerep átnevezhető, és ugyanaz a szerep többször is szerepelhet).
+    previous = list(order.signatures or [])
     now = utc_now().isoformat(timespec="seconds")
     updated = []
-    for sig in payload.signatures:
-        old = previous.get(sig.role, {})
+    for index, sig in enumerate(payload.signatures):
+        old = previous[index] if index < len(previous) else {}
         signed_at, signed_by = old.get("signedAt", ""), old.get("signedBy", "")
         if sig.signed and not old.get("signed"):
             signed_at, signed_by = now, user.username

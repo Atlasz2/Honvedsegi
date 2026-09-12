@@ -393,7 +393,17 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
 
           <div className="mt-8 grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(1, signatures.length)}, minmax(0, 1fr))` }}>
             {signatures.map((sig, i) => (
-              <div key={sig.role} className="text-center text-xs">
+              <div key={`${sig.role}-${i}`} className="text-center text-xs relative group">
+                {canEdit && !sig.signed && (
+                  <button
+                    type="button"
+                    title="Aláírás-hely törlése"
+                    onClick={() => { void saveSignatures(signatures.filter((_, j) => j !== i)); }}
+                    className="absolute -top-1 right-1 text-destructive text-[11px] opacity-0 group-hover:opacity-100 hover:underline"
+                  >
+                    törlés
+                  </button>
+                )}
                 <div className="border-t border-foreground/60 mx-4 mb-2" />
                 {canEdit ? (
                   <input
@@ -406,7 +416,17 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
                 ) : (
                   <p className="font-semibold">{sig.name || '(név)'}</p>
                 )}
-                <p className="text-muted-foreground mt-1">{sig.role}</p>
+                {canEdit ? (
+                  <input
+                    value={sig.role}
+                    onChange={(e) => setSignatures((prev) => prev.map((s, j) => (j === i ? { ...s, role: e.target.value } : s)))}
+                    onBlur={() => { if (sig.role !== order.signatures[i]?.role) void saveSignatures(signatures); }}
+                    placeholder="(beosztás)"
+                    className="w-full bg-transparent border-b border-dashed border-transparent hover:border-border px-2 py-0.5 text-xs text-center text-muted-foreground focus:outline-none focus:border-primary"
+                  />
+                ) : (
+                  <p className="text-muted-foreground mt-1">{sig.role}</p>
+                )}
                 <label className={`mt-2 inline-flex items-center gap-1.5 font-mono ${sig.signed ? 'text-emerald-400' : 'text-muted-foreground'}`}>
                   <input
                     type="checkbox"
@@ -419,6 +439,13 @@ function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete }: {
               </div>
             ))}
           </div>
+          {canEdit && (
+            <div className="mt-3 text-right">
+              <button type="button" onClick={() => { void saveSignatures([...signatures, { role: 'Parancsnok', name: '', signed: false, signedAt: '', signedBy: '' }]); }} className="text-[11px] font-mono text-muted-foreground hover:text-foreground hover:underline">
+                + aláírás-hely
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -635,7 +662,7 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
 
 // ── Parancstípusok kezelése ────────────────────────────────────────────────
 
-function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
+export function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
   open: boolean; types: OrderType[]; canEdit: boolean; onClose: () => void; onChanged: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState<OrderType | 'new' | null>(null);
@@ -667,7 +694,6 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
     const payload = { name: name.trim(), description, chapters: chapters.filter((c) => c.name.trim()), signers: signers.filter((s) => s.trim()) };
     if (!payload.name) { toast.error('A név kötelező.'); return; }
     if (payload.chapters.length === 0) { toast.error('Legalább egy fejezet kell.'); return; }
-    if (payload.signers.length === 0) { toast.error('Legalább egy aláíró szerep kell.'); return; }
     setSaving(true);
     try {
       if (editing === 'new') await store.createType(payload);
@@ -735,14 +761,16 @@ function OrderTypesModal({ open, types, canEdit, onClose, onChanged }: {
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Aláírók (illetékes parancsnokok szerepe, a dokumentum végén)</label>
-            <div className="flex flex-wrap gap-2">
+            <div className="space-y-1">
               {signers.map((s, i) => (
-                <div key={i} className="flex items-center gap-1">
-                  <input value={s} onChange={(e) => setSigners((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))} placeholder="pl. Parancsnok" className="w-40 bg-input border border-border px-2 py-1 text-xs" style={radius} />
-                  <button onClick={() => setSigners((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-destructive hover:underline px-1">×</button>
+                <div key={i} className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-muted-foreground w-4">{i + 1}.</span>
+                  <input value={s} onChange={(e) => setSigners((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))} placeholder="pl. Parancsnok" className="w-56 bg-input border border-border px-2 py-1 text-xs" style={radius} />
+                  <button type="button" title="Aláíró törlése" onClick={() => setSigners((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-destructive hover:underline px-1">Törlés</button>
                 </div>
               ))}
-              <button onClick={() => setSigners((prev) => [...prev, ''])} className="btn-mil-secondary text-xs">+ Aláíró</button>
+              <button type="button" onClick={() => setSigners((prev) => [...prev, ''])} className="btn-mil-secondary text-xs">+ Aláíró</button>
+              {signers.length === 0 && <p className="text-[11px] font-mono text-amber-400">Legalább egy aláíró kell a kiadáshoz.</p>}
             </div>
           </div>
 
