@@ -241,6 +241,10 @@ export type QuickSearchResult = {
   orders: { id: string; number: string; subject: string; typeName: string; status: string }[];
   operations: { id: string; source: 'exercise' | 'training'; name: string; type: string; startDate: string; status: string }[];
 };
+export const changes = {
+  version: () => request<{ version: number }>('/changes'),
+};
+
 export const search = {
   quick: (q: string) => request<QuickSearchResult>(`/search?q=${encodeURIComponent(q)}`),
 };

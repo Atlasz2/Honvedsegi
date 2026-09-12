@@ -66,3 +66,11 @@ def test_quick_search_finds_person_by_name_and_sztsz(client, admin_headers):
     assert client.get("/api/search?q=k", headers=admin_headers).json() == {"persons": [], "orders": [], "operations": []}
     single = client.get(f"/api/personnel/{person['id']}", headers=admin_headers)
     assert single.status_code == 200 and single.json()["name"] == "Kereső Kázmér"
+
+
+def test_changes_version_grows_on_write(client, admin_headers):
+    before = client.get("/api/changes", headers=admin_headers).json()["version"]
+    client.post("/api/personnel", json={"name": "Verzió Vince", "sztsz": "21100001", "rank": "honvéd", "unit": "1. század", "status": "Aktív"}, headers=admin_headers)
+    after = client.get("/api/changes", headers=admin_headers).json()["version"]
+    assert after > before
+    assert client.get("/api/changes").status_code == 401

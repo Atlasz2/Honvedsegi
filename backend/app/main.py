@@ -109,6 +109,18 @@ for _router_module in (
 ):
     app.include_router(_router_module.router)
 
+# ── Változás-jelzés ──────────────────────────────────────────────────────────
+
+from .core.dependencies import Reader as _Reader  # noqa: E402
+from .db import data_version  # noqa: E402
+
+
+@app.get("/api/changes")
+def changes(_: _Reader):
+    """Az adat-verzió: a felület csak akkor tölt újra, ha ez nőtt."""
+    return {"version": data_version()}
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

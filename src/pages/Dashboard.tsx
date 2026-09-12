@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useNavigate } from "react-router-dom";
 import DatePickerInput from "@/components/DatePickerInput";
 import Modal from "@/components/Modal";
@@ -32,7 +33,6 @@ const FOCUS_TYPES: Array<{ value: ReportFocusType; label: string }> = [
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [, setTick] = useState(0);
   const [exs, setExs] = useState<Exercise[]>([]);
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
@@ -71,14 +71,8 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => {
-      setTick((t) => t + 1);
-      void refresh();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   const focusOptions = useMemo<ExportOption[]>(() => {
     if (reportFocusType === "exercise") {

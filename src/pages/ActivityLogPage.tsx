@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { ChevronDown, ChevronRight, History, Layers, List, User } from 'lucide-react';
 import { activityLog, getErrorMessage } from '@/lib/store';
 import { ActivityLogEntry } from '@/lib/types';
@@ -174,11 +175,8 @@ export default function ActivityLogPage() {
     activityLog.facets().then(setFacets).catch(() => setFacets({ users: [], modules: [] }));
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   const modules = facets.modules;
   const users = facets.users;

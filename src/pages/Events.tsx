@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from 'react-router-dom';
 import { Calendar, MapPin, Plus, Search, Trash2, Users, Pencil } from 'lucide-react';
 import { events, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
@@ -74,11 +75,8 @@ export default function Events() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => void refresh(), 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
   useEffect(() => {

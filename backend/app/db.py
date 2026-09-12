@@ -51,6 +51,26 @@ def set_sqlite_pragmas(dbapi_connection, _connection_record):
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
+# ── Adat-verzió: „változott-e valami?" ──────────────────────────────────────
+# Egyfolyamatos szerver, ezért elég egy folyamat-szintű számláló: minden sikeres
+# commit növeli. A felület egy pár bájtos kérdéssel dönti el, kell-e újratölteni.
+import threading  # noqa: E402
+
+_data_version = 0
+_data_version_lock = threading.Lock()
+
+
+def data_version() -> int:
+    return _data_version
+
+
+@event.listens_for(SessionLocal, "after_commit")
+def _bump_data_version(_session):
+    global _data_version
+    with _data_version_lock:
+        _data_version += 1
+
+
 def get_db():
     db = SessionLocal()
     try:

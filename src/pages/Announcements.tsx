@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { announcements as store, logAction, getErrorMessage } from '@/lib/store';
 import { Announcement } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -33,11 +34,8 @@ export default function AnnouncementsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   const sorted = [...data].filter(a => !filterCat || a.category === filterCat).sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import Modal from "@/components/Modal";
 import { events, exercises, getErrorMessage, trainings } from "@/lib/store";
 import type { AppEvent, Exercise, Training } from "@/lib/types";
@@ -103,7 +104,6 @@ function formatDate(value: string) {
 
 export default function CalendarPage() {
   const navigate = useNavigate();
-  const [tick, setTick] = useState(0);
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [exercisesData, setExercisesData] = useState<Exercise[]>([]);
   const [trainingsData, setTrainingsData] = useState<Training[]>([]);
@@ -129,14 +129,8 @@ export default function CalendarPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => {
-      setTick((v) => v + 1);
-      void refresh();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   const allItems = useMemo<CalendarItem[]>(() => {
     // A szolgálat is gyakorlat: a típusa mondja meg, a naptárban külön színt kap.
@@ -298,7 +292,7 @@ export default function CalendarPage() {
         })}
       </div>
 
-      <p className="text-xs text-muted-foreground font-mono mt-4">Frissítve: {new Date().toLocaleTimeString("hu-HU")} ({tick})</p>
+      <p className="text-xs text-muted-foreground font-mono mt-4">Automatikus frissítés: csak ha az ablak látszik és változott valami.</p>
 
       <Modal open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem ? `${sourceLabel[selectedItem.source]} részletei` : "Részletek"}>
         {selectedItem && (

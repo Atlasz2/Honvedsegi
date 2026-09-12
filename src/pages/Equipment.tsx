@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { equipment as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
 import { Equipment as Eq, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -40,11 +41,8 @@ export default function EquipmentPage() {
     }
   }, [historyTarget]);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
   useEffect(() => {

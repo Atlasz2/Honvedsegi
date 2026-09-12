@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
 import { exercises, trainings, series as seriesStore, personnel as pStore, checkLocationConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type SeriesMatrix } from "@/lib/store";
@@ -261,13 +262,8 @@ export default function Operations() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => {
-      void refresh();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   // Az állomány ritkán változik: egyszer töltjük, könnyű formában (nem 30 mp-enként a teljes aktát).
   useEffect(() => {

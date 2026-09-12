@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { supplies as store, logAction, getErrorMessage } from '@/lib/store';
 import { Supply } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -36,11 +37,8 @@ export default function InventoryPage() {
     }
   }, [historyTarget]);
 
-  useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
 
   const filtered = data.filter(s => {
     if (filterCat && s.category !== filterCat) return false;
