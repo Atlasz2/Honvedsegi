@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 def _reader_headers(client):
-    r = client.post("/api/auth/login", json={"username": "olvaso", "password": "OlvasoTeszt_2026!"})
+    r = client.post("/api/auth/login", json={"username": "olvaso", "password": "olvaso123"})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['token']}"}
 

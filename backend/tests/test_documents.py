@@ -47,7 +47,7 @@ def test_expiring_documents_alert(client, admin_headers):
 
 
 def test_document_add_requires_editor(client):
-    r = client.post("/api/auth/login", json={"username": "olvaso", "password": "OlvasoTeszt_2026!"})
+    r = client.post("/api/auth/login", json={"username": "olvaso", "password": "olvaso123"})
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
     res = client.post("/api/documents/personnel/whatever", json={"category": "Okmány", "name": "X"}, headers=headers)
     assert res.status_code == 403

@@ -10,7 +10,7 @@ from ..core.privileged import assert_role_assignable, assert_user_manageable, fi
 from ..core.time import utc_now
 from ..models import SessionTokenModel, UserModel
 from ..schemas import UserCreate, UserRead, UserUpdate
-from ..security import assert_password_strength, hash_password
+from ..security import WeakPasswordError, assert_password_strength, hash_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -34,6 +34,14 @@ def list_users(db: DB, current_user: Admin) -> list[UserRead]:
     return [to_user_read(item) for item in visible]
 
 
+def _check_password(password: str) -> None:
+    """A gyenge jelszó a felhasználó hibája (400), nem a szerveré (500)."""
+    try:
+        assert_password_strength(password)
+    except WeakPasswordError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("", response_model=UserRead)
 def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
     # A god-fiók az induláskor mindig létezik, ezért a nevével való létrehozás
@@ -41,7 +49,7 @@ def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
     if db.scalar(select(UserModel).where(UserModel.username == payload.username)):
         raise HTTPException(status_code=409, detail="Ez a felhasználónév már foglalt")
     assert_role_assignable(current_user, payload.role)
-    assert_password_strength(payload.password)
+    _check_password(payload.password)
     user = UserModel(
         username=payload.username,
         password_hash=hash_password(payload.password),
@@ -72,7 +80,7 @@ def update_user(username: str, payload: UserUpdate, db: DB, current_user: Admin)
     user.active = payload.active
     password_changed = bool(payload.password)
     if password_changed:
-        assert_password_strength(payload.password)
+        _check_password(payload.password)
         user.password_hash = hash_password(payload.password)
 
     after = _user_snapshot(user)

@@ -18,18 +18,35 @@ def _pepper() -> bytes:
     return os.getenv("BACKEND_PASSWORD_PEPPER", "").encode("utf-8")
 
 
+class WeakPasswordError(ValueError):
+    """Gyenge jelszó — a hívó 400-ként adja vissza."""
+
+
 def assert_password_strength(password: str) -> None:
-    if len(password) < 14:
-        raise ValueError("A jelszónak legalább 14 karakter hosszúnak kell lennie")
-    checks = {
-        "kisbetű": any(ch.islower() for ch in password),
-        "nagybetű": any(ch.isupper() for ch in password),
-        "szám": any(ch.isdigit() for ch in password),
-        "speciális karakter": any(not ch.isalnum() for ch in password),
-    }
+    """Élesben szigorú (14 karakter, mind a négy karakterosztály); fejlesztés
+    közben laza (8 karakter, betű + szám), hogy a teszt-fiókok egyszerű
+    jelszavai működjenek. Az IS_PRODUCTION a BACKEND_ENV-ből jön."""
+    from .constants import IS_PRODUCTION  # késleltetve: a constants importálja az os-t, nem minket
+
+    if IS_PRODUCTION:
+        if len(password) < 14:
+            raise WeakPasswordError("A jelszónak legalább 14 karakter hosszúnak kell lennie")
+        checks = {
+            "kisbetű": any(ch.islower() for ch in password),
+            "nagybetű": any(ch.isupper() for ch in password),
+            "szám": any(ch.isdigit() for ch in password),
+            "speciális karakter": any(not ch.isalnum() for ch in password),
+        }
+    else:
+        if len(password) < 8:
+            raise WeakPasswordError("A jelszónak legalább 8 karakter hosszúnak kell lennie")
+        checks = {
+            "betű": any(ch.isalpha() for ch in password),
+            "szám": any(ch.isdigit() for ch in password),
+        }
     missing = [label for label, ok in checks.items() if not ok]
     if missing:
-        raise ValueError(f"A jelszóból hiányzik: {', '.join(missing)}")
+        raise WeakPasswordError(f"A jelszóból hiányzik: {', '.join(missing)}")
 
 
 def hash_password(password: str) -> str:

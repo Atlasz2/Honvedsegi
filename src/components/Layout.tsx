@@ -32,7 +32,7 @@ const roleBadge: Record<string, string> = {
   admin: 'ADMIN',
   reader: 'OLVASÓ',
   editor: 'SZERKESZTŐ',
-  fejleszto: 'FEJLESZTŐ',
+  fejleszto: 'ALKOTÓ',
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

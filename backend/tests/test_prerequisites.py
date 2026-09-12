@@ -43,7 +43,7 @@ def _grant(person_id, qual_type_id, expiry=None) -> None:
 
 
 def _reader_headers(client):
-    response = client.post("/api/auth/login", json={"username": "olvaso", "password": "OlvasoTeszt_2026!"})
+    response = client.post("/api/auth/login", json={"username": "olvaso", "password": "olvaso123"})
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
 

@@ -15,7 +15,7 @@ def _create_person(client, headers, *, name, sztsz, unit="1. század"):
 def _reader_headers(client):
     response = client.post(
         "/api/auth/login",
-        json={"username": "olvaso", "password": "OlvasoTeszt_2026!"},
+        json={"username": "olvaso", "password": "olvaso123"},
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}

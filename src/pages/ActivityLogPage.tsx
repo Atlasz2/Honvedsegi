@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 const ACTIONS: ActivityLogEntry['action'][] = ['létrehozva', 'módosítva', 'törölve'];
 
 const ROLE_LABEL: Record<string, string> = {
-  reader: 'Olvasó', editor: 'Szerkesztő', admin: 'Admin', fejleszto: 'Fejlesztő',
+  reader: 'Olvasó', editor: 'Szerkesztő', admin: 'Admin', fejleszto: 'Alkotó',
 };
 
 const FIELD_LABELS: Record<string, string> = {

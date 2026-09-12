@@ -218,20 +218,24 @@ A jelenlegi rendszerben a bejelentkezési adatok környezeti változókból jön
 Gyors helyi teszthez (csak teszt környezetben) használhatsz fix értékeket:
 
 ```powershell
-$env:BACKEND_READER_PASSWORD = "OlvasoTeszt_2026!"
-$env:BACKEND_EDITOR_PASSWORD = "SzerkesztoTeszt_2026!"
-$env:BACKEND_ADMIN_PASSWORD = "AdminTeszt_2026!"
-$env:BACKEND_DEV_MASTER_PASSWORD = "DevMasterTeszt_2026!"
+$env:BACKEND_READER_PASSWORD = "olvaso123"
+$env:BACKEND_EDITOR_PASSWORD = "szerkeszto123"
+$env:BACKEND_ADMIN_PASSWORD = "Admin123"
+$env:BACKEND_DEV_MASTER_PASSWORD = "Malnas123"
 $env:BACKEND_PASSWORD_PEPPER = "HOSSZU_RANDOM_PEPPER_CSERELD_LE_ELESBEN"
 $env:BACKEND_TOKEN_PEPPER = "KULON_RANDOM_TOKEN_PEPPER_CSERELD_LE_ELESBEN"
 ```
 
 Ezek után a teszt loginok:
 
-- `olvaso` / `OlvasoTeszt_2026!`
-- `szerkeszto` / `SzerkesztoTeszt_2026!`
-- `admin` / `AdminTeszt_2026!`
-- `dev_master` / `DevMasterTeszt_2026!`
+- `olvaso` / `olvaso123`
+- `szerkeszto` / `szerkeszto123`
+- `admin` / `Admin123`
+- `dev_master` / `Malnas123` (alkotó — az admin nem látja)
+
+Ha a fiókok elromlottak vagy régi jelszóval vannak: `cd backend; ../.venv/Scripts/python.exe reset_users.py`
+kisöpri az összeset és ezt a négyet hozza létre. (Fejlesztés közben a jelszószabály laza: 8 karakter, betű+szám;
+`BACKEND_ENV=production` alatt 14 karakter és mind a négy karakterosztály.)
 
 ## Éles intranet checklist (Windows)
 

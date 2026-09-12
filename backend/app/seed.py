@@ -76,13 +76,13 @@ def seed_database(db: Session) -> None:
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "olvaso123")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "szerkeszto123")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Alkotó", role="fejleszto", active=True, protected=True),
     ]
 
     personnel = [
@@ -179,13 +179,13 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "olvaso123")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "szerkeszto123")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Alkotó", role="fejleszto", active=True, protected=True),
     ]
 
     male_first_names = [

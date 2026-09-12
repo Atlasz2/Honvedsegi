@@ -309,7 +309,7 @@ export default function SettingsPage() {
   // A god-szerep (fejleszto) API-n át sosem osztható ki; admin szintet csak a god
   // adhat. Ezért az admin legfeljebb szerkesztőt hozhat létre, a god admint is.
   const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin'] : ['reader', 'editor'];
-  const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
+  const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'ALKOTÓ' };
 
   return (
     <div>
