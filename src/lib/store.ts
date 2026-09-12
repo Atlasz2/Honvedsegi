@@ -379,7 +379,15 @@ export const alerts = {
   leaveMinimum: (year?: number) => request<LeaveMinimumResult>(`/alerts/leave-minimum${year ? `?year=${year}` : ''}`),
   basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
   serviceMinimum: (year?: number) => request<ServiceMinimumResult>(`/alerts/service-minimum${year ? `?year=${year}` : ''}`),
+  orderDeadlines: () => request<OrderDeadlinesResult>('/alerts/order-deadlines'),
 };
+
+export type OrderDeadlineItem = {
+  orderId: string; number: string; subject: string; orderStatus: string;
+  kind: 'order' | 'chapter'; label: string; responsible: string; assignee: string;
+  dueDate: string; daysLeft: number; isOverdue: boolean; isDueSoon: boolean;
+};
+export type OrderDeadlinesResult = { warnDays: number; items: OrderDeadlineItem[] };
 
 export type ApplicantMatch = { line: string; personnelId: string; name: string; sztsz: string };
 export type ApplicantPasteResult = {

@@ -197,3 +197,22 @@ def test_reopened_chapter_drops_back_to_preparation(client, admin_headers):
     assert order["status"] == "Aláírásra vár"
     order = _set_chapter(client, admin_headers, order, 0, "Folyamatban")
     assert order["status"] == "Előkészítés"
+
+
+def test_order_deadline_alerts(client, admin_headers):
+    order_type = _type(client, admin_headers, chapters=[{"name": "Jogi rész", "responsible": "Jog"}])
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    soon = (date.today() + timedelta(days=5)).isoformat()
+    far = (date.today() + timedelta(days=90)).isoformat()
+    order = _order(client, admin_headers, order_type["id"], subject="Csúszó parancs", dueDate=soon)
+    _set_chapter(client, admin_headers, order, 0, "Folyamatban", dueDate=yesterday, assignee="dr. Kiss")
+    other = _order(client, admin_headers, order_type["id"], subject="Ráérős parancs", dueDate=far)
+    _set_chapter(client, admin_headers, other, 0, "Folyamatban", dueDate=far)
+
+    body = client.get("/api/alerts/order-deadlines", headers=admin_headers).json()
+    mine = [i for i in body["items"] if i["orderId"] == order["id"]]
+    assert {i["kind"] for i in mine} == {"order", "chapter"}
+    chapter = next(i for i in mine if i["kind"] == "chapter")
+    assert chapter["isOverdue"] and chapter["responsible"] == "Jog" and chapter["assignee"] == "dr. Kiss"
+    assert next(i for i in mine if i["kind"] == "order")["isDueSoon"]
+    assert not any(i["orderId"] == other["id"] for i in body["items"]), "90 nap múlva még nem riaszt"

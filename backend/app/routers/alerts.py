@@ -248,3 +248,40 @@ def basic_training_deadline(
         "warnDays": ALERT_WARN_DAYS,
         "items": items,
     }
+
+
+@router.get("/order-deadlines")
+def order_deadlines(db: DB, _: Reader, warn_days: int = Query(ALERT_WARN_DAYS, ge=0, le=365)):
+    """Nyitott parancsok lejárt vagy hamarosan lejáró határidői: a parancs
+    egésze és az el nem készült fejezetek, felelős részleggel. A vezető és a
+    részleg is ebből látja, mi csúszik."""
+    from ..models import OrderChapterModel, OrderModel  # itt, hogy az alerts ne függjön mindig a parancsoktól
+
+    today = date.today()
+    horizon = (today + timedelta(days=warn_days)).isoformat()
+    open_orders = db.scalars(select(OrderModel).where(OrderModel.status.in_(("Előkészítés", "Aláírásra vár")))).all()
+    by_id = {o.id: o for o in open_orders}
+    items = []
+
+    def add(order, kind, label, responsible, assignee, due):
+        days_left = (date.fromisoformat(due[:10]) - today).days
+        items.append({
+            "orderId": order.id, "number": order.number or "", "subject": order.subject, "orderStatus": order.status,
+            "kind": kind, "label": label, "responsible": responsible, "assignee": assignee,
+            "dueDate": due[:10], "daysLeft": days_left, "isOverdue": days_left < 0, "isDueSoon": 0 <= days_left <= warn_days,
+        })
+
+    for order in open_orders:
+        if order.due_date and order.due_date[:10] <= horizon:
+            add(order, "order", "a parancs egésze", "", "", order.due_date)
+    if by_id:
+        chapters = db.scalars(select(OrderChapterModel).where(
+            OrderChapterModel.order_id.in_(list(by_id)),
+            OrderChapterModel.status.notin_(("Kész", "Nem szükséges")),
+            OrderChapterModel.due_date != "",
+            OrderChapterModel.due_date <= horizon,
+        )).all()
+        for ch in chapters:
+            add(by_id[ch.order_id], "chapter", ch.name, ch.responsible, ch.assignee, ch.due_date)
+    items.sort(key=lambda x: (x["daysLeft"], x["subject"].lower()))
+    return {"warnDays": warn_days, "items": items}
