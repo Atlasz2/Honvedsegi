@@ -8,6 +8,8 @@ export interface User {
   active: boolean;
   /** Részleg (Ügyvitel, Jog, Kiképzés, Személyügy, Pénzügy) vagy üres — a Teendőimhez. */
   department?: string;
+  /** Terület (megye): melyik zászlóalj állományát látja; üres = ezredtörzs, mindent. */
+  region?: string;
   lastLogin?: string;
 }
 
@@ -16,6 +18,11 @@ export interface AuthToken {
   displayName: string;
   role: Role;
   department?: string;
+  region?: string;
+  /** „31. TVZ – Veszprém" / „Ezredtörzs (Győr)" — a fejlécbe. */
+  regionLabel?: string;
+  /** A saját zászlóalj; üres = ezredtörzs, mindent lát. */
+  unit?: string;
   expiry: number;
 }
 
@@ -30,6 +37,8 @@ export interface Person {
   unit: string;
   beosztas: string;
   status: 'Aktív' | 'Tartalékos' | 'Szabadságon' | 'Leszerelt';
+  /** Jogviszony altípusa: Aktív → Szerződéses/Hivatásos; Tartalékos → Önkéntes tartalékos/Állandó behívásos. Üres = nem ismert. */
+  serviceType: string;
   email: string;
   phone: string;
   birthDate: string;
@@ -70,6 +79,10 @@ export interface Exercise {
   location: string;
   /** A kiképzés beolvadt a műveletbe: a szervező mezője ide került. */
   organizer: string;
+  /** Melyik zászlóaljé; üres = ezredszintű (mindenki látja). */
+  unit?: string;
+  /** Szolgálat átadás-átvétel (csak szolgálat-típusnál). */
+  handover?: { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string } | null;
   maxPersonnel: number;
   description: string;
   status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
@@ -105,9 +118,10 @@ export interface AppEvent {
   endDate: string;
   location: string;
   organizer: string;
+  unit?: string;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
   assigned: BasicAssignment[];
 }
 
@@ -186,6 +200,8 @@ export interface Announcement {
   author: string;
   date: string;
   pinned: boolean;
+  /** Üres = ezredszintű közlemény; egyébként a zászlóalj. */
+  unit?: string;
 }
 
 export interface ActivityLogEntry {
@@ -296,11 +312,24 @@ export interface AttendanceEntry {
   note: string;
 }
 
+export interface AttendanceClosure {
+  unit: string;
+  unitLabel: string;
+  closedBy: string;
+  closedByName: string;
+  closedAt: string;
+  note: string;
+}
+
 export interface AttendanceDay {
   date: string;
   total: number;
   summary: Record<string, number>;
   items: AttendanceEntry[];
+  /** Mely zászlóaljak zárták már le a napot (a hatókörön belül). */
+  closures: AttendanceClosure[];
+  /** A saját zászlóaljam (vagy ezredszint) lezárva erre a napra. */
+  closedForMe: boolean;
 }
 
 export interface AttendanceMark {

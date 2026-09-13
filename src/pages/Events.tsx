@@ -7,19 +7,20 @@ import type { AppEvent, BasicAssignment, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { rankWeight, shortRank } from '@/lib/rank';
 import Modal from '@/components/Modal';
+import UnitSelect, { UnitChip } from '@/components/UnitSelect';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DatePickerInput from '@/components/DatePickerInput';
 import DateTimePickerInput from '@/components/DateTimePickerInput';
 import { toast } from 'sonner';
 
-type EventStatus = 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
-const STATUSES: EventStatus[] = ['Tervezett', 'Folyamatban', 'Befejezett', 'Törölve'];
+type EventStatus = 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
+const STATUSES: EventStatus[] = ['Tervezett', 'Folyamatban', 'Befejezett', 'Lemondva'];
 
 const statusClass: Record<EventStatus, string> = {
   Tervezett: 'badge-planned',
   Folyamatban: 'badge-ongoing',
   Befejezett: 'badge-completed',
-  Törölve: 'badge-cancelled',
+  Lemondva: 'badge-cancelled',
 };
 
 const emptyForm: Omit<AppEvent, 'id'> = {
@@ -30,6 +31,7 @@ const emptyForm: Omit<AppEvent, 'id'> = {
   endDate: '',
   location: '',
   organizer: '',
+  unit: '',
   maxPersonnel: 20,
   description: '',
   status: 'Tervezett',
@@ -99,7 +101,7 @@ export default function Events() {
   const safePage = Math.min(page, totalPages);
   const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const statusCounts: Record<EventStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Törölve: 0 };
+  const statusCounts: Record<EventStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Lemondva: 0 };
   data.forEach((item) => { statusCounts[item.status] += 1; });
 
   useEffect(() => {
@@ -248,7 +250,7 @@ export default function Events() {
         <div className="stats-card"><div className="stats-number">{statusCounts.Tervezett}</div><div className="stats-label">Tervezett</div></div>
         <div className="stats-card"><div className="stats-number">{statusCounts.Folyamatban}</div><div className="stats-label">Folyamatban</div></div>
         <div className="stats-card"><div className="stats-number">{statusCounts.Befejezett}</div><div className="stats-label">Befejezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Törölve}</div><div className="stats-label">Törölve</div></div>
+        <div className="stats-card"><div className="stats-number">{statusCounts.Lemondva}</div><div className="stats-label">Lemondva</div></div>
       </div>
 
       <div className="flex gap-2 mb-6 flex-wrap items-end">
@@ -293,7 +295,7 @@ export default function Events() {
                     {item.status}
                   </span>
                 </div>
-                <span className="mono-chip text-xs mb-3 inline-block">{item.type}</span>
+                <span className="mono-chip text-xs mb-3 inline-block">{item.type}</span> <UnitChip unit={item.unit} />
                 <div className="space-y-1 text-sm text-muted-foreground">
                   <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
                   <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />{item.location || 'Nincs megadva'}</div>
@@ -415,6 +417,7 @@ export default function Events() {
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
             <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} />
           </div>
+          <UnitSelect value={form.unit ?? ''} onChange={(unit) => setForm({ ...form, unit })} />
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
             <input type="number" value={form.maxPersonnel} onChange={(e) => setForm({ ...form, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, FileSignature, Megaphone, Palmtree, PenLine } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Sunrise, FileSignature, Megaphone, Palmtree, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { me as meStore, getErrorMessage, type MyTodos } from '@/lib/store';
 import { useAuth } from '@/lib/auth';
@@ -55,6 +55,29 @@ export default function Teendoim() {
 
       {error && !todos && (
         <div className="bg-card border border-destructive/40 p-4 text-sm text-destructive" style={radius}>{error}</div>
+      )}
+
+      {todos && todos.digest && (
+        <section className="bg-card border border-primary/40 mb-6" style={radius}>
+          <header className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+            <Sunrise className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-bold uppercase tracking-military flex-1">Mai összefoglaló — {todos.digest.date}</h2>
+            <span className="text-[11px] font-mono text-muted-foreground">{todos.digest.scope}</span>
+          </header>
+          <ul className="px-4 py-2 grid gap-1 md:grid-cols-2">
+            {todos.digest.lines.map((line, i) => (
+              <li key={i}>
+                <button
+                  onClick={() => { if (line.to) navigate(line.to); }}
+                  className={`w-full text-left text-sm flex items-start gap-2 py-1 ${line.to ? 'hover:underline' : 'cursor-default'}`}
+                >
+                  <span className={`mt-1.5 w-2 h-2 shrink-0 ${line.kind === 'warn' ? 'bg-destructive' : line.kind === 'ok' ? 'bg-emerald-500' : line.kind === 'todo' ? 'bg-amber-400' : 'bg-primary'}`} style={radius} />
+                  <span className={line.kind === 'warn' ? 'text-destructive' : line.kind === 'todo' ? 'text-amber-400' : ''}>{line.text}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {todos && (

@@ -9,6 +9,8 @@ export type CalendarItem = {
   id: string;
   source: CalendarSource;
   name: string;
+  /** Melyik zászlóaljé; üres = ezredszintű. */
+  unit: string;
   /** Szín-kulcs: a művelet/esemény típusa (Gyakorlat, Őrszolgálat, …). */
   kind: string;
   dutyType: string;
@@ -30,13 +32,22 @@ export type WeekBar = {
   continuesRight: boolean;
 };
 
-// Több, egymástól jól elkülönülő erős szín: a típus (Gyakorlat, Őrszolgálat,
-// Kiképzés, Esemény-fajta…) kap állandó színt, így ugyanaz a fajta mindig
-// ugyanolyan. Fehér felirat mindegyiken olvasható.
+// A rendszer tónusához illő, tompított katonai színek (HSL, közepes telítettség,
+// fehér felirattal olvasható). A típus (Gyakorlat, Őrszolgálat, Kiképzés, …)
+// állandó színt kap, hogy ugyanaz a fajta mindig ugyanolyan legyen.
 export const PALETTE = [
-  "bg-sky-600", "bg-amber-600", "bg-emerald-600", "bg-violet-600", "bg-rose-600",
-  "bg-teal-600", "bg-orange-600", "bg-indigo-600", "bg-lime-700", "bg-fuchsia-600",
-  "bg-cyan-700", "bg-red-700",
+  "hsl(148 30% 34%)",   // olívazöld — a rendszer elsődleges színe
+  "hsl(42 45% 40%)",    // sárgaréz
+  "hsl(210 28% 42%)",   // acélkék
+  "hsl(18 40% 42%)",    // terrakotta
+  "hsl(268 22% 46%)",   // szürkés lila
+  "hsl(178 30% 34%)",   // kékeszöld
+  "hsl(0 38% 44%)",     // téglavörös
+  "hsl(84 28% 36%)",    // moha
+  "hsl(232 24% 48%)",   // indigószürke
+  "hsl(330 24% 44%)",   // fakó bordó
+  "hsl(28 30% 36%)",    // khaki barna
+  "hsl(200 18% 40%)",   // palaszürke
 ];
 
 function hashKey(value: string): number {
@@ -47,7 +58,7 @@ function hashKey(value: string): number {
 
 /** Típus → szín. A leggyakoribbak fix helyet kapnak, a többi hash alapján, ütközés nélkül ha lehet. */
 export function buildColorMap(kinds: string[]): Map<string, string> {
-  const fixed: Record<string, string> = { Gyakorlat: PALETTE[0], Őrszolgálat: PALETTE[1], Kiképzés: PALETTE[2], Esemény: PALETTE[3] };
+  const fixed: Record<string, string> = { Gyakorlat: PALETTE[0], Őrszolgálat: PALETTE[1], Kiképzés: PALETTE[2], Esemény: PALETTE[4] };
   const map = new Map<string, string>();
   const used = new Set<string>();
   for (const kind of kinds) {

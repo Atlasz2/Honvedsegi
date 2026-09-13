@@ -24,6 +24,7 @@ def _user_snapshot(user: UserModel) -> dict:
         "username": user.username,
         "displayName": user.display_name,
         "department": user.department or "",
+        "region": user.region or "",
         "role": user.role,
         "active": user.active,
     }
@@ -41,6 +42,15 @@ def _check_department(department: str) -> str:
     value = (department or "").strip()
     if value and value not in USER_DEPARTMENTS:
         raise HTTPException(status_code=400, detail=f"Ismeretlen részleg: {value}. Választható: {', '.join(USER_DEPARTMENTS)}")
+    return value
+
+
+def _check_region(region: str) -> str:
+    """Csak ismert terület (vagy üres = ezredtörzs, mindent lát)."""
+    from ..constants import REGIONS
+    value = (region or "").strip()
+    if value and value not in REGIONS:
+        raise HTTPException(status_code=400, detail=f"Ismeretlen terület: {value}. Választható: {', '.join(REGIONS)}")
     return value
 
 
@@ -67,6 +77,7 @@ def create_user(payload: UserCreate, db: DB, current_user: Admin) -> UserRead:
         role=payload.role,
         active=payload.active,
         department=_check_department(payload.department),
+        region=_check_region(payload.region),
     )
     db.add(user)
     db.flush()
@@ -90,6 +101,7 @@ def update_user(username: str, payload: UserUpdate, db: DB, current_user: Admin)
     user.role = payload.role
     user.active = payload.active
     user.department = _check_department(payload.department)
+    user.region = _check_region(payload.region)
     password_changed = bool(payload.password)
     if password_changed:
         _check_password(payload.password)

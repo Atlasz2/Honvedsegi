@@ -2,17 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from "react-router-dom";
 import { Calendar, MapPin, Search, Users, Crosshair, GraduationCap, Plus, Layers } from "lucide-react";
-import { exercises, series as seriesStore, personnel as pStore, checkLocationConflicts, checkPersonConflicts, movePersonFromConflicts, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type PersonConflict, type SeriesMatrix } from "@/lib/store";
+import { exercises, series as seriesStore, personnel as pStore, assignmentForecast, dutyHandover, checkLocationConflicts, checkPersonConflicts, movePersonFromConflicts, type AssignmentForecast, getErrorMessage, logAction, prerequisites, qualificationTypes, type LocationConflict, type PersonConflict, type SeriesMatrix } from "@/lib/store";
 import type { Exercise, ExerciseAssignment, PersonLite, QualificationType, Series } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import Modal from "@/components/Modal";
+import UnitSelect, { UnitChip } from "@/components/UnitSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DatePickerInput from "@/components/DatePickerInput";
 import DateTimePickerInput from "@/components/DateTimePickerInput";
 import OperationDetailTabs from "@/components/operations/OperationDetailTabs";
 import CampaignPanel from "@/components/operations/CampaignPanel";
 import { shortRank, rankWeight } from "@/lib/rank";
-import { DUTY_TYPES } from "@/lib/dutyTypes";
+import { DUTY_TYPES, isDutyType } from "@/lib/dutyTypes";
 import { toast } from "sonner";
 
 // A művelet státusza megegyezik a gyakorlatéval — egy igazságforrás, nincs másolat.
@@ -28,6 +29,7 @@ type OperationItemBase = {
   endDate: string;
   location: string;
   organizer: string;
+  unit: string;
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
@@ -45,6 +47,7 @@ type CreateForm = {
   endDate: string;
   location: string;
   organizer: string;
+  unit: string;                  // melyik zászlóaljé; üres = ezredszintű
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
@@ -61,6 +64,7 @@ type EditForm = {
   endDate: string;
   location: string;
   organizer: string;
+  unit: string;
   maxPersonnel: number;
   description: string;
   status: OperationStatus;
@@ -90,6 +94,7 @@ const emptyCreateForm: CreateForm = {
   endDate: "",
   location: "",
   organizer: "",
+  unit: "",
   maxPersonnel: 20,
   description: "",
   status: "Tervezett",
@@ -125,6 +130,7 @@ function normalizeExercise(item: Exercise): OperationItem {
     endDate: item.endDate,
     location: item.location,
     organizer: item.organizer ?? "",
+    unit: item.unit ?? "",
     maxPersonnel: item.maxPersonnel,
     description: item.description,
     status: item.status,
@@ -176,7 +182,7 @@ export default function Operations() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [editing, setEditing] = useState<OperationItem | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", maxPersonnel: 20, description: "", status: "Tervezett", qualificationId: "", level: "", prerequisiteIds: [], seriesId: "" });
+  const [editForm, setEditForm] = useState<EditForm>({ name: "", type: "", startDate: "", endDate: "", location: "", organizer: "", unit: "", maxPersonnel: 20, description: "", status: "Tervezett", qualificationId: "", level: "", prerequisiteIds: [], seriesId: "" });
   const [editPrereqSearch, setEditPrereqSearch] = useState("");
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
@@ -192,6 +198,11 @@ export default function Operations() {
 
   const [createConflicts, setCreateConflicts] = useState<LocationConflict[]>([]);
   const [editConflicts, setEditConflicts] = useState<LocationConflict[]>([]);
+  // Beosztás-ütközés előrejelzés: már a dátumnál látszik, hányan lesznek foglaltak.
+  const [createForecast, setCreateForecast] = useState<AssignmentForecast | null>(null);
+  const [editForecast, setEditForecast] = useState<AssignmentForecast | null>(null);
+  const [handoverName, setHandoverName] = useState("");
+  const [handoverNote, setHandoverNote] = useState("");
 
   const detailRef = useRef<OperationItem | null>(null);
   detailRef.current = detail;
@@ -217,6 +228,35 @@ export default function Operations() {
     }, 600);
     return () => clearTimeout(timer);
   }, [editing, editForm.location, editForm.startDate, editForm.endDate]);
+
+  useEffect(() => {
+    if (!creating || !form.startDate || !form.endDate || form.endDate < form.startDate) { setCreateForecast(null); return; }
+    const timer = setTimeout(() => {
+      void assignmentForecast(form.startDate, form.endDate).then(setCreateForecast).catch(() => setCreateForecast(null));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [creating, form.startDate, form.endDate]);
+
+  useEffect(() => {
+    if (!editing || !editForm.startDate || !editForm.endDate || editForm.endDate < editForm.startDate) { setEditForecast(null); return; }
+    const timer = setTimeout(() => {
+      void assignmentForecast(editForm.startDate, editForm.endDate, editing.source, editing.id).then(setEditForecast).catch(() => setEditForecast(null));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [editing, editForm.startDate, editForm.endDate]);
+
+  const handover = async (action: "handover" | "takeover" | "clear") => {
+    if (!detail) return;
+    try {
+      await dutyHandover(detail.id, action, handoverName.trim(), handoverNote.trim());
+      setHandoverName("");
+      setHandoverNote("");
+      await refresh();
+      toast.success(action === "handover" ? "Átadás rögzítve." : action === "takeover" ? "Átvétel rögzítve." : "Átadás-átvétel törölve.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
 
   const formatDate = (value: string) => {
     const parsed = new Date(value);
@@ -442,7 +482,7 @@ export default function Operations() {
     setEditForm({
       name: item.name, type: item.type,
       startDate: item.startDate, endDate: item.endDate,
-      location: item.location, organizer: item.organizer,
+      location: item.location, organizer: item.organizer, unit: item.unit,
       maxPersonnel: item.maxPersonnel, description: item.description,
       status: item.status,
       qualificationId: raw?.qualificationId ?? "", level: raw?.level ?? "", prerequisiteIds: [], seriesId: raw?.seriesId ?? "",
@@ -471,7 +511,7 @@ export default function Operations() {
       await exercises.update({
         ...raw, name: editForm.name, type: editForm.type,
         startDate: editForm.startDate, endDate: editForm.endDate,
-        location: editForm.location, organizer: editForm.organizer.trim(),
+        location: editForm.location, organizer: editForm.organizer.trim(), unit: editForm.unit,
         maxPersonnel: editForm.maxPersonnel,
         description: editForm.description, status: editForm.status as Exercise["status"],
         qualificationId: editForm.qualificationId, level: editForm.level, seriesId: editForm.seriesId,
@@ -582,7 +622,7 @@ export default function Operations() {
         location: form.location.trim(), maxPersonnel: form.maxPersonnel,
         description: form.description.trim(),
       };
-      const created = await exercises.add({ ...common, organizer: form.organizer.trim(), status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
+      const created = await exercises.add({ ...common, organizer: form.organizer.trim(), unit: form.unit, status: form.status, qualificationId: form.qualificationId, seriesId: form.seriesId, level: form.level, assigned: [] });
       await prerequisites.set("exercise", created.id, form.prerequisiteIds);
       toast.success("Művelet létrehozva");
       setCreating(false);
@@ -721,6 +761,7 @@ export default function Operations() {
                 <div className="flex items-center gap-2 mb-2">
                   <Crosshair className="w-3.5 h-3.5 text-primary" />
                   <span className="mono-chip text-xs">{typeMap[item.type] || item.type}</span>
+                  <UnitChip unit={item.unit} />
                   {item.level && (
                     <span className="mono-chip text-[10px] bg-primary/15 text-primary">{item.level}</span>
                   )}
@@ -978,6 +1019,7 @@ export default function Operations() {
               {errors.endDate && <p className="text-destructive text-xs mt-1">{errors.endDate}</p>}
             </div>
           </div>
+          <ForecastLine forecast={createForecast} />
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
@@ -985,8 +1027,8 @@ export default function Operations() {
             {createConflicts.length > 0 && (
               <div className="mt-2 p-2 border border-yellow-600/50 bg-yellow-600/10 text-xs font-mono">
                 <p className="text-yellow-500 mb-1">⚠ Helyszínütközés ({createConflicts.length} esemény):</p>
-                {createConflicts.map((c) => (
-                  <p key={c.eventId} className="text-muted-foreground">• {c.eventName} ({c.startDate} → {c.endDate})</p>
+                {createConflicts.map((c, i) => (
+                  <p key={c.eventId || `f${i}`} className={c.foreign ? "text-muted-foreground italic" : "text-muted-foreground"}>• {c.eventName} ({c.startDate} → {c.endDate})</p>
                 ))}
               </div>
             )}
@@ -996,6 +1038,7 @@ export default function Operations() {
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
             <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} placeholder="pl. Kiképzési részleg" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
           </div>
+          <UnitSelect value={form.unit} onChange={(unit) => setForm({ ...form, unit })} />
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
@@ -1063,6 +1106,7 @@ export default function Operations() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span><p className="mono-chip mt-1">{typeMap[detail.type] || detail.type}</p></div>
               {detail.organizer && <div><span className="text-muted-foreground text-xs uppercase tracking-military">Szervező</span><p className="mt-1">{detail.organizer}</p></div>}
+              <div><span className="text-muted-foreground text-xs uppercase tracking-military">Zászlóalj</span><p className="mt-1"><UnitChip unit={detail.unit} />{detail.unit ? "" : " "}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Státusz</span><p className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 ${statusClass[detail.status]}`} style={{ borderRadius: "2px" }}>{STATUS_LABEL[detail.status]}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Időszak</span><p className="font-mono text-primary text-sm mt-1">{formatDate(detail.startDate)} → {formatDate(detail.endDate)}</p></div>
               <div><span className="text-muted-foreground text-xs uppercase tracking-military">Helyszín</span><p className="mt-1">{detail.location || "Nincs megadva"}</p></div>
@@ -1196,6 +1240,52 @@ export default function Operations() {
               <div className="h-px flex-1 bg-primary/30" />
             </div>
 
+            {isDutyType(detail.type) && (
+              <div className="border border-border p-3 space-y-2" style={{ borderRadius: "2px" }}>
+                <p className="text-xs uppercase tracking-military text-muted-foreground">Szolgálat átadás-átvétel</p>
+                {(() => {
+                  const raw = rawExercises.find((e) => e.id === detail.id)?.handover ?? null;
+                  const h = raw ?? {};
+                  const fmt = (v?: string) => (v ? new Date(v).toLocaleString("hu-HU", { dateStyle: "short", timeStyle: "short" }) : "");
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className={`border p-2 ${h.handedOverAt ? "border-emerald-500/50 bg-emerald-500/5" : "border-border"}`} style={{ borderRadius: "2px" }}>
+                          <p className="text-[10px] uppercase tracking-military text-muted-foreground">Átadta</p>
+                          <p className="font-medium">{h.handedOverBy || "—"}</p>
+                          <p className="font-mono text-xs text-muted-foreground">{fmt(h.handedOverAt) || "még nincs átadva"}</p>
+                        </div>
+                        <div className={`border p-2 ${h.takenOverAt ? "border-emerald-500/50 bg-emerald-500/5" : "border-border"}`} style={{ borderRadius: "2px" }}>
+                          <p className="text-[10px] uppercase tracking-military text-muted-foreground">Átvette</p>
+                          <p className="font-medium">{h.takenOverBy || "—"}</p>
+                          <p className="font-mono text-xs text-muted-foreground">{fmt(h.takenOverAt) || "még nincs átvéve"}</p>
+                        </div>
+                      </div>
+                      {h.note && <p className="text-xs text-muted-foreground">Megjegyzés: {h.note}</p>}
+                      {canEdit && !(h.handedOverAt && h.takenOverAt) && (
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="flex-1 min-w-[160px]">
+                            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Név (üresen: én)</label>
+                            <input value={handoverName} onChange={(e) => setHandoverName(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: "2px" }} />
+                          </div>
+                          <div className="flex-1 min-w-[160px]">
+                            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Megjegyzés</label>
+                            <input value={handoverNote} onChange={(e) => setHandoverNote(e.target.value)} placeholder="pl. rendkívüli esemény nem történt" className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: "2px" }} />
+                          </div>
+                          {!h.handedOverAt
+                            ? <button onClick={() => { void handover("handover"); }} className="btn-mil-primary text-xs">Átadva</button>
+                            : <button onClick={() => { void handover("takeover"); }} className="btn-mil-primary text-xs">Átvéve</button>}
+                        </div>
+                      )}
+                      {canEdit && h.handedOverAt && (
+                        <button onClick={() => { void handover("clear"); }} className="text-[11px] font-mono text-muted-foreground hover:text-destructive hover:underline">Átadás-átvétel törlése</button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
             <OperationDetailTabs operationId={detail.id} operationName={detail.name} assigned={detail.assigned} canEdit={canEdit} />
 
             <div className="flex justify-between pt-2">
@@ -1243,6 +1333,7 @@ export default function Operations() {
                 {editErrors.endDate && <p className="text-destructive text-xs mt-1">{editErrors.endDate}</p>}
               </div>
             </div>
+            <ForecastLine forecast={editForecast} />
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Helyszín</label>
@@ -1250,8 +1341,8 @@ export default function Operations() {
               {editConflicts.length > 0 && (
                 <div className="mt-2 p-2 border border-yellow-600/50 bg-yellow-600/10 text-xs font-mono">
                   <p className="text-yellow-500 mb-1">⚠ Helyszínütközés ({editConflicts.length} esemény):</p>
-                  {editConflicts.map((c) => (
-                    <p key={c.eventId} className="text-muted-foreground">• {c.eventName} ({c.startDate} → {c.endDate})</p>
+                  {editConflicts.map((c, i) => (
+                    <p key={c.eventId || `f${i}`} className={c.foreign ? "text-muted-foreground italic" : "text-muted-foreground"}>• {c.eventName} ({c.startDate} → {c.endDate})</p>
                   ))}
                 </div>
               )}
@@ -1261,6 +1352,7 @@ export default function Operations() {
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
               <input value={editForm.organizer} onChange={(e) => setEditForm({ ...editForm, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
             </div>
+            <UnitSelect value={editForm.unit} onChange={(unit) => setEditForm({ ...editForm, unit })} />
 
             <div>
               <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
@@ -1395,6 +1487,20 @@ export default function Operations() {
 }
 
 /** Egy képzettség-típus sora a kezelőben: a helyén szerkeszthető, törölhető (ha senkinek nincs kiadva). */
+/** „Ezen a napon X fő már be van osztva máshova (Y-ből)" — a dátum alatt, mielőtt egyesével kiderülne. */
+function ForecastLine({ forecast }: { forecast: AssignmentForecast | null }) {
+  if (!forecast) return null;
+  if (forecast.busy === 0) {
+    return <p className="text-[11px] font-mono text-emerald-400">Ebben az időszakban senki nincs máshova beosztva ({forecast.assignable} beosztható fő).</p>;
+  }
+  return (
+    <p className="text-[11px] font-mono text-amber-400" title={forecast.busyPeople.map((p) => `${p.name}: ${p.events.join(", ")}`).join("\n")}>
+      ⚠ Ebben az időszakban {forecast.busy} fő már máshova van beosztva a {forecast.assignable} beoszthatóból
+      {forecast.busyPeople.length > 0 ? ` (${forecast.busyPeople.slice(0, 4).map((p) => p.name).join(", ")}${forecast.busyPeople.length > 4 ? "…" : ""})` : ""}.
+    </p>
+  );
+}
+
 function QualTypeRow({ item, canEdit, onSaved, onDeleted }: {
   item: QualificationType; canEdit: boolean; onSaved: (saved: QualificationType) => void; onDeleted: () => void;
 }) {

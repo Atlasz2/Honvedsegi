@@ -41,6 +41,7 @@ type BackendUser = {
   role: User['role'];
   active: boolean;
   department?: string;
+  region?: string;
   last_login?: string | null;
 };
 
@@ -50,6 +51,8 @@ type PersonnelPagedResult = {
   pageSize: number;
   total: number;
   totalPages: number;
+  /** Státusz → létszám a teljes (szűretlen) állományra — a fejléc kártyáihoz. */
+  statusCounts: Record<string, number>;
 };
 
 export type ImportIssue = {
@@ -69,6 +72,8 @@ export type ImportPreviewItem = {
   rawData: Record<string, string>;
   unknownData: Record<string, string>;
   issues: string[];
+  /** Mező → [régi, új] a meglévő rekordhoz képest. */
+  changes?: Record<string, [string, string]>;
 };
 
 export type ImportMissingPerson = {
@@ -93,6 +98,12 @@ export type ImportPreviewResult = {
   /** Csak személyzetnél: a nyilvántartásban vannak, de a fájlból hiányoznak. */
   missingCount: number;
   missing: ImportMissingPerson[];
+  /** „12 új, 3 leszerelt, 5 alegység-váltás" — a hatókörömben. */
+  diff: ImportDiffSummary;
+};
+export type ImportDiffSummary = {
+  new: number; unchanged: number; changed: number; discharged: number; unitChanges: number; statusChanges: number; rankChanges: number; outOfScope: number;
+  byUnit: Record<string, { new: number; changed: number; discharged: number }>;
 };
 
 export type ImportDraftUpdateItem = {
@@ -139,6 +150,7 @@ function toUser(raw: BackendUser): User {
     role: raw.role,
     active: raw.active,
     department: raw.department || '',
+    region: raw.region || '',
     lastLogin: raw.last_login || undefined,
   };
 }
@@ -289,6 +301,15 @@ export const personnel = {
 export type ReferenceData = {
   units: string[];
   personStatuses: string[];
+  /** Státusz → választható jogviszony-altípusok. */
+  serviceTypes: Record<string, string[]>;
+  /** Terület (megye) → zászlóalj(ak). */
+  regions: Record<string, string[]>;
+  /** Megjelenítés: terület-kulcs → „31. TVZ – Veszprém"; "" → ezredtörzs. */
+  regionLabels: Record<string, string>;
+  /** „31 TVZ" → „31. TVZ". */
+  unitLabels: Record<string, string>;
+  regimentUnit: string;
   ranks: { name: string; short: string }[];
 };
 
@@ -340,6 +361,8 @@ export type LocationConflict = {
   eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
+  /** Idegen zászlóalj foglalása: csak „foglalt — 83. TVZ", részletek nélkül. */
+  foreign?: boolean;
   startDate: string;
   endDate: string;
   status: string;
@@ -367,12 +390,25 @@ export function checkPersonConflicts(personnelId: string, startDate: string, end
   if (excludeId) params.set('exclude_id', excludeId);
   return request<PersonConflict[]>(`/conflicts/person?${params.toString()}`);
 }
+export type AssignmentForecast = { assignable: number; busy: number; busyPeople: { personnelId: string; name: string; unit: string; events: string[] }[] };
+/** Már a dátum megadásakor: hányan lesznek foglaltak a hatókörömben az időszak alatt. */
+export function assignmentForecast(startDate: string, endDate: string, excludeType?: string, excludeId?: string): Promise<AssignmentForecast> {
+  const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (excludeType) params.set('exclude_type', excludeType);
+  if (excludeId) params.set('exclude_id', excludeId);
+  return request<AssignmentForecast>(`/conflicts/forecast?${params.toString()}`);
+}
 /** „Átkerül ide": az ütköző műveletekben a részvétel „Visszamondta" lesz, megjegyzéssel. */
 export function movePersonFromConflicts(personnelId: string, fromEvents: { eventType: string; eventId: string }[], targetName: string): Promise<{ moved: { eventType: string; eventId: string; eventName: string }[] }> {
   return request(`/conflicts/person/move`, { method: 'POST', body: JSON.stringify({ personnelId, fromEvents, targetName }) });
 }
 
 export const exercises = createCrud<Exercise>('/exercises');
+export type DutyHandover = { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string };
+/** Szolgálat átadás-átvétel: név + időpont, naplózva. */
+export function dutyHandover(exerciseId: string, action: 'handover' | 'takeover' | 'clear', personName = '', note = ''): Promise<Exercise> {
+  return request<Exercise>(`/exercises/${exerciseId}/handover`, { method: 'POST', body: JSON.stringify({ action, personName, note }) });
+}
 
 export type SeriesMatrix = {
   operations: { id: string; name: string; level: string; source: string; startDate: string }[];
@@ -539,7 +575,7 @@ export const users = {
     const result = await request<BackendUser[]>('/users');
     return result.map(toUser);
   },
-  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string; department?: string }) => {
+  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string; department?: string; region?: string }) => {
     const result = await request<BackendUser>('/users', {
       method: 'POST',
       body: JSON.stringify({
@@ -547,18 +583,20 @@ export const users = {
         password: payload.password,
         display_name: payload.displayName,
         department: payload.department ?? '',
+        region: payload.region ?? '',
         role: payload.role,
         active: payload.active,
       }),
     });
     return toUser(result);
   },
-  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string; department?: string }) => {
+  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string; department?: string; region?: string }) => {
     const result = await request<BackendUser>(`/users/${username}`, {
       method: 'PUT',
       body: JSON.stringify({
         display_name: payload.displayName,
         department: payload.department ?? '',
+        region: payload.region ?? '',
         role: payload.role,
         active: payload.active,
         password: payload.password || null,
@@ -924,13 +962,21 @@ export type AttendanceEventOption = {
   eventId: string;
   name: string;
   participantCount: number;
+  /** Hány résztvevőnek van már rekordja az adott napon (más ügyintéző már rögzíthette). */
+  recordedCount: number;
+  recordedStatuses: Record<string, number>;
 };
 
 export const attendance = {
   getDay: (date: string, unit?: string, includeReserve?: boolean) =>
     request<AttendanceDay>(`/attendance?${attendanceQuery(date, unit, includeReserve)}`),
-  setDay: (date: string, items: AttendanceMark[]) =>
-    request<AttendanceDay>('/attendance', { method: 'PUT', body: JSON.stringify({ date, items }) }),
+  setDay: (date: string, items: AttendanceMark[], overrideReason = '') =>
+    request<AttendanceDay>('/attendance', { method: 'PUT', body: JSON.stringify({ date, items, overrideReason }) }),
+  /** Napi zárás: „Lezárva: Kiss őrm., 08:12". */
+  closeDay: (date: string, note = '', unit = '') =>
+    request<AttendanceDay>('/attendance/close', { method: 'POST', body: JSON.stringify({ date, note, unit }) }),
+  reopenDay: (date: string, reason: string, unit = '') =>
+    request<AttendanceDay>(`/attendance/close?date=${date}&unit=${encodeURIComponent(unit)}&reason=${encodeURIComponent(reason)}`, { method: 'DELETE' }),
   eventsOnDay: (date: string) =>
     request<AttendanceEventOption[]>(`/attendance/events?date=${encodeURIComponent(date)}`),
   fillFromEvent: (date: string, eventType: string, eventId: string, status: AttendanceStatus) =>
@@ -941,7 +987,7 @@ export const attendance = {
     downloadBlob(`/attendance/export.pdf?${attendanceQuery(date, unit, includeReserve)}`, `letszamjelentes-${date}.pdf`),
 };
 
-export type LeaveType = 'Szabadság' | 'Betegszabadság' | 'Kiküldetés' | 'Egyéb';
+export type LeaveType = 'Szabadság' | 'Szolgálatmentesség' | 'Betegszabadság' | 'Kiküldetés' | 'Egyéb';
 export type LeaveStatus = 'Beadva' | 'Jóváhagyva' | 'Elutasítva';
 
 export type LeaveRequest = {
@@ -980,6 +1026,9 @@ export type Booking = {
   eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
+  /** Másik zászlóalj foglalása — csak „foglalt — 83. TVZ". */
+  foreign?: boolean;
+  unit?: string;
   startDate: string;
   endDate: string;
   status: string;
@@ -1044,12 +1093,12 @@ export type OperationNodePayload = {
 
 export type OperationsNow = {
   date: string;
-  running: { id: string; source: 'exercise'; name: string; type: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
-  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise'; operationName: string; isDuty: boolean; startDate: string; endDate: string; participantStatus: string }[];
+  running: { id: string; source: 'exercise'; name: string; type: string; unit: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
+  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise'; operationName: string; isDuty: boolean; operationUnit: string; startDate: string; endDate: string; participantStatus: string }[];
   onTaskPeople: number;
   todayEvents: { id: string; name: string; type: string; startDate: string; endDate: string; location: string; status: string }[];
   /** A következő 7 napban induló műveletek — a sorozat-elemek is. */
-  upcoming: { id: string; source: 'exercise'; name: string; type: string; isDuty: boolean; seriesId: string; startDate: string; endDate: string; location: string }[];
+  upcoming: { id: string; source: 'exercise'; name: string; type: string; unit: string; isDuty: boolean; seriesId: string; startDate: string; endDate: string; location: string }[];
 };
 export const operations = {
   now: () => request<OperationsNow>('/operations/now'),
@@ -1127,7 +1176,9 @@ export type OrderChapter = {
 };
 export type OrderSignature = { role: string; name: string; signed: boolean; signedAt: string; signedBy: string };
 export type Order = {
-  id: string; orderTypeId: string; typeName: string; number: string; issuer: string; subject: string;
+  id: string; orderTypeId: string; typeName: string; unit?: string; number: string; issuer: string; subject: string;
+  /** Módosító parancs: az eredeti; kiadott parancsnál: a rá hivatkozó módosítók; locked: a tartalom befagyott. */
+  amendsOrderId?: string; amendedByIds?: string[]; locked?: boolean;
   personnelId: string; personName: string; status: OrderStatus; dueDate: string; issuedDate: string; notes: string;
   createdBy: string; createdAt: string; doneChapters: number; totalChapters: number;
   pendingResponsibles: string[]; readyToSign: boolean; signedCount: number; isOverdue: boolean;
@@ -1156,13 +1207,16 @@ export const orders = {
   list: (openOnly: boolean) => request<Order[]>(`/orders${openOnly ? '?open_only=true' : ''}`),
   overview: () => request<OrderOverview>('/orders/overview'),
   get: (id: string) => request<Order>(`/orders/${id}`),
-  create: (payload: { orderTypeId: string; subject: string; number?: string; issuer?: string; personnelId?: string; dueDate?: string; notes?: string }) =>
+  create: (payload: { orderTypeId: string; subject: string; unit?: string; number?: string; issuer?: string; personnelId?: string; dueDate?: string; notes?: string }) =>
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
   update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
     request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
   stats: (year?: number) => request<OrderStats>(`/orders/stats${year ? `?year=${year}` : ''}`),
   exportStatsPdf: (year?: number) => downloadBlob(`/orders/stats/export.pdf${year ? `?year=${year}` : ''}`, `parancs-atfutas-${year ?? 'osszes'}.pdf`),
+  /** Módosító parancs egy kiadott parancshoz — az eredeti érintetlen marad. */
+  amend: (id: string, payload: { subject: string; number?: string; dueDate?: string }) =>
+    request<Order>(`/orders/${id}/amend`, { method: 'POST', body: JSON.stringify(payload) }),
   copy: (id: string, payload: { subject: string; personnelId?: string; number?: string; dueDate?: string }) =>
     request<Order>(`/orders/${id}/copy`, { method: 'POST', body: JSON.stringify(payload) }),
   updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>
@@ -1171,6 +1225,8 @@ export const orders = {
     request<Order>(`/orders/${orderId}/chapters`, { method: 'POST', body: JSON.stringify(payload) }),
   removeChapter: (orderId: string, chapterId: string) =>
     request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'DELETE' }),
+  /** Kiadás — kézi, megerősített lépés; csak ha minden aláírás megvan. */
+  issue: (orderId: string) => request<Order>(`/orders/${orderId}/issue`, { method: 'POST' }),
   updateSignatures: (orderId: string, signatures: { role: string; name: string; signed: boolean }[]) =>
     request<Order>(`/orders/${orderId}/signatures`, { method: 'PUT', body: JSON.stringify({ signatures }) }),
   exportDocx: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.docx`, `parancs-${number || orderId.slice(0, 8)}.docx`),
@@ -1210,8 +1266,13 @@ export const basicTrainingImport = {
 
 // ── Teendőim ────────────────────────────────────────────────────────────────
 
+export type DailyDigest = { date: string; scope: string; lines: { kind: 'info' | 'warn' | 'ok' | 'todo'; text: string; to: string | null }[] };
 export type MyTodos = {
   department: string;
+  /** A saját zászlóalj; üres = ezredtörzs. */
+  unit: string;
+  /** Reggeli összefoglaló — a rendszer állítja össze, e-mail nélkül. */
+  digest: DailyDigest;
   /** Mi tartozik hozzám a részleg szerint: chapters | orders | leave | training | operations */
   duties: string[];
   /** Időpont/helyszín módosulások az elmúlt 7 napból — mindenkinek. */

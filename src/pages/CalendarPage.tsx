@@ -8,6 +8,9 @@ import type { AppEvent, Exercise } from "@/lib/types";
 import { isDutyType } from "@/lib/dutyTypes";
 import { PALETTE, buildColorMap, isoDate, monthWeeks, toIso, weekBars, type CalendarItem } from "@/lib/calendarLayout";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/lib/auth";
+import { useReferenceData } from "@/lib/queries";
+import { unitLabelOf } from "@/lib/units";
 import { toast } from "sonner";
 
 const weekdayLabels = ["H", "K", "Sz", "Cs", "P", "Sz", "V"];
@@ -25,6 +28,11 @@ export default function CalendarPage() {
   const [eventsData, setEventsData] = useState<AppEvent[]>([]);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
+  // Ezredtörzs: a zászlóaljak külön naptára is nézhető; a zászlóalj ügyintézője csak a sajátját kapja a szervertől.
+  const { user } = useAuth();
+  const { data: reference } = useReferenceData();
+  const [unitFilter, setUnitFilter] = useState<string>("all");
+  const unitOptions = Object.keys(reference.unitLabels ?? {}).filter((u) => u !== reference.regimentUnit);
 
   const year = monthCursor.getFullYear();
   const monthIndex = monthCursor.getMonth();
@@ -57,6 +65,7 @@ export default function CalendarPage() {
           id: item.id,
           source: duty ? "duty" : "exercise",
           name: item.name,
+          unit: item.unit ?? "",
           kind: item.type || "Gyakorlat",
           dutyType: duty ? item.type : "",
           startDate: item.startDate,
@@ -69,11 +78,12 @@ export default function CalendarPage() {
       });
 
     const eventItems: CalendarItem[] = eventsData
-      .filter((item) => !["Lemondva", "Törölve"].includes(item.status as string))
+      .filter((item) => item.status !== "Lemondva")
       .map((item) => ({
         id: item.id,
         source: "event",
         name: item.name,
+        unit: item.unit ?? "",
         kind: item.type || "Esemény",
         dutyType: "",
         startDate: item.startDate,
@@ -94,8 +104,11 @@ export default function CalendarPage() {
   const monthEnd = weeks[5][6];
 
   const monthItems = useMemo(
-    () => allItems.filter((it) => isoDate(it.startDate) <= monthEnd && isoDate(it.endDate) >= monthStart),
-    [allItems, monthStart, monthEnd],
+    () => allItems.filter((it) =>
+      isoDate(it.startDate) <= monthEnd && isoDate(it.endDate) >= monthStart
+      && (unitFilter === "all" || (unitFilter === "" ? !it.unit : it.unit === unitFilter || !it.unit)),
+    ),
+    [allItems, monthStart, monthEnd, unitFilter],
   );
   const colorOf = useMemo(() => buildColorMap([...new Set(monthItems.map((it) => it.kind))].sort((a, b) => a.localeCompare(b, "hu"))), [monthItems]);
   const legend = useMemo(() => [...colorOf.entries()], [colorOf]);
@@ -128,6 +141,13 @@ export default function CalendarPage() {
           <button onClick={() => setMonthCursor(new Date(year, monthIndex + 1, 1))} className="btn-mil-secondary text-xs">▶</button>
           <button onClick={() => setMonthCursor(new Date())} className="btn-mil-secondary text-xs">Ma</button>
         </div>
+        {!user?.unit && (
+          <select value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)} className="bg-input border border-border px-2 py-1.5 text-xs" style={{ borderRadius: "2px" }} title="Melyik zászlóalj naptára">
+            <option value="all">Minden zászlóalj</option>
+            <option value="">Csak ezredszintű</option>
+            {unitOptions.map((u) => <option key={u} value={u}>{unitLabelOf(u, reference.unitLabels)} (+ ezredszintű)</option>)}
+          </select>
+        )}
         {/* A foglaltság-kereső külön ablakban él: nem vonja el a figyelmet a naptártól. */}
         <button onClick={() => setAvailabilityOpen(true)} className="btn-mil-secondary text-xs flex items-center gap-2" title="Szabad-e a helyszín egy adott időszakban?">
           <CalendarSearch className="w-4 h-4" />
@@ -138,7 +158,7 @@ export default function CalendarPage() {
       {legend.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {legend.map(([kind, cls]) => (
-            <span key={kind} className={`inline-flex items-center px-2 py-0.5 text-[10px] uppercase tracking-military font-mono text-white ${cls}`} style={{ borderRadius: "2px" }}>
+            <span key={kind} className="inline-flex items-center px-2 py-0.5 text-[10px] uppercase tracking-military font-mono text-white/90" style={{ borderRadius: "2px", backgroundColor: cls }}>
               {kind}
             </span>
           ))}
@@ -174,8 +194,10 @@ export default function CalendarPage() {
                     <button
                       key={`${it.source}-${it.id}`}
                       onClick={() => setSelectedItem(it)}
-                      className={`text-left text-[11px] px-1.5 leading-[22px] truncate text-white transition-all hover:brightness-110 ${colorOf.get(it.kind) ?? PALETTE[0]}`}
+                      className="text-left text-[11px] px-1.5 leading-[22px] truncate text-white/95 transition-all hover:brightness-110"
                       style={{
+                        backgroundColor: colorOf.get(it.kind) ?? PALETTE[0],
+                        boxShadow: "inset 3px 0 0 rgba(0,0,0,0.25)",
                         gridColumn: `${bar.startCol + 1} / span ${bar.span}`,
                         gridRow: bar.lane + 1,
                         marginLeft: bar.continuesLeft ? 0 : 4,
@@ -209,7 +231,7 @@ export default function CalendarPage() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span>
-                <p className={`inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 text-white ${colorOf.get(selectedItem.kind) ?? PALETTE[0]}`} style={{ borderRadius: "2px" }}>
+                <p className="inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 text-white/90" style={{ borderRadius: "2px", backgroundColor: colorOf.get(selectedItem.kind) ?? PALETTE[0] }}>
                   {selectedItem.kind}
                 </p>
               </div>

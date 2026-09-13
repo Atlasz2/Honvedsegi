@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 
 from ..audit import record_activity
 from ..constants import ORDER_DEFAULT_ISSUER, ORDER_RESPONSIBLES
+from ..core.scope import assert_owned_in_scope, scoped_owned, scoped_persons, unit_for_write
 from ..core.dependencies import DB, Editor, Reader
 from ..core.time import utc_now
 from ..models import OrderChapterModel, OrderModel, OrderTypeModel, PersonModel, new_id
@@ -180,13 +181,24 @@ def _serialize_chapter(ch: OrderChapterModel) -> OrderChapterRead:
     )
 
 
-def _serialize_order(order: OrderModel, chapters: list[OrderChapterModel], today: str, with_chapters: bool) -> OrderRead:
+_LOCKED_STATUSES = ("Kiadva", "Visszavonva")
+
+
+def _assert_unlocked(order: OrderModel) -> None:
+    """Kiadott parancs befagy: a fejezet, az aláírás, a tárgy nem változhat.
+    Változtatni módosító paranccsal lehet (/amend) — ez a jogi nyom."""
+    if order.status in _LOCKED_STATUSES:
+        raise HTTPException(status_code=409, detail=f"A parancs {order.status.lower()} — a tartalma befagyott. Változtatás csak módosító paranccsal.")
+
+
+def _serialize_order(order: OrderModel, chapters: list[OrderChapterModel], today: str, with_chapters: bool, amended_by: list[str] | None = None) -> OrderRead:
     done = sum(1 for ch in chapters if ch.status in _CHAPTER_DONE)
     is_open = order.status in _OPEN_ORDER_STATUSES
     pending = _pending_responsibles(chapters) if is_open else []
     signatures = _signatures(order)
     return OrderRead(
-        id=order.id, orderTypeId=order.order_type_id, typeName=order.type_name,
+        id=order.id, orderTypeId=order.order_type_id, typeName=order.type_name, unit=order.unit or "",
+        amendsOrderId=order.amends_order_id or "", amendedByIds=amended_by or [], locked=order.status in _LOCKED_STATUSES,
         number=order.number or "", issuer=order.issuer or "", subject=order.subject,
         personnelId=order.personnel_id, personName=order.person_name, status=order.status,
         dueDate=order.due_date, issuedDate=order.issued_date or "", notes=order.notes,
@@ -226,23 +238,21 @@ def _placeholder_values(order: OrderModel, person: PersonModel | None) -> dict[s
 
 
 def _advance_status(order: OrderModel, chapters: list[OrderChapterModel]) -> None:
-    """Automatikus lépések: minden kötelező fejezet kész → Aláírásra vár;
-    minden aláírás megvan → Kiadva. Visszalépést nem csinál (az kézi döntés)."""
+    """Automatikus lépés: minden kötelező fejezet kész → Aláírásra vár.
+    A KIADÁS nem automatikus: ha minden aláírás megvan, az ügyintéző külön,
+    megerősítéssel adja ki (/issue) — a kiadás jogi tény, nem egy pipa mellékhatása.
+    Visszalépést nem csinál (az kézi döntés)."""
     pending = _pending_responsibles(chapters)
     if order.status == "Előkészítés" and chapters and not pending:
         order.status = "Aláírásra vár"
     # Visszanyitott fejezet aláírás előtt: vissza előkészítésbe (aláírt parancsot nem bántunk).
     if order.status == "Aláírásra vár" and pending and not any(s.get("signed") for s in (order.signatures or [])):
         order.status = "Előkészítés"
-    signatures = order.signatures or []
-    if order.status == "Aláírásra vár" and signatures and all(s.get("signed") for s in signatures):
-        order.status = "Kiadva"
-        order.issued_date = order.issued_date or date.today().isoformat()
 
 
 @router.get("", response_model=list[OrderRead])
-def list_orders(db: DB, _: Reader, status_filter: str = Query("", alias="status"), open_only: bool = False):
-    query = select(OrderModel)
+def list_orders(db: DB, user: Reader, status_filter: str = Query("", alias="status"), open_only: bool = False):
+    query = scoped_owned(select(OrderModel), OrderModel, user)
     if status_filter:
         query = query.where(OrderModel.status == status_filter)
     elif open_only:
@@ -302,6 +312,7 @@ def create_order(payload: OrderCreate, db: DB, user: Editor):
 
     order = OrderModel(
         id=new_id(), order_type_id=order_type.id, type_name=order_type.name, subject=subject,
+        unit=unit_for_write(user, payload.unit),
         number=payload.number.strip(), issuer=payload.issuer.strip() or ORDER_DEFAULT_ISSUER,
         personnel_id=payload.personnelId, person_name=person.name if person else "",
         due_date=payload.dueDate, notes=payload.notes, created_by=user.username,
@@ -323,10 +334,12 @@ def create_order(payload: OrderCreate, db: DB, user: Editor):
     return _serialize_order(order, _chapters_of(db, order.id), date.today().isoformat(), with_chapters=True)
 
 
-def _require_order(db, order_id: str) -> OrderModel:
+def _require_order(db, order_id: str, user=None) -> OrderModel:
     order = db.get(OrderModel, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="A parancs nem található")
+    if user is not None:
+        assert_owned_in_scope(user, order, "A parancs")
     return order
 
 
@@ -335,7 +348,7 @@ def copy_order(order_id: str, payload: OrderCopy, db: DB, user: Editor):
     """Új parancs egy meglévőből: ugyanaz a típus és fejezet-szerkezet, a
     szövegben az eredeti személy neve/rendfokozata/SZTSZ-e az újéra cserélve.
     Ma ezt csinálják kézzel egy régi parancs átformálásával."""
-    source = _require_order(db, order_id)
+    source = _require_order(db, order_id, user)
     subject = payload.subject.strip()
     if not subject:
         raise HTTPException(status_code=400, detail="A tárgy kötelező")
@@ -482,18 +495,31 @@ def order_stats_pdf(db: DB, _: Reader, year: int | None = Query(None, ge=2000, l
 
 
 @router.get("/{order_id}", response_model=OrderRead)
-def get_order(order_id: str, db: DB, _: Reader):
-    order = _require_order(db, order_id)
-    return _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
+def get_order(order_id: str, db: DB, user: Reader):
+    order = _require_order(db, order_id, user)
+    amended_by = list(db.scalars(select(OrderModel.id).where(OrderModel.amends_order_id == order_id)).all())
+    return _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True, amended_by=amended_by)
 
 
 @router.put("/{order_id}", response_model=OrderRead)
 def update_order(order_id: str, payload: OrderUpdate, db: DB, user: Editor):
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
     subject = payload.subject.strip()
     if not subject:
         raise HTTPException(status_code=400, detail="A tárgy kötelező")
     before = _order_snapshot(order)
+    if order.status in _LOCKED_STATUSES:
+        # Befagyott parancs: csak visszavonás és jegyzet — minden más módosító paranccsal.
+        allowed = payload.status in _LOCKED_STATUSES and subject == order.subject and payload.number.strip() == (order.number or "") \
+            and payload.dueDate == order.due_date and payload.issuedDate == order.issued_date
+        if not allowed:
+            _assert_unlocked(order)
+        order.status = payload.status
+        order.notes = payload.notes
+        record_activity(db, user, mode="update", module=MODULE, record_name=subject, entity="order",
+                        before=before, after=_order_snapshot(order))
+        db.commit()
+        return _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
     order.subject = subject
     order.status = payload.status
     order.number = payload.number.strip()
@@ -509,7 +535,7 @@ def update_order(order_id: str, payload: OrderUpdate, db: DB, user: Editor):
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_order(order_id: str, db: DB, user: Editor):
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
     record_activity(db, user, mode="delete", module=MODULE, record_name=order.subject, entity="order",
                     before=_order_snapshot(order))
     for ch in _chapters_of(db, order_id):
@@ -520,7 +546,8 @@ def delete_order(order_id: str, db: DB, user: Editor):
 
 @router.put("/{order_id}/chapters/{chapter_id}", response_model=OrderRead)
 def update_chapter(order_id: str, chapter_id: str, payload: OrderChapterUpdate, db: DB, user: Editor):
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
+    _assert_unlocked(order)
     chapter = db.get(OrderChapterModel, chapter_id)
     if not chapter or chapter.order_id != order_id:
         raise HTTPException(status_code=404, detail="A fejezet nem található")
@@ -547,7 +574,8 @@ def update_chapter(order_id: str, chapter_id: str, payload: OrderChapterUpdate, 
 @router.post("/{order_id}/chapters", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 def add_chapter(order_id: str, payload: OrderChapterTemplate, db: DB, user: Editor):
     """Fejezet felvétele egy meglévő parancsra (a típus pillanatképén túl)."""
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
+    _assert_unlocked(order)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="A fejezet neve nem lehet üres")
@@ -574,7 +602,8 @@ def add_chapter(order_id: str, payload: OrderChapterTemplate, db: DB, user: Edit
 def delete_chapter(order_id: str, chapter_id: str, db: DB, user: Editor):
     """Fejezet törlése a parancsról. Elfogadott (Kész) fejezetet nem törlünk —
     előbb vissza kell nyitni, hogy ne tűnjön el kész munka egy kattintásra."""
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
+    _assert_unlocked(order)
     chapter = db.get(OrderChapterModel, chapter_id)
     if not chapter or chapter.order_id != order_id:
         raise HTTPException(status_code=404, detail="A fejezet nem található")
@@ -596,7 +625,8 @@ def delete_chapter(order_id: str, chapter_id: str, db: DB, user: Editor):
 def update_signatures(order_id: str, payload: OrderSignaturesUpdate, db: DB, user: Editor):
     """Az aláírók neve és az aláírás ténye. Az újonnan aláírt tételre a rendszer
     rögzíti, ki és mikor jelölte be — ez a nyoma annak, hogy ki adta ki."""
-    order = _require_order(db, order_id)
+    order = _require_order(db, order_id, user)
+    _assert_unlocked(order)
     # Pozíció szerint párosítunk (a szerep átnevezhető, és ugyanaz a szerep többször is szerepelhet).
     previous = list(order.signatures or [])
     now = utc_now().isoformat(timespec="seconds")
@@ -620,9 +650,62 @@ def update_signatures(order_id: str, payload: OrderSignaturesUpdate, db: DB, use
     return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
 
 
+@router.post("/{order_id}/issue", response_model=OrderRead)
+def issue_order(order_id: str, db: DB, user: Editor):
+    """Kiadás — kézi, megerősített lépés. Feltétel: minden aláírás megvan."""
+    order = _require_order(db, order_id, user)
+    signatures = order.signatures or []
+    if order.status == "Kiadva":
+        raise HTTPException(status_code=400, detail="A parancs már ki van adva")
+    if order.status == "Visszavonva":
+        raise HTTPException(status_code=400, detail="Visszavont parancs nem adható ki")
+    chapters = _chapters_of(db, order_id)
+    if _pending_responsibles(chapters):
+        raise HTTPException(status_code=400, detail="Nem minden kötelező fejezet elfogadott")
+    if not signatures or not all(s.get("signed") for s in signatures):
+        raise HTTPException(status_code=400, detail="Kiadáshoz minden aláírás kell")
+    before = _order_snapshot(order)
+    order.status = "Kiadva"
+    order.issued_date = order.issued_date or date.today().isoformat()
+    record_activity(db, user, mode="update", module=MODULE, record_name=order.subject, entity="order",
+                    before=before, after=_order_snapshot(order))
+    db.commit()
+    return _serialize_order(order, chapters, date.today().isoformat(), with_chapters=True)
+
+
+@router.post("/{order_id}/amend", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
+def amend_order(order_id: str, payload: OrderCopy, db: DB, user: Editor):
+    """Módosító parancs egy KIADOTT parancshoz: új parancs ugyanazzal a
+    fejezet-szerkezettel és szöveggel (szerkeszthető), az eredetire
+    hivatkozva. Az eredeti érintetlen marad — a PDF-je a kiadáskori állapot."""
+    source = _require_order(db, order_id, user)
+    if source.status != "Kiadva":
+        raise HTTPException(status_code=400, detail="Módosító parancs csak kiadott parancshoz készíthető")
+    subject = payload.subject.strip() or f"Módosítás: {source.subject}"
+    order = OrderModel(
+        id=new_id(), order_type_id=source.order_type_id, type_name=source.type_name, subject=subject,
+        unit=source.unit or "", amends_order_id=source.id,
+        number=payload.number.strip(), issuer=source.issuer,
+        personnel_id=source.personnel_id, person_name=source.person_name,
+        due_date=payload.dueDate, notes=f"Módosítja: {source.number or source.subject} (kiadva: {source.issued_date or '—'})", created_by=user.username,
+        signatures=[{"role": s.get("role", ""), "name": s.get("name", ""), "signed": False, "signedAt": "", "signedBy": ""} for s in (source.signatures or [])],
+    )
+    db.add(order)
+    for ch in _chapters_of(db, order_id):
+        db.add(OrderChapterModel(
+            id=new_id(), order_id=order.id, position=ch.position, name=ch.name,
+            responsible=ch.responsible, required=ch.required, content=ch.content or "",
+        ))
+    db.flush()
+    record_activity(db, user, mode="create", module=MODULE, record_name=subject, entity="order",
+                    after={**_order_snapshot(order), "amends": source.subject})
+    db.commit()
+    return _serialize_order(order, _chapters_of(db, order.id), date.today().isoformat(), with_chapters=True)
+
+
 @router.get("/{order_id}/export.docx")
-def export_docx(order_id: str, db: DB, _: Reader):
-    order = _require_order(db, order_id)
+def export_docx(order_id: str, db: DB, user: Reader):
+    order = _require_order(db, order_id, user)
     plan = _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
     return Response(
         content=build_docx(plan), media_type=_DOCX_MEDIA,
@@ -631,8 +714,8 @@ def export_docx(order_id: str, db: DB, _: Reader):
 
 
 @router.get("/{order_id}/export.pdf")
-def export_pdf(order_id: str, db: DB, _: Reader):
-    order = _require_order(db, order_id)
+def export_pdf(order_id: str, db: DB, user: Reader):
+    order = _require_order(db, order_id, user)
     plan = _serialize_order(order, _chapters_of(db, order_id), date.today().isoformat(), with_chapters=True)
     return Response(
         content=build_pdf(plan), media_type="application/pdf",

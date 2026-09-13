@@ -207,7 +207,7 @@ def _operation_upload_dir(operation_id: str) -> Path:
     return target
 
 
-def operations_now_data(db: Session) -> dict[str, Any]:
+def operations_now_data(db: Session, user=None) -> dict[str, Any]:
     """Futó (ma zajló, nem lemondott) műveletek a beosztottakkal, a mai események,
     és a következő 7 napban INDULÓ műveletek (a sorozat-elemek is)."""
     from datetime import timedelta
@@ -215,17 +215,22 @@ def operations_now_data(db: Session) -> dict[str, Any]:
     from ..constants import DUTY_EXERCISE_TYPES
     from ..models import ParticipantModel, PersonModel
 
+    from ..core.scope import scoped_owned
+
+    def scoped(query, model):
+        return scoped_owned(query, model, user) if user is not None else query
+
     today_date = utc_now().date()
     today = today_date.isoformat()
     week_end = (today_date + timedelta(days=7)).isoformat()
     running: list[dict[str, Any]] = []
     for source, model in (("exercise", ExerciseModel),):
         for item in db.scalars(
-            select(model).where(model.status != "Lemondva", model.start_date <= today + "T23:59", model.end_date >= today)
+            scoped(select(model).where(model.status != "Lemondva", model.start_date <= today + "T23:59", model.end_date >= today), model)
             .order_by(model.start_date)
         ).all():
             running.append({
-                "id": item.id, "source": source, "name": item.name, "type": item.type,
+                "id": item.id, "source": source, "name": item.name, "type": item.type, "unit": item.unit or "",
                 "isDuty": item.type in DUTY_EXERCISE_TYPES,
                 "startDate": item.start_date, "endDate": item.end_date, "location": item.location or "",
                 "assignedCount": 0,
@@ -253,7 +258,7 @@ def operations_now_data(db: Session) -> dict[str, Any]:
                 "personnelId": part.personnel_id, "name": part.person_name or (person.name if person else "?"),
                 "rank": person.rank if person else part.rank, "unit": person.unit if person else "",
                 "personStatus": person.status if person else "",
-                "operationId": op["id"], "source": op["source"], "operationName": op["name"], "isDuty": op["isDuty"],
+                "operationId": op["id"], "source": op["source"], "operationName": op["name"], "isDuty": op["isDuty"], "operationUnit": op["unit"],
                 "startDate": op["startDate"], "endDate": op["endDate"], "participantStatus": part.status,
             })
     on_task.sort(key=lambda x: (x["unit"], x["name"].lower()))
@@ -262,20 +267,20 @@ def operations_now_data(db: Session) -> dict[str, Any]:
         {"id": e.id, "name": e.name, "type": e.type, "startDate": e.start_date, "endDate": e.end_date,
          "location": e.location or "", "status": e.status}
         for e in db.scalars(
-            visible_events().where(EventModel.status.notin_(("Törölve", "Lemondva")), EventModel.start_date <= today + "T23:59", EventModel.end_date >= today)
+            scoped(visible_events().where(EventModel.status.notin_(("Törölve", "Lemondva")), EventModel.start_date <= today + "T23:59", EventModel.end_date >= today), EventModel)
             .order_by(EventModel.start_date)
         ).all()
     ]
     upcoming = [
-        {"id": item.id, "source": "exercise", "name": item.name, "type": item.type,
+        {"id": item.id, "source": "exercise", "name": item.name, "type": item.type, "unit": item.unit or "",
          "isDuty": item.type in DUTY_EXERCISE_TYPES, "seriesId": item.series_id or "",
          "startDate": item.start_date, "endDate": item.end_date, "location": item.location or ""}
         for item in db.scalars(
-            select(ExerciseModel).where(
+            scoped(select(ExerciseModel).where(
                 ExerciseModel.status != "Lemondva",
                 ExerciseModel.start_date > today + "T23:59",
                 ExerciseModel.start_date <= week_end + "T23:59",
-            ).order_by(ExerciseModel.start_date, ExerciseModel.name)
+            ), ExerciseModel).order_by(ExerciseModel.start_date, ExerciseModel.name)
         ).all()
     ]
     return {
@@ -285,15 +290,20 @@ def operations_now_data(db: Session) -> dict[str, Any]:
     }
 
 
-def list_operations_data(db: Session) -> list[OperationRead]:
+def list_operations_data(db: Session, user=None) -> list[OperationRead]:
     """Gyakorlatok és kiképzések egy listában, művelet-nézethez.
 
     A beosztás a participants táblából jön (a migráció óta az az igazságforrás,
     nem a régi JSON-oszlop), eseménytípusonként EGY lekérdezéssel — így a lista
     nem indít résztvevő-lekérdezést elemenként."""
+    from ..core.scope import scoped_owned
+
     sync_temporal_statuses(db)
 
-    exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
+    query = select(ExerciseModel)
+    if user is not None:
+        query = scoped_owned(query, ExerciseModel, user)
+    exercises = db.scalars(query.order_by(ExerciseModel.start_date)).all()
     participants_by_exercise = load_participants_by_event(db, "exercise")
 
     ops: list[OperationRead] = []
@@ -362,8 +372,13 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
     }
 
 
-def get_operations_tree_data(db: Session) -> list[OperationTreeNode]:
-    events = db.scalars(visible_events().order_by(EventModel.start_date, EventModel.name)).all()
+def get_operations_tree_data(db: Session, user=None) -> list[OperationTreeNode]:
+    from ..core.scope import scoped_owned
+
+    query = visible_events()
+    if user is not None:
+        query = scoped_owned(query, EventModel, user)
+    events = db.scalars(query.order_by(EventModel.start_date, EventModel.name)).all()
     node_map = {item.id: _event_to_tree_node(item) for item in events}
 
     roots: list[OperationTreeNode] = []

@@ -23,6 +23,32 @@ IMPORT_MISSING_LIST_LIMIT = 200
 
 UNITS: tuple[str, ...] = ("31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs")
 
+# Területek (megyék) → a hozzájuk tartozó zászlóalj(ak). A felhasználó területe
+# szűkíti, kinek az adatát látja; az ezredtörzs (Győr) mindent lát (üres terület).
+# A megye ↔ zászlóalj párosítás a demó-adatra épül — az éles állomány-exportból
+# derül ki a végleges; itt egy helyen kell átírni.
+REGIONS: dict[str, tuple[str, ...]] = {
+    "Veszprém": ("31 TVZ",),
+    "Vas": ("83 TVZ",),
+    "Győr-Moson-Sopron": ("19 TVZ",),
+}
+EZREDTORZS_UNIT = "Ezredtörzs"
+
+
+def unit_label(unit: str) -> str:
+    """„31 TVZ" → „31. TVZ" — a szám is fontos, így írják."""
+    value = (unit or "").strip()
+    m = __import__("re").match(r"^(\d+)\s*(.*)$", value)
+    return f"{m.group(1)}. {m.group(2)}".strip() if m else value
+
+
+def region_label(region: str) -> str:
+    """Terület megjelenítése: „31. TVZ – Veszprém"; üres → „Ezredtörzs (Győr)"."""
+    units = REGIONS.get(region or "")
+    if not units:
+        return "Ezredtörzs (Győr)"
+    return f"{unit_label(units[0])} – {region}"
+
 PERSON_STATUSES: tuple[str, ...] = ("Aktív", "Tartalékos", "Szabadságon", "Leszerelt")
 
 # Jogviszony altípusa a státuszon belül. Az aktív (szerződéses/hivatásos)

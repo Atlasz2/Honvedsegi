@@ -15,7 +15,27 @@ import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
 import { Check, Plus, Search, Trash2, X, Palmtree } from 'lucide-react';
 
-const TYPE_OPTIONS: LeaveType[] = ['Szabadság', 'Betegszabadság', 'Kiküldetés', 'Egyéb'];
+const TYPE_OPTIONS: LeaveType[] = ['Szabadság', 'Szolgálatmentesség', 'Betegszabadság', 'Kiküldetés', 'Egyéb'];
+const PERMANENT_RESERVE = 'Állandó behívásos';
+
+/** Ki mit vehet ki — ugyanaz a szabály, mint a szerveren (ott a végső szó). */
+function allowedTypes(person: { status: Person['status']; serviceType?: string } | null): LeaveType[] {
+  if (!person) return TYPE_OPTIONS;
+  const active = person.status === 'Aktív' || person.status === 'Szabadságon';
+  const permanentReserve = person.status === 'Tartalékos' && person.serviceType === PERMANENT_RESERVE;
+  return TYPE_OPTIONS.filter((t) => (t === 'Szabadság' ? active : t === 'Szolgálatmentesség' ? permanentReserve : true));
+}
+
+function leaveHint(person: { status: Person['status']; serviceType?: string } | null): string {
+  if (!person) return '';
+  if (person.status === 'Tartalékos') {
+    return person.serviceType === PERMANENT_RESERVE
+      ? 'Állandó behívásos tartalékos: szabadság helyett szolgálatmentesség.'
+      : 'Tartalékos: nem vehet ki szabadságot (betegszabadság, kiküldetés, egyéb rögzíthető).';
+  }
+  if (person.status === 'Leszerelt') return 'Leszerelt személynek nem rögzíthető távollét.';
+  return `Aktív (${person.serviceType || 'szerződéses/hivatásos'}): szabadság kivehető.`;
+}
 const STATUS_FILTERS = ['Összes', 'Beadva', 'Jóváhagyva', 'Elutasítva'] as const;
 
 const statusClass: Record<LeaveStatus, string> = {
@@ -40,7 +60,7 @@ export default function Leave() {
   const [creating, setCreating] = useState(false);
   const [personSearch, setPersonSearch] = useState('');
   const [matches, setMatches] = useState<Person[]>([]);
-  const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  const [selected, setSelected] = useState<{ id: string; name: string; status: Person['status']; serviceType?: string } | null>(null);
   const [type, setType] = useState<LeaveType>('Szabadság');
   const [startDate, setStartDate] = useState(today());
   const [endDate, setEndDate] = useState(today());
@@ -183,7 +203,7 @@ export default function Leave() {
                   {matches.map(p => (
                     <button
                       key={p.id}
-                      onClick={() => { setSelected({ id: p.id, name: p.name }); setPersonSearch(''); setMatches([]); }}
+                      onClick={() => { setSelected({ id: p.id, name: p.name, status: p.status, serviceType: p.serviceType }); setPersonSearch(''); setMatches([]); const ok = allowedTypes(p); if (!ok.includes(type)) setType(ok[0] ?? 'Egyéb'); }}
                       className="w-full text-left px-3 py-1.5 text-sm hover:bg-secondary"
                     >
                       <span className="text-foreground">{p.name}</span>
@@ -202,8 +222,9 @@ export default function Leave() {
                 className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary"
                 style={{ borderRadius: '2px' }}
               >
-                {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                {allowedTypes(selected).map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              {selected && <p className="text-[11px] text-muted-foreground mt-1">{leaveHint(selected)}</p>}
             </div>
 
             <div>

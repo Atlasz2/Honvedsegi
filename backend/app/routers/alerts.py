@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from ..basic_training import completion_map
+from ..core.scope import scoped_owned, scoped_persons
 from ..settings_store import get_custom_rules, get_int, is_enabled
 from ..core.dependencies import DB, Reader
 from ..models import (
@@ -36,7 +37,7 @@ _APPROVED = "Jóváhagyva"
 
 
 @router.get("/unexcused")
-def unexcused_absences(db: DB, _: Reader, days: int = Query(30, ge=1, le=365)):
+def unexcused_absences(db: DB, user: Reader, days: int = Query(30, ge=1, le=365)):
     """Igazolatlan távollétek az elmúlt N napból."""
     since = (date.today() - timedelta(days=days)).isoformat()
     records = db.scalars(
@@ -45,7 +46,7 @@ def unexcused_absences(db: DB, _: Reader, days: int = Query(30, ge=1, le=365)):
             AttendanceModel.date >= since,
         )
     ).all()
-    persons = {p.id: p for p in db.scalars(select(PersonModel)).all()}
+    persons = {p.id: p for p in db.scalars(scoped_persons(select(PersonModel), user)).all()}
 
     result = []
     for record in records:
@@ -63,7 +64,7 @@ def unexcused_absences(db: DB, _: Reader, days: int = Query(30, ge=1, le=365)):
 
 
 @router.get("/readiness-gaps")
-def readiness_gaps(db: DB, _: Reader):
+def readiness_gaps(db: DB, user: Reader):
     """Aktív állomány, akinek NINCS érvényes (nem lejárt) képesítése."""
     today = date.today().isoformat()
     valid_holders: set[str] = set()
@@ -75,7 +76,7 @@ def readiness_gaps(db: DB, _: Reader):
             continue
         valid_holders.add(personnel_id)
 
-    persons = db.scalars(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS)).all()
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS), user)).all()
     gaps = [
         {"personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit}
         for p in persons if p.id not in valid_holders
@@ -99,7 +100,7 @@ def _workdays_between(start: date, end: date) -> int:
 @router.get("/leave-minimum")
 def leave_minimum(
     db: DB,
-    _: Reader,
+    user: Reader,
     year: int | None = Query(None, ge=2000, le=2100),
     min_days: int | None = Query(None, ge=1, le=366),
 ):
@@ -125,7 +126,7 @@ def leave_minimum(
         end = min(date.fromisoformat(leave.end_date), year_end)
         taken[leave.personnel_id] += _workdays_between(start, end)
 
-    persons = db.scalars(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS)).all()
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS), user)).all()
     result = [
         {
             "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
@@ -157,7 +158,7 @@ def _overlap_days(start: str, end: str, year_start: date, year_end: date) -> int
 @router.get("/service-minimum")
 def service_minimum(
     db: DB,
-    _: Reader,
+    user: Reader,
     year: int | None = Query(None, ge=2000, le=2100),
     min_days: int | None = Query(None, ge=1, le=366),
 ):
@@ -195,7 +196,7 @@ def service_minimum(
             if span:
                 served[personnel_id] += _overlap_days(span[0], span[1], year_start, year_end)
 
-    persons = db.scalars(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS)).all()
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS), user)).all()
     result = [
         {
             "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
@@ -210,7 +211,7 @@ def service_minimum(
 @router.get("/basic-training")
 def basic_training_deadline(
     db: DB,
-    _: Reader,
+    user: Reader,
     deadline_days: int | None = Query(None, ge=1, le=3650),
 ):
     """Tartalékosok, akiknek nincs meg az alapkiképzése. A határidő a jogviszony
@@ -231,7 +232,7 @@ def basic_training_deadline(
 
     today = date.today()
     items = []
-    for p in db.scalars(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS)).all():
+    for p in db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS), user)).all():
         done = completed.get(p.id, set())
         if p.id in has_summary or len(done) >= len(module_ids):
             continue
@@ -261,7 +262,7 @@ def basic_training_deadline(
 
 
 @router.get("/order-deadlines")
-def order_deadlines(db: DB, _: Reader, warn_days: int | None = Query(None, ge=0, le=365)):
+def order_deadlines(db: DB, user: Reader, warn_days: int | None = Query(None, ge=0, le=365)):
     """Nyitott parancsok lejárt vagy hamarosan lejáró határidői: a parancs
     egésze és az el nem készült fejezetek, felelős részleggel. A vezető és a
     részleg is ebből látja, mi csúszik."""
@@ -272,7 +273,7 @@ def order_deadlines(db: DB, _: Reader, warn_days: int | None = Query(None, ge=0,
         return {"warnDays": warn_days, "orders": [], "chapters": []}
     today = date.today()
     horizon = (today + timedelta(days=warn_days)).isoformat()
-    open_orders = db.scalars(select(OrderModel).where(OrderModel.status.in_(("Előkészítés", "Aláírásra vár")))).all()
+    open_orders = db.scalars(scoped_owned(select(OrderModel).where(OrderModel.status.in_(("Előkészítés", "Aláírásra vár"))), OrderModel, user)).all()
     by_id = {o.id: o for o in open_orders}
     items = []
 
@@ -326,14 +327,14 @@ def _person_field(person: PersonModel, field: str) -> str:
 
 
 @router.get("/custom")
-def custom_rule_alerts(db: DB, _: Reader):
+def custom_rule_alerts(db: DB, user: Reader):
     """Az admin által felvett szabályok: egy személy-dátummező (+ érvényesség
     napban) lejárata a beállított napon belül van, vagy már lejárt."""
     rules = [r for r in get_custom_rules(db) if r["enabled"]]
     if not rules:
         return {"rules": [], "items": []}
     today = date.today()
-    persons = db.scalars(select(PersonModel).where(PersonModel.status != "Leszerelt")).all()
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status != "Leszerelt"), user)).all()
     items: list[dict] = []
     for rule in rules:
         for person in persons:

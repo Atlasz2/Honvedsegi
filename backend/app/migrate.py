@@ -404,8 +404,8 @@ def _migrate_duties_into_exercises(db: Session) -> None:
         people += [a for a in assigned if isinstance(a, dict) and a.get("personId")]
         status = "Lemondva" if dstatus == "Lemondva" else derive_temporal_status(start or "", end or "")
         db.execute(text(
-            "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, max_personnel, description, status, qualification_id, series_id, level, assigned) "
-            "VALUES (:id, :name, :type, :start, :end, :location, '', :maxp, :desc, :status, '', '', '', '[]')"
+            "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, unit, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+            "VALUES (:id, :name, :type, :start, :end, :location, '', '', :maxp, :desc, :status, '', '', '', '[]')"
         ), {
             "id": duty_id, "name": f"{dtype} – {location}".strip(" –") if location else dtype, "type": dtype,
             "start": start or "", "end": end or start or "", "location": location or "",
@@ -451,6 +451,18 @@ def _mark_shadow_events(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _migrate_event_cancelled_status(db: Session) -> None:
+    """Az esemény „Törölve" státusza is „Lemondva" — egy szó a teljes rendszerben."""
+    key = "v7_event_cancelled_lemondva"
+    if _migration_done(db, key):
+        return
+    result = db.execute(text("UPDATE events SET status = 'Lemondva' WHERE status = 'Törölve'"))
+    if result.rowcount:
+        log.info("events: %d Törölve → Lemondva", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
 def _migrate_trainings_into_exercises(db: Session) -> None:
     """A kiképzés is művelet (döntés: 2026-09-13). Minden trainings-sor gyakorlat
     lesz ugyanazzal az azonosítóval (a szervező mező átmegy), a résztvevők,
@@ -464,12 +476,14 @@ def _migrate_trainings_into_exercises(db: Session) -> None:
     ex_cols = {r[1] for r in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
     if "organizer" not in ex_cols:
         db.execute(text("ALTER TABLE exercises ADD COLUMN organizer TEXT DEFAULT ''"))
+    if "unit" not in ex_cols:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN unit TEXT DEFAULT ''"))
     tr_cols = {r[1] for r in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
     def col(name, default="''"):
         return name if name in tr_cols else default
     moved = db.execute(text(
-        "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, max_personnel, description, status, qualification_id, series_id, level, assigned) "
-        f"SELECT id, name, type, start_date, end_date, COALESCE(location,''), COALESCE({col('organizer')},''), COALESCE(max_personnel,0), COALESCE(description,''), "
+        "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, unit, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+        f"SELECT id, name, type, start_date, end_date, COALESCE(location,''), COALESCE({col('organizer')},''), '', COALESCE(max_personnel,0), COALESCE(description,''), "
         f"CASE WHEN status='Törölve' THEN 'Lemondva' ELSE COALESCE(status,'Tervezett') END, COALESCE({col('qualification_id')},''), COALESCE({col('series_id')},''), COALESCE({col('level')},''), COALESCE(assigned,'[]') "
         "FROM trainings WHERE id NOT IN (SELECT id FROM exercises)"
     )).rowcount
@@ -498,3 +512,4 @@ def run_all(db: Session) -> None:
     _migrate_duties_into_exercises(db)
     _mark_shadow_events(db)
     _migrate_trainings_into_exercises(db)
+    _migrate_event_cancelled_status(db)

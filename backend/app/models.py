@@ -31,6 +31,9 @@ class UserModel(Base):
     # Részleg (Jog, Személyügy, …): a Teendőim oldal ebből tudja, mely
     # parancs-fejezetek az övéi. Üres = nincs részleg-specifikus teendő.
     department: Mapped[str] = mapped_column(String, default="")
+    # Terület (megye, constants.REGIONS kulcs): melyik zászlóalj állományát látja.
+    # Üres = ezredtörzs / minden.
+    region: Mapped[str] = mapped_column(String, default="")
     protected: Mapped[bool] = mapped_column(Boolean, default=False)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
@@ -97,6 +100,20 @@ class AttendanceModel(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class AttendanceClosureModel(Base):
+    """A napi létszámjelentés lezárása zászlóaljanként: „Lezárva: Kiss őrm., 08:12".
+    Utána csak indoklással módosítható; az ezredtörzs látja, ki zárt már le."""
+    __tablename__ = "attendance_closures"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    date: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)   # "" = ezredszint (minden)
+    closed_by: Mapped[str] = mapped_column(String, default="")
+    closed_by_name: Mapped[str] = mapped_column(String, default="")
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    note: Mapped[str] = mapped_column(Text, default="")
+
+
 class LeaveRequestModel(Base):
     """Szabadság / távollét kérelem, jóváhagyási folyamattal.
 
@@ -140,6 +157,7 @@ class EventModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     event_type: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
     type: Mapped[str] = mapped_column(String)
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
@@ -171,6 +189,10 @@ class ExerciseModel(Base):
     location: Mapped[str] = mapped_column(String, default="")
     # A kiképzés beolvadt a műveletbe: a „szervező" mezője ide került.
     organizer: Mapped[str] = mapped_column(String, default="")
+    # Melyik zászlóaljé (constants.UNITS); üres = ezredszintű, mindenki látja.
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    # Szolgálat-típusú műveletnél: átadás-átvétel {handedOverBy, handedOverAt, takenOverBy, takenOverAt, note}
+    handover: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
@@ -301,6 +323,8 @@ class AnnouncementModel(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String, index=True)
+    # Üres = ezredszintű közlemény (mindenki); egyébként a zászlóalj.
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
     category: Mapped[str] = mapped_column(String, index=True)
     content: Mapped[str] = mapped_column(Text)
     author: Mapped[str] = mapped_column(String)
@@ -435,6 +459,9 @@ class OrderModel(Base):
     number: Mapped[str] = mapped_column(String, default="")
     issuer: Mapped[str] = mapped_column(String, default="")
     subject: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    # Módosító parancs: melyik kiadott parancsot módosítja (a kiadott befagy).
+    amends_order_id: Mapped[str] = mapped_column(String, default="", index=True)
     personnel_id: Mapped[str] = mapped_column(String, default="", index=True)
     person_name: Mapped[str] = mapped_column(String, default="")
     status: Mapped[str] = mapped_column(String, index=True, default="Előkészítés")

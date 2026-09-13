@@ -56,8 +56,8 @@ router = APIRouter(prefix="/api/operations", tags=["operations"])
 # ── Lista és összesítő ────────────────────────────────────────────────────
 
 @router.get("", response_model=list[OperationRead])
-def list_operations(db: DB, _: Reader):
-    return list_operations_data(db)
+def list_operations(db: DB, user: Reader):
+    return list_operations_data(db, user)
 
 
 @router.get("/summary")
@@ -66,18 +66,18 @@ def operations_summary(db: DB, _: Reader, base_date: str | None = None):
 
 
 @router.get("/now")
-def operations_now(db: DB, _: Reader):
+def operations_now(db: DB, user: Reader):
     """Mi van most: futó műveletek, ki van feladatban (mikortól meddig), a mai
     események. Az Áttekintés ebből ad gyors képet — egy kérés, nem négy lista."""
-    return operations_now_data(db)
+    return operations_now_data(db, user)
 
 
 # ── Művelet-fa ────────────────────────────────────────────────────────────
 # A /tree a {operation_id} elé kerül, különben a catch-all útvonal nyelné el.
 
 @router.get("/tree", response_model=list[OperationTreeNode])
-def get_operations_tree(db: DB, _: Reader):
-    return get_operations_tree_data(db)
+def get_operations_tree(db: DB, user: Reader):
+    return get_operations_tree_data(db, user)
 
 
 @router.post("/tree", response_model=EventRead, status_code=201)

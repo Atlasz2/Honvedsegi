@@ -13,6 +13,7 @@ import {
 import { User, Role } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
+import { useReferenceData } from '@/lib/queries';
 import { Eye, EyeOff, Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -50,7 +51,7 @@ const IMPORT_FIELDS: Record<ImportEntity, ImportFieldConfig[]> = {
     { key: 'type', label: 'Típus', required: true, placeholder: 'pl. lövészeti' },
     { key: 'startDate', label: 'Kezdés', required: true, placeholder: 'YYYY-MM-DD' },
     { key: 'endDate', label: 'Befejezés', required: true, placeholder: 'YYYY-MM-DD' },
-    { key: 'status', label: 'Státusz', required: true, options: ['Tervezett', 'Folyamatban', 'Befejezett', 'Törölve'] },
+    { key: 'status', label: 'Státusz', required: true, options: ['Tervezett', 'Folyamatban', 'Befejezett', 'Lemondva'] },
     { key: 'location', label: 'Helyszín', placeholder: 'pl. Hajmáskér' },
     { key: 'maxPersonnel', label: 'Max. létszám', placeholder: 'pl. 120' },
     { key: 'description', label: 'Leírás', multiline: true, placeholder: 'Részletek, célok, megjegyzések' },
@@ -101,8 +102,10 @@ export default function SettingsPage() {
   const [creating, setCreating] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '' });
+  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '', region: '' });
   const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy', 'Hadművelet'];
+  const { data: referenceData } = useReferenceData();
+  const REGION_LABELS = referenceData.regionLabels ?? {};
   const [importEntity, setImportEntity] = useState<ImportEntity>('personnel');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
@@ -172,6 +175,7 @@ export default function SettingsPage() {
           active: form.active,
           password: form.password || undefined,
           department: form.department,
+          region: form.region,
         });
         await logAction(authUser!.displayName, authUser!.username, 'módosítva', 'Felhasználók', form.username);
         toast.success('Sikeresen mentve');
@@ -187,6 +191,7 @@ export default function SettingsPage() {
           role: form.role,
           active: form.active,
           department: form.department,
+          region: form.region,
         });
         await logAction(authUser!.displayName, authUser!.username, 'létrehozva', 'Felhasználók', form.username);
         toast.success('Felhasználó létrehozva');
@@ -328,7 +333,7 @@ export default function SettingsPage() {
           {isAdmin && (
             <button
               onClick={() => {
-                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true, department: '' });
+                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true, department: '', region: '' });
                 setCreating(true);
               }}
               className="btn-mil-primary flex items-center gap-2 text-xs"
@@ -364,7 +369,7 @@ export default function SettingsPage() {
             {data.map(u => (
               <tr key={u.username}>
                 <td className="font-mono text-primary">{u.username}</td>
-                <td className="text-brass">{u.displayName}</td>
+                <td className="text-brass">{u.displayName}{(u.department || u.region) && <span className="block text-[10px] font-mono text-muted-foreground">{[u.department, u.region ? (REGION_LABELS[u.region] ?? u.region) : 'ezredtörzs (minden)'].filter(Boolean).join(' · ')}</span>}</td>
                 <td>
                   <span className="px-2 py-0.5 text-xs uppercase tracking-military font-mono border border-border" style={{ borderRadius: '2px' }}>
                     {roleBadge[u.role]}
@@ -383,7 +388,7 @@ export default function SettingsPage() {
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
-                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active, department: u.department ?? '' });
+                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active, department: u.department ?? '', region: u.region ?? '' });
                           setEditing(u);
                         }}
                         className="p-1.5 text-primary hover:bg-primary/10"
@@ -541,6 +546,27 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {importPreview.entity === 'personnel' && importPreview.diff && (
+              <div className="border border-border bg-background/60 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-primary">Mi változik a hatókörödben, ha elfogadod</p>
+                <p className="mt-1 text-sm">
+                  <span className="font-semibold">{importPreview.diff.new} új</span>
+                  {' · '}<span className="font-semibold">{importPreview.diff.changed} változik</span>
+                  {importPreview.diff.discharged > 0 && <> · <span className="font-semibold text-destructive">{importPreview.diff.discharged} leszerelt</span></>}
+                  {importPreview.diff.unitChanges > 0 && <> · <span className="font-semibold text-brass">{importPreview.diff.unitChanges} alegység-váltás</span></>}
+                  {importPreview.diff.rankChanges > 0 && <> · {importPreview.diff.rankChanges} rendfokozat-váltás</>}
+                  {importPreview.diff.statusChanges > 0 && <> · {importPreview.diff.statusChanges} státusz-váltás</>}
+                  {' · '}{importPreview.diff.unchanged} változatlan
+                  {importPreview.diff.outOfScope > 0 && <span className="text-muted-foreground"> · {importPreview.diff.outOfScope} sor nem a te zászlóaljad (kihagyva a számolásból)</span>}
+                </p>
+                {Object.keys(importPreview.diff.byUnit).length > 1 && (
+                  <p className="mt-1 font-mono text-muted-foreground">
+                    {Object.entries(importPreview.diff.byUnit).map(([u, c]) => `${u}: ${c.new} új, ${c.changed} változik${c.discharged ? `, ${c.discharged} leszerelt` : ''}`).join(' | ')}
+                  </p>
+                )}
+              </div>
+            )}
+
             {importPreview.unknownColumns.length > 0 && (
               <div className="border border-warning/40 bg-warning/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
                 <p className="font-mono uppercase tracking-military text-warning">Nem felismert oszlopok — a személy „Importált adatok" részébe kerülnek</p>
@@ -622,6 +648,11 @@ export default function SettingsPage() {
                           </div>
                           <p className="mt-2 text-sm font-semibold text-foreground">{item.name || 'Névtelen sor'}</p>
                           <p className="text-xs font-mono text-muted-foreground">Sor {item.line} • {item.key}</p>
+                          {item.changes && Object.keys(item.changes).length > 0 && (
+                            <p className="mt-1 text-[11px] font-mono text-brass">
+                              {Object.entries(item.changes).map(([f, [a, b]]) => `${f}: ${a || '—'} → ${b}`).join(' · ')}
+                            </p>
+                          )}
                         </div>
                         <div className="text-xs font-mono text-muted-foreground">
                           <div>Felismert mezők: {countMappedValues(item)}</div>
@@ -932,6 +963,19 @@ export default function SettingsPage() {
               {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
             <p className="text-[11px] text-muted-foreground mt-1">Ebből tudja a Teendőim, mi az övé: Ügyvitel/Jog/Kiképzés/Személyügy/Pénzügy a saját parancs-fejezeteit; Személyügy a szabadságokat; Kiképzés és Hadművelet az alapkiképzés-határidőket. Admin mindent lát.</p>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Terület (hol szolgál)</label>
+            <select
+              value={form.region}
+              onChange={e => setForm({ ...form, region: e.target.value })}
+              className="w-full bg-input border border-border px-3 py-2 text-sm"
+              style={{ borderRadius: '2px' }}
+            >
+              <option value="">{REGION_LABELS[''] ?? 'Ezredtörzs (Győr)'} — minden terület</option>
+              {Object.entries(REGION_LABELS).filter(([k]) => k).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">A Személyek, Létszám, Szabadság és a kereső csak a saját zászlóalj állományát mutatja — Vas nem nyúl Veszprém adatához. A műveletek és események közösek. Admin mindig mindent lát.</p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input

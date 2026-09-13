@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Response
 from sqlalchemy import select
 
 from ..campaign_export import build_pdf, build_xlsx
+from ..core.scope import assert_owned_in_scope, scoped_persons
 from ..core.dependencies import DB, Editor, Reader
 from ..models import ExerciseModel, ParticipantModel, PersonModel, new_id
 from ..participants import get_participants
@@ -42,13 +43,15 @@ _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 _SZTSZ_PATTERN = re.compile(r"\b(\d{8}|[A-Za-z]{2}\d{6})\b")
 
 
-def _load_event(db, event_type: str, event_id: str):
+def _load_event(db, event_type: str, event_id: str, user=None):
     model = _EVENT_MODELS.get(event_type)
     if model is None:
         raise HTTPException(status_code=400, detail="Kampányterv csak művelethez készíthető")
     item = db.get(model, event_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Az esemény nem található")
+    if user is not None:
+        assert_owned_in_scope(user, item, "Az esemény")
     return item
 
 
@@ -76,15 +79,15 @@ def _resolve_line(line: str, by_sztsz: dict[str, PersonModel], by_name: dict[str
 
 
 @router.post("/{event_type}/{event_id}/applicants", response_model=ApplicantPasteResult)
-def paste_applicants(event_type: str, event_id: str, payload: ApplicantPasteRequest, db: DB, _: Editor):
+def paste_applicants(event_type: str, event_id: str, payload: ApplicantPasteRequest, db: DB, user: Editor):
     """Beillesztett jelentkező-lista rögzítése „Jelentkezett" résztvevőként.
     Soronként egy személy; az SZTSZ az elsődleges kulcs, a név a tartalék."""
-    _load_event(db, event_type, event_id)
+    _load_event(db, event_type, event_id, user)
     lines = [ln.strip() for ln in payload.text.splitlines() if ln.strip()]
     if not lines:
         raise HTTPException(status_code=400, detail="Üres lista")
 
-    persons = db.scalars(select(PersonModel).where(PersonModel.status != _DISCHARGED_STATUS)).all()
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status != _DISCHARGED_STATUS), user)).all()
     by_sztsz = {p.sztsz.upper(): p for p in persons}
     by_name: dict[str, list[PersonModel]] = {}
     for p in persons:
@@ -116,8 +119,8 @@ def paste_applicants(event_type: str, event_id: str, payload: ApplicantPasteRequ
     return result
 
 
-def _build_plan(db, event_type: str, event_id: str) -> CampaignPlan:
-    event = _load_event(db, event_type, event_id)
+def _build_plan(db, event_type: str, event_id: str, user=None) -> CampaignPlan:
+    event = _load_event(db, event_type, event_id, user)
     check = RequirementCheck(db, event_type, event_id)
     participants = get_participants(db, event_type, event_id)
     persons = {
@@ -147,13 +150,13 @@ def _build_plan(db, event_type: str, event_id: str) -> CampaignPlan:
 
 
 @router.get("/{event_type}/{event_id}/plan", response_model=CampaignPlan)
-def campaign_plan(event_type: str, event_id: str, db: DB, _: Reader):
-    return _build_plan(db, event_type, event_id)
+def campaign_plan(event_type: str, event_id: str, db: DB, user: Reader):
+    return _build_plan(db, event_type, event_id, user)
 
 
 @router.get("/{event_type}/{event_id}/plan/export.xlsx")
-def export_plan_xlsx(event_type: str, event_id: str, db: DB, _: Reader):
-    plan = _build_plan(db, event_type, event_id)
+def export_plan_xlsx(event_type: str, event_id: str, db: DB, user: Reader):
+    plan = _build_plan(db, event_type, event_id, user)
     return Response(
         content=build_xlsx(plan), media_type=_XLSX_MEDIA,
         headers={"Content-Disposition": f"attachment; filename=kampanyterv-{plan.startDate}.xlsx"},
@@ -161,8 +164,8 @@ def export_plan_xlsx(event_type: str, event_id: str, db: DB, _: Reader):
 
 
 @router.get("/{event_type}/{event_id}/plan/export.pdf")
-def export_plan_pdf(event_type: str, event_id: str, db: DB, _: Reader):
-    plan = _build_plan(db, event_type, event_id)
+def export_plan_pdf(event_type: str, event_id: str, db: DB, user: Reader):
+    plan = _build_plan(db, event_type, event_id, user)
     return Response(
         content=build_pdf(plan), media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=kampanyterv-{plan.startDate}.pdf"},

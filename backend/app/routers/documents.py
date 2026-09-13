@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import record_activity
+from ..core.scope import scoped_persons
 from ..core.dependencies import DB, Editor, Reader
 from ..models import PersonDocumentModel, PersonModel, new_id
 from ..schemas import PersonDocumentCreate, PersonDocumentRead
@@ -117,11 +118,11 @@ def delete_document(doc_id: str, db: DB, user: Editor):
 
 
 @router.get("/expiring")
-def expiring_documents(db: DB, _: Reader, days: int = Query(60, ge=1, le=365)):
+def expiring_documents(db: DB, user: Reader, days: int = Query(60, ge=1, le=365)):
     """A most vagy hamarosan (N napon belül) lejáró okmányok/alkalmasságok."""
     today = date.today()
     docs = db.scalars(select(PersonDocumentModel).where(PersonDocumentModel.expiry_date.isnot(None))).all()
-    persons = {p.id: p for p in db.scalars(select(PersonModel)).all()}
+    persons = {p.id: p for p in db.scalars(scoped_persons(select(PersonModel), user)).all()}
 
     result = []
     for doc in docs:

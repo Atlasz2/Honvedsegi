@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from ..appliers import apply_exercise, auto_chain_prerequisites, grant_event_qualifications
+from ..core.scope import assert_owned_in_scope, scoped_owned, scoped_persons, unit_for_write
 from ..core.dependencies import DB, Reader, Editor
 from ..participants import load_participants_by_event, sync_participants
 from ..repository import require_model
@@ -19,9 +20,10 @@ def _exercise_snapshot(item: ExerciseModel) -> dict:
         "startDate": item.start_date, "endDate": item.end_date,
         "location": item.location, "maxPersonnel": item.max_personnel, "description": item.description,
         "status": item.status, "qualificationId": item.qualification_id or "",
-        "seriesId": item.series_id or "", "level": item.level or "",
+        "seriesId": item.series_id or "", "level": item.level or "", "unit": item.unit or "",
     }
 from ..schemas import (
+    DutyHandoverUpdate,
     ExerciseCreate, ExerciseRead, ExerciseUpdate,
     ParticipantCreate, ParticipantRead, ParticipantUpdate,
 )
@@ -30,8 +32,8 @@ router = APIRouter(prefix="/api/exercises", tags=["exercises"])
 
 
 @router.get("", response_model=list[ExerciseRead])
-def list_exercises(db: DB, _: Reader):
-    items = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
+def list_exercises(db: DB, user: Reader):
+    items = db.scalars(scoped_owned(select(ExerciseModel), ExerciseModel, user).order_by(ExerciseModel.start_date)).all()
     participants_by_event = load_participants_by_event(db, "exercise")
     return [serialize_exercise(db, i, participants_by_event.get(i.id, [])) for i in items]
 
@@ -40,6 +42,7 @@ def list_exercises(db: DB, _: Reader):
 def create_exercise(payload: ExerciseCreate, db: DB, user: Editor):
     item = ExerciseModel()
     apply_exercise(item, payload)
+    item.unit = unit_for_write(user, payload.unit)
     db.add(item)
     db.flush()
     sync_participants(db, "exercise", item.id, payload.assigned)
@@ -56,8 +59,10 @@ def create_exercise(payload: ExerciseCreate, db: DB, user: Editor):
 @router.put("/{item_id}", response_model=ExerciseRead)
 def update_exercise(item_id: str, payload: ExerciseUpdate, db: DB, user: Editor):
     item = require_model(db, ExerciseModel, item_id)
+    assert_owned_in_scope(user, item, "A művelet")
     before = _exercise_snapshot(item)
     apply_exercise(item, payload)
+    item.unit = unit_for_write(user, payload.unit)
     sync_participants(db, "exercise", item_id, payload.assigned)
     if item.status != "Lemondva":
         grant_event_qualifications(db, "exercise", item_id, item.qualification_id)
@@ -72,6 +77,7 @@ def update_exercise(item_id: str, payload: ExerciseUpdate, db: DB, user: Editor)
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_exercise(item_id: str, db: DB, user: Editor):
     item = require_model(db, ExerciseModel, item_id)
+    assert_owned_in_scope(user, item, "A művelet")
     before = _exercise_snapshot(item)
     record_name = item.name
     sync_participants(db, "exercise", item_id, [])
@@ -79,6 +85,39 @@ def delete_exercise(item_id: str, db: DB, user: Editor):
     record_activity(db, user, mode="delete", module="Műveletek", record_name=record_name,
                     entity="exercise", before=before)
     db.commit()
+
+
+@router.post("/{item_id}/handover", response_model=ExerciseRead)
+def duty_handover(item_id: str, payload: DutyHandoverUpdate, db: DB, user: Editor):
+    """Szolgálat átadás-átvétel: az előző ügyeletes átadja, a következő átveszi
+    — név és időpont, naplózva. Csak szolgálat-típusú műveleten."""
+    from ..constants import DUTY_EXERCISE_TYPES
+    from ..core.time import utc_now
+
+    item = require_model(db, ExerciseModel, item_id)
+    assert_owned_in_scope(user, item, "A művelet")
+    if item.type not in DUTY_EXERCISE_TYPES:
+        raise HTTPException(status_code=400, detail="Átadás-átvétel csak szolgálat-típusú műveleten rögzíthető")
+    current = dict(item.handover or {})
+    before = dict(current)
+    now = utc_now().isoformat(timespec="minutes")
+    name = payload.personName.strip() or user.display_name
+    if payload.action == "handover":
+        current.update({"handedOverBy": name, "handedOverAt": now})
+    elif payload.action == "takeover":
+        if not current.get("handedOverAt"):
+            raise HTTPException(status_code=400, detail="Előbb az átadást kell rögzíteni")
+        current.update({"takenOverBy": name, "takenOverAt": now})
+    else:
+        current = {}
+    if payload.note.strip():
+        current["note"] = payload.note.strip()
+    item.handover = current
+    record_activity(db, user, mode="update", module="Műveletek", record_name=f"{item.name} — átadás-átvétel",
+                    entity="exercise", before={"handover": before}, after={"handover": current})
+    db.commit()
+    db.refresh(item)
+    return serialize_exercise(db, item)
 
 
 # ── Résztvevő-kezelés ─────────────────────────────────────────────────────────

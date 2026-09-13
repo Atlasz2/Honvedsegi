@@ -267,6 +267,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
               {person.status === 'Aktív' && <span className="pulse-dot" />}
               {person.status}
             </span>
+            {person.serviceType && <span className="block text-xs text-muted-foreground mt-1">{person.serviceType}</span>}
           </div>
         </div>
 

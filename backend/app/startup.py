@@ -90,11 +90,17 @@ def _ensure_extended_schema(db: Session) -> None:
     exercises_cols2 = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
     if exercises_cols2 and "organizer" not in exercises_cols2:
         db.execute(text("ALTER TABLE exercises ADD COLUMN organizer TEXT DEFAULT ''"))
+    # Területi hatókör: melyik zászlóaljé a rekord (üres = ezredszintű).
+    for table in ("exercises", "events", "orders", "announcements"):
+        cols = {row[1] for row in db.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if cols and "unit" not in cols:
+            db.execute(text(f"ALTER TABLE {table} ADD COLUMN unit TEXT DEFAULT ''"))
 
     # Parancs-műhely 2. kör: fejezet-szöveg, aláírások, parancsszám.
     for table, columns in (
         ("order_types", {"signers": "JSON"}),
-        ("orders", {"number": "TEXT DEFAULT ''", "issuer": "TEXT DEFAULT ''", "issued_date": "TEXT DEFAULT ''", "signatures": "JSON"}),
+        ("orders", {"number": "TEXT DEFAULT ''", "issuer": "TEXT DEFAULT ''", "issued_date": "TEXT DEFAULT ''", "signatures": "JSON", "amends_order_id": "TEXT DEFAULT ''"}),
+        ("exercises", {"handover": "JSON"}),
         ("order_chapters", {"content": "TEXT DEFAULT ''"}),
     ):
         existing = {row[1] for row in db.execute(text(f"PRAGMA table_info({table})")).fetchall()}
@@ -135,6 +141,8 @@ def _ensure_extended_schema(db: Session) -> None:
     user_cols = {row[1] for row in db.execute(text("PRAGMA table_info(users)")).fetchall()}
     if user_cols and "department" not in user_cols:
         db.execute(text("ALTER TABLE users ADD COLUMN department TEXT DEFAULT ''"))
+    if user_cols and "region" not in user_cols:
+        db.execute(text("ALTER TABLE users ADD COLUMN region TEXT DEFAULT ''"))
 
     db.execute(text("UPDATE personnel SET qualifications = '[]' WHERE qualifications IS NULL"))
     db.execute(text("UPDATE personnel SET beosztas = '' WHERE beosztas IS NULL"))

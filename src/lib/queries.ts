@@ -24,6 +24,15 @@ export const queryKeys = {
 const FALLBACK: ReferenceData = {
   units: ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'],
   personStatuses: ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'],
+  serviceTypes: {
+    Aktív: ['Szerződéses', 'Hivatásos'],
+    Szabadságon: ['Szerződéses', 'Hivatásos'],
+    Tartalékos: ['Önkéntes tartalékos', 'Állandó behívásos'],
+  },
+  regions: { 'Veszprém': ['31 TVZ'], 'Vas': ['83 TVZ'], 'Győr-Moson-Sopron': ['19 TVZ'] },
+  regionLabels: { 'Veszprém': '31. TVZ – Veszprém', 'Vas': '83. TVZ – Vas', 'Győr-Moson-Sopron': '19. TVZ – Győr-Moson-Sopron', '': 'Ezredtörzs (Győr)' },
+  unitLabels: { '31 TVZ': '31. TVZ', '83 TVZ': '83. TVZ', '19 TVZ': '19. TVZ', 'Ezredtörzs': 'Ezredtörzs' },
+  regimentUnit: 'Ezredtörzs',
   ranks: [
     { name: 'Honvéd', short: 'Hv' },
     { name: 'Őrvezető', short: 'Örv' },

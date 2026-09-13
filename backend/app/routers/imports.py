@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, File, UploadFile
 
 from ..audit import record_activity
+from ..core.scope import scope_units
 from ..core.dependencies import DB, Editor
 from ..schemas import ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult
 from ..services.basic_training_import import confirm_basic_training, preview_basic_training
@@ -40,15 +41,15 @@ def confirm_basic_training_table(draft_id: str, db: DB, user: Editor, create_mis
 
 
 @router.post("/{entity}/preview", response_model=ImportPreviewResult)
-def preview_import(entity: str, db: DB, _: Editor, file: UploadFile = File(...)) -> ImportPreviewResult:
-    return preview_import_data(entity, file.filename or "", file.file.read(), db)
+def preview_import(entity: str, db: DB, user: Editor, file: UploadFile = File(...)) -> ImportPreviewResult:
+    return preview_import_data(entity, file.filename or "", file.file.read(), db, scope_units(user))
 
 
 @router.put("/{entity}/draft/{draft_id}", response_model=ImportPreviewResult)
 def update_import_draft(
-    entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: DB, _: Editor,
+    entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: DB, user: Editor,
 ) -> ImportPreviewResult:
-    return update_import_draft_data(entity, draft_id, payload, db)
+    return update_import_draft_data(entity, draft_id, payload, db, scope_units(user))
 
 
 @router.post("/{entity}/confirm/{draft_id}", response_model=ImportConfirmResult)

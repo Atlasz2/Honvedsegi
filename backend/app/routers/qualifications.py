@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..basic_training import grant_if_complete
 from ..audit import record_activity
+from ..core.scope import person_in_scope
 from ..core.dependencies import DB, Reader, Editor
 from ..settings_store import is_enabled
 from ..models import (
@@ -229,7 +230,7 @@ def delete_qualification(person_id: str, qual_id: str, db: DB, user: Editor):
 # ── figyelmeztetések ──────────────────────────────────────────────────────────
 
 @router.get("/alerts", response_model=list[QualificationAlert])
-def get_alerts(db: DB, _: Reader, days_ahead: int = 60):
+def get_alerts(db: DB, user: Reader, days_ahead: int = 60):
     """
     Visszaadja azokat a képesítéseket, amelyek `days_ahead` napon belül lejárnak,
     vagy már lejártak (daysUntilExpiry negatív).
@@ -252,6 +253,8 @@ def get_alerts(db: DB, _: Reader, days_ahead: int = 60):
     for pq in rows:
         qt = db.get(QualificationTypeModel, pq.qual_type_id)
         person = db.get(PersonModel, pq.personnel_id)
+        if person is not None and not person_in_scope(user, person):
+            continue
         if not qt or not person:
             continue
         expiry = date.fromisoformat(pq.expiry_date)  # type: ignore[arg-type]

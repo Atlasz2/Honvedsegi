@@ -7,8 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..audit import record_activity
+from ..constants import unit_label
+from ..core.scope import owned_in_scope, scoped_persons
 from ..core.dependencies import DB, Editor, Reader
-from ..models import EventModel, ExerciseModel, visible_events
+from ..models import EventModel, ExerciseModel, PersonModel, visible_events
 
 router = APIRouter(prefix="/api/conflicts", tags=["conflicts"])
 
@@ -27,7 +29,7 @@ def _dates_overlap(s1: str, e1: str, s2: str, e2: str) -> bool:
 @router.get("")
 def check_conflicts(
     db: DB,
-    _: Reader,
+    user: Reader,
     location: str = "",
     start_date: str = "",
     end_date: str = "",
@@ -59,10 +61,12 @@ def check_conflicts(
             if status in ("Törölve", "Lemondva", "Befejezett"):
                 continue
             name = getattr(item, "name", None) or f"{item.type} - {getattr(item, 'person_name', item.id)}"
+            foreign = not owned_in_scope(user, getattr(item, "unit", ""))
             conflicts.append({
                 "eventType": event_type,
-                "eventId": item.id,
-                "eventName": name,
+                "eventId": "" if foreign else item.id,
+                "eventName": f"foglalt — {unit_label(item.unit or '')}" if foreign else name,
+                "foreign": foreign,
                 "startDate": item.start_date,
                 "endDate": item.end_date,
                 "status": status,
@@ -159,3 +163,43 @@ def move_person(payload: MoveRequest, db: DB, user: Editor):
         changed.append({"eventType": event_type, "eventId": event_id, "eventName": item.name})
     db.commit()
     return {"moved": changed}
+
+
+@router.get("/forecast")
+def assignment_forecast(db: DB, user: Reader, start_date: str, end_date: str, exclude_type: str = "", exclude_id: str = ""):
+    """Már a dátum megadásakor: a hatókörömben hány beosztható ember lesz
+    foglalt (más, nem lemondott műveletben) az időszak alatt — mielőtt
+    egyesével kiderülne a beosztásnál."""
+    from ..models import ParticipantModel
+
+    if not start_date or not end_date:
+        raise HTTPException(status_code=400, detail="Kezdő és záró dátum kell")
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status != "Leszerelt"), user)).all()
+    ids = {p.id for p in persons}
+    if not ids:
+        return {"assignable": 0, "busy": 0, "busyPeople": []}
+    parts = db.scalars(select(ParticipantModel).where(
+        ParticipantModel.personnel_id.in_(ids),
+        ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+    )).all()
+    models = {"exercise": ExerciseModel, "event": EventModel}
+    cache: dict[tuple[str, str], object] = {}
+    busy: dict[str, list[str]] = {}
+    for part in parts:
+        if part.event_type == exclude_type and part.event_id == exclude_id:
+            continue
+        key = (part.event_type, part.event_id)
+        if key not in cache:
+            model = models.get(part.event_type)
+            cache[key] = db.get(model, part.event_id) if model else None
+        item = cache[key]
+        if item is None or item.status in ("Lemondva", "Törölve"):
+            continue
+        if _dates_overlap(item.start_date, item.end_date, start_date, end_date):
+            busy.setdefault(part.personnel_id, []).append(item.name)
+    by_id = {p.id: p for p in persons}
+    people = sorted(
+        ({"personnelId": pid, "name": by_id[pid].name, "unit": by_id[pid].unit, "events": names} for pid, names in busy.items()),
+        key=lambda x: x["name"].lower(),
+    )
+    return {"assignable": len(ids), "busy": len(busy), "busyPeople": people[:50]}

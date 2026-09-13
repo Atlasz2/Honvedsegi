@@ -17,9 +17,13 @@ export function useAutoRefresh(refresh: () => void | Promise<void>, intervalMs =
 
   useEffect(() => {
     let alive = true;
+    // Egyszerre csak egy frissítés fut: ha az előző még tart (lassú hálózat,
+    // nagy lista), a következő kör kimarad — nem torlódnak fel a kérések.
+    let busy = false;
 
     const check = async (force = false) => {
-      if (!alive || document.visibilityState !== 'visible') return;
+      if (!alive || busy || document.visibilityState !== 'visible') return;
+      busy = true;
       try {
         const { version } = await changes.version();
         if (!alive) return;
@@ -28,6 +32,8 @@ export function useAutoRefresh(refresh: () => void | Promise<void>, intervalMs =
         if (changed || force) await refreshRef.current();
       } catch {
         // hálózati hiba: a következő körben újra próbáljuk, nem zavarjuk a felhasználót
+      } finally {
+        busy = false;
       }
     };
 

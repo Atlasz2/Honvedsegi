@@ -11,7 +11,9 @@ import {
 import { useAuth } from '@/lib/auth';
 import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
-import { CalendarPlus, ChevronDown, ChevronRight, Download, Save, Search, Users } from 'lucide-react';
+import { CalendarPlus, ChevronDown, ChevronRight, Download, Lock, LockOpen, Save, Search, Users } from 'lucide-react';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import Modal from '@/components/Modal';
 
 const STATUS_OPTIONS: AttendanceStatus[] = [
   'Jelen', 'Szabadság', 'Betegállomány', 'Vezényelve',
@@ -126,16 +128,48 @@ export default function Attendance() {
     return items;
   }, [day, edits]);
 
-  const save = async () => {
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+
+  const closeDay = async () => {
+    setConfirmClose(false);
+    try {
+      setDay(await store.closeDay(date));
+      toast.success('A nap lezárva.');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const reopenDay = async () => {
+    if (!reopenReason.trim()) { toast.error('A visszanyitáshoz indoklás kell.'); return; }
+    try {
+      setDay(await store.reopenDay(date, reopenReason.trim()));
+      setReopenOpen(false);
+      setReopenReason('');
+      toast.success('A nap újra nyitva (naplózva).');
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const save = async (reason = '') => {
     if (dirtyMarks.length === 0) {
       toast.info('Nincs mentendő változás.');
       return;
     }
+    // Lezárt napot csak indoklással lehet módosítani — a rendszer rákérdez.
+    if (day?.closedForMe && !reason) { setOverrideOpen(true); return; }
     setSaving(true);
     try {
-      await store.setDay(date, dirtyMarks);
+      await store.setDay(date, dirtyMarks, reason);
       await logAction(user!.displayName, user!.username, 'módosítva', 'Létszám', `${date} (${dirtyMarks.length} módosítás)`);
       toast.success(`Mentve (${dirtyMarks.length} módosítás).`);
+      setOverrideOpen(false);
+      setOverrideReason('');
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -171,8 +205,10 @@ export default function Attendance() {
     toast.info(`${visible.length} fő beállítva: ${bulkStatus} (mentés szükséges).`);
   };
 
+  const selectedEvent = events.find(e => `${e.eventType}|${e.eventId}` === selectedEventKey) ?? null;
+
   const applyEventFill = async () => {
-    const event = events.find(e => `${e.eventType}|${e.eventId}` === selectedEventKey);
+    const event = selectedEvent;
     if (!event) {
       toast.error('Válassz eseményt.');
       return;
@@ -221,9 +257,20 @@ export default function Attendance() {
           >
             <Download className="w-4 h-4" /> PDF
           </button>
+          {canEdit && !day?.closedForMe && (
+            <button
+              onClick={() => setConfirmClose(true)}
+              disabled={dirtyMarks.length > 0}
+              title={dirtyMarks.length > 0 ? 'Előbb mentsd a változásokat' : 'Napi zárás: pecsét a jelentésre, utána csak indoklással módosítható'}
+              className="flex items-center gap-2 px-3 py-2 bg-secondary text-foreground text-sm font-rajdhani font-medium tracking-wide border border-border disabled:opacity-40"
+              style={{ borderRadius: '2px' }}
+            >
+              <Lock className="w-4 h-4" /> Napi zárás
+            </button>
+          )}
           {canEdit && (
             <button
-              onClick={save}
+              onClick={() => { void save(); }}
               disabled={saving || dirtyMarks.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-rajdhani font-semibold tracking-wide disabled:opacity-40 transition-opacity"
               style={{ borderRadius: '2px' }}
@@ -233,6 +280,23 @@ export default function Attendance() {
           )}
         </div>
       </div>
+
+      {/* Zárás-pecsétek: kié van már lezárva (az ezredtörzs minden zászlóaljét látja) */}
+      {(day?.closures.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {day!.closures.map((c) => (
+            <span key={c.unit} className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-xs font-mono" style={{ borderRadius: '2px' }} title={c.note || undefined}>
+              <Lock className="w-3.5 h-3.5" />
+              {c.unitLabel}: lezárva — {c.closedByName}, {new Date(c.closedAt).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          ))}
+          {canEdit && day?.closedForMe && (
+            <button onClick={() => setReopenOpen(true)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-mono text-muted-foreground hover:text-foreground hover:underline">
+              <LockOpen className="w-3.5 h-3.5" /> visszanyitás indoklással
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 1. Mikor és ki: dátum, egység, keresés — egy sorban, a számokkal együtt */}
       <div className="bg-card border border-border p-3" style={{ borderRadius: '2px' }}>
@@ -319,7 +383,7 @@ export default function Attendance() {
                     >
                       {events.map(ev => (
                         <option key={`${ev.eventType}|${ev.eventId}`} value={`${ev.eventType}|${ev.eventId}`}>
-                          {ev.name} ({ev.participantCount} fő)
+                          {ev.recordedCount >= ev.participantCount ? '✓ ' : ev.recordedCount > 0 ? '◐ ' : ''}{ev.name} ({ev.participantCount} fő{ev.recordedCount > 0 ? `, ${ev.recordedCount} már rögzítve` : ''})
                         </option>
                       ))}
                     </select>
@@ -333,6 +397,13 @@ export default function Attendance() {
                       {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     <button onClick={applyEventFill} disabled={filling} className="btn-mil-primary text-xs">Kitöltés</button>
+                    {selectedEvent && (
+                      <p className={`w-full text-[11px] font-mono ${selectedEvent.recordedCount >= selectedEvent.participantCount ? 'text-emerald-400' : selectedEvent.recordedCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                        {selectedEvent.recordedCount === 0
+                          ? 'Ma még senki nincs rögzítve ebből a műveletből.'
+                          : `Ma már rögzítve: ${selectedEvent.recordedCount}/${selectedEvent.participantCount} fő (${Object.entries(selectedEvent.recordedStatuses).map(([st, n]) => `${st}: ${n}`).join(', ')}). A kitöltés ezeket felülírja.`}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -409,6 +480,32 @@ export default function Attendance() {
           </tbody>
         </table>
       </div>
+    <ConfirmDialog
+        open={confirmClose}
+        onClose={() => setConfirmClose(false)}
+        onConfirm={() => { void closeDay(); }}
+        message={`Lezárod a(z) ${date} napi létszámjelentést? A pecsét a te neveddel és a mostani idővel kerül rá; utána csak indoklással módosítható (naplózva).`}
+      />
+      <Modal open={overrideOpen} onClose={() => setOverrideOpen(false)} title="Lezárt nap módosítása">
+        <div className="space-y-3">
+          <p className="text-sm">Ez a nap már le van zárva. A módosításhoz indoklás kell — bekerül a naplóba.</p>
+          <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="pl. utólagos orvosi igazolás érkezett" className="w-full bg-input border border-border px-3 py-2 text-sm h-24" style={{ borderRadius: '2px' }} />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setOverrideOpen(false)} className="btn-mil-secondary text-xs">Mégsem</button>
+            <button onClick={() => { void save(overrideReason.trim()); }} disabled={!overrideReason.trim() || saving} className="btn-mil-primary text-xs">Mentés indoklással</button>
+          </div>
+        </div>
+      </Modal>
+      <Modal open={reopenOpen} onClose={() => setReopenOpen(false)} title="Napi zárás visszanyitása">
+        <div className="space-y-3">
+          <p className="text-sm">A zárás visszavonása naplózódik. Miért?</p>
+          <textarea value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} className="w-full bg-input border border-border px-3 py-2 text-sm h-24" style={{ borderRadius: '2px' }} />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setReopenOpen(false)} className="btn-mil-secondary text-xs">Mégsem</button>
+            <button onClick={() => { void reopenDay(); }} disabled={!reopenReason.trim()} className="btn-mil-primary text-xs">Visszanyitás</button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

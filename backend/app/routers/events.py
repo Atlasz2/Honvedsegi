@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from ..appliers import apply_event
 from ..audit import record_activity
+from ..core.scope import assert_owned_in_scope, scoped_owned, scoped_persons, unit_for_write
 from ..core.dependencies import DB, Reader, Editor
 from ..models import AnnouncementModel, visible_events, EventModel, ParticipantModel, new_id
 from ..participants import load_participants_by_event, sync_participants
@@ -26,12 +27,13 @@ def _snapshot(item: EventModel) -> dict:
         "name": item.name, "type": item.type, "startDate": item.start_date,
         "endDate": item.end_date, "location": item.location, "organizer": item.organizer or "",
         "maxPersonnel": item.max_personnel, "description": item.description, "status": item.status,
+        "unit": item.unit or "",
     }
 
 
 @router.get("", response_model=list[EventRead])
-def list_events(db: DB, _: Reader):
-    items = db.scalars(visible_events().order_by(EventModel.start_date)).all()
+def list_events(db: DB, user: Reader):
+    items = db.scalars(scoped_owned(visible_events(), EventModel, user).order_by(EventModel.start_date)).all()
     participants_by_event = load_participants_by_event(db, "event")
     return [serialize_event(db, i, participants_by_event.get(i.id, [])) for i in items]
 
@@ -40,6 +42,7 @@ def list_events(db: DB, _: Reader):
 def create_event(payload: EventCreate, db: DB, user: Editor):
     item = EventModel()
     apply_event(item, payload)
+    item.unit = unit_for_write(user, payload.unit)
     db.add(item)
     db.flush()
     sync_participants(db, "event", item.id, payload.assigned)
@@ -53,8 +56,10 @@ def create_event(payload: EventCreate, db: DB, user: Editor):
 @router.put("/{item_id}", response_model=EventRead)
 def update_event(item_id: str, payload: EventUpdate, db: DB, user: Editor):
     item = require_model(db, EventModel, item_id)
+    assert_owned_in_scope(user, item, "Az esemény")
     before = _snapshot(item)
     apply_event(item, payload)
+    item.unit = unit_for_write(user, payload.unit)
     sync_participants(db, "event", item_id, payload.assigned)
     after = _snapshot(item)
     record_activity(db, user, mode="update", module=MODULE, record_name=item.name,
@@ -94,6 +99,7 @@ def _announce_change(db, user, item: EventModel, before: dict, after: dict) -> N
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_event(item_id: str, db: DB, user: Editor):
     item = require_model(db, EventModel, item_id)
+    assert_owned_in_scope(user, item, "Az esemény")
     record_activity(db, user, mode="delete", module=MODULE, record_name=item.name,
                     entity="event", before=_snapshot(item))
     sync_participants(db, "event", item_id, [])

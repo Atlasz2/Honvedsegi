@@ -151,7 +151,63 @@ def _find_missing_personnel(db: Session, operations: list[dict[str, Any]]) -> tu
     return len(missing), missing[:IMPORT_MISSING_LIST_LIMIT]
 
 
-def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any]:
+_DIFF_FIELDS = ("name", "rank", "unit", "beosztas", "status", "serviceType", "email", "phone", "birthDate", "address", "joinDate")
+
+
+def _person_changes(existing: PersonModel, payload) -> dict[str, list[str]]:
+    """Mező → [régi, új], csak ahol tényleg más az érték."""
+    current = {
+        "name": existing.name, "rank": existing.rank, "unit": existing.unit, "beosztas": existing.beosztas or "",
+        "status": existing.status, "serviceType": existing.service_type or "", "email": existing.email or "",
+        "phone": existing.phone or "", "birthDate": existing.birth_date or "", "address": existing.address or "",
+        "joinDate": existing.join_date or "",
+    }
+    incoming = payload.model_dump()
+    out: dict[str, list[str]] = {}
+    for field in _DIFF_FIELDS:
+        new = str(incoming.get(field) or "").strip()
+        old = str(current.get(field) or "").strip()
+        if new and new != old:
+            out[field] = [old, new]
+    return out
+
+
+def _diff_summary(items: list[dict[str, Any]], scope_units_: tuple[str, ...] | None) -> dict[str, Any]:
+    summary = {"new": 0, "unchanged": 0, "changed": 0, "discharged": 0, "unitChanges": 0, "statusChanges": 0,
+               "rankChanges": 0, "outOfScope": 0, "byUnit": {}}
+    for item in items:
+        if item["action"] == "skip":
+            continue
+        unit = str(item["data"].get("unit") or "")
+        changes = item.get("changes") or {}
+        old_unit = changes.get("unit", [unit])[0]
+        # Az én hatóköröm: aki most nálam van VAGY hozzám kerül (az elköltöző is az én változásom).
+        if scope_units_ is not None and unit not in scope_units_ and old_unit not in scope_units_:
+            summary["outOfScope"] += 1
+            continue
+        bucket = summary["byUnit"].setdefault(unit or "—", {"new": 0, "changed": 0, "discharged": 0})
+        if item["action"] == "create":
+            summary["new"] += 1
+            bucket["new"] += 1
+            continue
+        if not changes:
+            summary["unchanged"] += 1
+            continue
+        summary["changed"] += 1
+        bucket["changed"] += 1
+        if "unit" in changes:
+            summary["unitChanges"] += 1
+        if "rank" in changes:
+            summary["rankChanges"] += 1
+        if "status" in changes:
+            summary["statusChanges"] += 1
+            if changes["status"][1] == "Leszerelt":
+                summary["discharged"] += 1
+                bucket["discharged"] += 1
+    return summary
+
+
+def _evaluate_rows(entity: str, source_rows: list, db: Session, scope_units_: tuple[str, ...] | None = None) -> dict[str, Any]:
     created = updated = skipped = 0
     issues: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
@@ -169,6 +225,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         key, name = _fallback_identity(entity, line, prev_data, prev_raw)
         item_issues: list[str] = []
         action = "skip"
+        changes: dict[str, list[str]] = {}
 
         if not enabled:
             item_issues.append("Felhasználó által kihagyva")
@@ -185,6 +242,8 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                         action = "update" if existing else "create"
                         key = payload.sztsz
                         name = payload.name
+                        if existing is not None:
+                            changes = _person_changes(existing, payload)
                     else:
                         payload = ExerciseCreate(**prev_data)
                         existing = db.scalar(
@@ -223,6 +282,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                 "rawData": prev_raw,
                 "unknownData": prev_unk,
                 "issues": item_issues,
+                "changes": changes,
             }
         )
 
@@ -253,6 +313,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         "unknownColumns": unknown_columns,
         "missingCount": missing_count,
         "missing": missing,
+        "diff": _diff_summary(items, scope_units_) if entity == "personnel" else {},
     }
 
 
@@ -269,10 +330,11 @@ def _preview_response(payload: dict[str, Any], draft_id: str) -> ImportPreviewRe
         unknownColumns=payload["unknownColumns"],
         missingCount=payload["missingCount"],
         missing=payload["missing"],
+        diff=payload.get("diff") or {},
     )
 
 
-def preview_import_data(entity: str, filename: str, content: bytes, db: Session) -> ImportPreviewResult:
+def preview_import_data(entity: str, filename: str, content: bytes, db: Session, scope_units_: tuple[str, ...] | None = None) -> ImportPreviewResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
     if not content:
@@ -283,13 +345,13 @@ def preview_import_data(entity: str, filename: str, content: bytes, db: Session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    preview = _evaluate_rows(entity, source_rows, db)
+    preview = _evaluate_rows(entity, source_rows, db, scope_units_)
     valid = preview["created"] + preview["updated"]
     if source_rows and valid == 0:
         alt = "exercises" if entity == "personnel" else "personnel"
         try:
             alt_rows = parse_import(alt, filename or "", content)
-            alt_preview = _evaluate_rows(alt, alt_rows, db)
+            alt_preview = _evaluate_rows(alt, alt_rows, db, scope_units_)
             if alt_preview["created"] + alt_preview["updated"] > 0:
                 alt_preview["issues"].insert(0, {"line": 0, "message": "Automatikus átváltás a másik import célra."})
                 preview = alt_preview
@@ -308,7 +370,7 @@ def preview_import_data(entity: str, filename: str, content: bytes, db: Session)
     return _preview_response(preview, draft_id)
 
 
-def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: Session) -> ImportPreviewResult:
+def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: Session, scope_units_: tuple[str, ...] | None = None) -> ImportPreviewResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
 
@@ -324,7 +386,7 @@ def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpd
             updated_row["data"] = _normalize_mapping(upd.data)
         source_rows.append(updated_row)
 
-    preview = _evaluate_rows(entity, source_rows, db)
+    preview = _evaluate_rows(entity, source_rows, db, scope_units_)
     _save_draft(
         draft_id,
         entity,

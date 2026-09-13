@@ -12,6 +12,8 @@ import unicodedata
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
+from ..constants import unit_label
+from ..core.scope import owned_in_scope
 from ..core.dependencies import DB, Reader
 from ..models import visible_events, EventModel, ExerciseModel
 
@@ -56,7 +58,7 @@ def list_locations(db: DB, _: Reader):
 
 @router.get("")
 def check_availability(
-    db: DB, _: Reader,
+    db: DB, user: Reader,
     start_date: str = Query(..., description="ÉÉÉÉ-HH-NN"),
     end_date: str = "",
     q: str = "",
@@ -71,6 +73,9 @@ def check_availability(
     needle = _norm(q)
     bookings: list[dict] = []
     for event_type, model in _SOURCES:
+        # NEM a hatókörre szűrünk: a lőtér/bázis foglaltsága mindenkit érint.
+        # Az idegen zászlóalj foglalása névtelen („foglalt — 83. TVZ"), hogy ne
+        # ütközzenek, de a részletek ne szivárogjanak.
         for item in db.scalars(visible_events() if model is EventModel else select(model)).all():
             location = (getattr(item, "location", "") or "").strip()
             if not location:
@@ -82,11 +87,14 @@ def check_availability(
             if not _overlaps(start, end, item.start_date, item.end_date):
                 continue
             name = getattr(item, "name", None) or f"{item.type} – {getattr(item, 'person_name', '') or item.id}"
+            foreign = not owned_in_scope(user, getattr(item, "unit", ""))
             bookings.append({
                 "location": location,
                 "eventType": event_type,
-                "eventId": item.id,
-                "eventName": name,
+                "eventId": "" if foreign else item.id,
+                "eventName": f"foglalt — {unit_label(item.unit or '')}" if foreign else name,
+                "unit": item.unit or "",
+                "foreign": foreign,
                 "startDate": item.start_date,
                 "endDate": item.end_date,
                 "status": getattr(item, "status", ""),

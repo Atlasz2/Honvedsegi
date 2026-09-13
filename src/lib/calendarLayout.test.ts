@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addDays, buildColorMap, monthWeeks, weekBars, type CalendarItem } from './calendarLayout';
 
 const item = (id: string, startDate: string, endDate: string, kind = 'Gyakorlat'): CalendarItem => ({
-  id, source: 'exercise', name: id, kind, dutyType: '', startDate, endDate, location: '', status: 'Tervezett', peopleSummary: '', peopleCount: 0,
+  id, source: 'exercise', name: id, unit: '', kind, dutyType: '', startDate, endDate, location: '', status: 'Tervezett', peopleSummary: '', peopleCount: 0,
 });
 
 describe('monthWeeks', () => {
@@ -50,7 +50,7 @@ describe('weekBars', () => {
 describe('buildColorMap', () => {
   it('a gyakori típusok fix színt kapnak, a többi különbözőt', () => {
     const map = buildColorMap(['Gyakorlat', 'Őrszolgálat', 'Ügyelet', 'Lövészet', 'Kiképzés']);
-    expect(map.get('Gyakorlat')).toBe('bg-sky-600');
+    expect(map.get('Gyakorlat')).toBe('hsl(148 30% 34%)');
     expect(new Set(map.values()).size).toBe(5);
   });
 });

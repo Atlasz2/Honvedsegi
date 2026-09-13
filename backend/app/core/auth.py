@@ -12,6 +12,7 @@ from ..constants import (
     LOCKOUT_MINUTES, MAX_FAILED_LOGINS, SESSION_HOURS, SESSION_SLIDE_BELOW_HOURS,
 )
 from ..db import get_db
+from ..constants import REGIONS, region_label
 from ..models import LoginAttemptModel, SessionTokenModel, UserModel
 from ..schemas import AuthUser, UserRead
 from ..security import fingerprint_token
@@ -56,6 +57,9 @@ def user_to_auth_payload(user: UserModel, expiry: datetime) -> AuthUser:
         displayName=user.display_name,
         role=user.role,
         department=user.department or "",
+        region=user.region or "",
+        regionLabel=region_label(user.region or ""),
+        unit=(REGIONS.get(user.region or "") or ("",))[0] if (user.region or "") and user.role not in ("admin", "fejleszto") else "",
         expiry=int(expiry.timestamp() * 1000),
     )
 
@@ -67,6 +71,7 @@ def to_user_read(user: UserModel) -> UserRead:
         role=user.role,
         active=user.active,
         department=user.department or "",
+        region=user.region or "",
         last_login=user.last_login,
     )
 

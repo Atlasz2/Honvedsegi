@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ..constants import PERSON_STATUSES, RANKS, SERVICE_TYPES, UNITS
+from ..constants import EZREDTORZS_UNIT, PERSON_STATUSES, RANKS, REGIONS, SERVICE_TYPES, UNITS, region_label, unit_label
 from ..core.dependencies import Reader
 
 router = APIRouter(prefix="/api/reference", tags=["reference"])
@@ -21,5 +21,10 @@ def get_reference_data(_: Reader) -> dict[str, object]:
         "units": list(UNITS),
         "personStatuses": list(PERSON_STATUSES),
         "serviceTypes": {k: list(v) for k, v in SERVICE_TYPES.items()},
+        "regions": {k: list(v) for k, v in REGIONS.items()},
+        # Megjelenítéshez: kulcs → „31. TVZ – Veszprém"; üres → ezredtörzs.
+        "regionLabels": {**{k: region_label(k) for k in REGIONS}, "": region_label("")},
+        "unitLabels": {u: unit_label(u) for u in UNITS},
+        "regimentUnit": EZREDTORZS_UNIT,
         "ranks": [{"name": name, "short": short} for name, short in RANKS],
     }

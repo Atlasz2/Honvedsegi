@@ -135,7 +135,7 @@ export function AvailabilityPanel({ embedded = false }: { embedded?: boolean }) 
                   <tbody>
                     {items.map(b => (
                       <tr key={`${b.eventType}-${b.eventId}`} className="border-t border-border/50">
-                        <td className="px-3 py-1.5 font-rajdhani text-foreground">{b.eventName}</td>
+                        <td className={`px-3 py-1.5 font-rajdhani ${b.foreign ? 'text-muted-foreground italic' : 'text-foreground'}`} title={b.foreign ? 'Másik zászlóalj foglalása — a részletek nem látszanak, csak hogy foglalt' : undefined}>{b.eventName}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{TYPE_LABEL[b.eventType]}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{b.startDate} – {b.endDate}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{b.status}</td>

@@ -10,6 +10,7 @@ import CommandPalette, { openCommandPalette } from '@/components/CommandPalette'
 import { useConnection, setOnline } from '@/lib/connection';
 import { Search, WifiOff } from 'lucide-react';
 import NewsBell from '@/components/NewsBell';
+import { activeNavPath } from '@/lib/navigation';
 
 // A menü sorrendje a napi munka sorrendje: ami rám vár → mi a helyzet → naptár →
 // emberek → feladatok → parancsok → figyelmeztetések → napló → beállítások.
@@ -36,27 +37,6 @@ const navItems: NavItem[] = [
   { path: '/vehicles', label: 'Járművek', icon: Truck, group: 'Logisztika' },
 ];
 
-// Olyan útvonalak, amelyeknek nincs saját menüpontjuk: melyik menüpont világítson.
-// Így mindig van kijelölt elem — a felhasználó tudja, hol jár.
-const NAV_ALIAS: Record<string, string> = {
-  '/riportok': '/attekintes',
-  '/announcements': '/attekintes',
-  '/helyzetkep': '/attekintes',
-  '/kovetelmenyek': '/operations',
-  '/foglaltsag': '/kozos-naptar',
-  '/calendar': '/kozos-naptar',
-};
-
-export function activeNavPath(pathname: string): string {
-  const alias = Object.keys(NAV_ALIAS).find((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
-  if (alias) return NAV_ALIAS[alias];
-  if (pathname === '/') return '/';
-  const match = navItems
-    .filter((item) => item.path !== '/' && (pathname === item.path || pathname.startsWith(item.path + '/')))
-    .sort((a, b) => b.path.length - a.path.length)[0];
-  return match?.path ?? '/';
-}
-
 const roleBadge: Record<string, string> = {
   admin: 'ADMIN',
   reader: 'OLVASÓ',
@@ -70,7 +50,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [alertCount, setAlertCount] = useState(0);
   const online = useConnection();
   const location = useLocation();
-  const activePath = activeNavPath(location.pathname);
+  const activePath = activeNavPath(location.pathname, navItems.map((item) => item.path));
 
   // Kapcsolat-vesztéskor 5 másodpercenként megpróbáljuk a health-végpontot,
   // és amint válaszol, a sáv eltűnik.
@@ -190,6 +170,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-brass font-rajdhani font-semibold text-sm">{user?.displayName}</span>
+            {user?.regionLabel && (
+              <span className="hidden md:inline px-2 py-0.5 text-[10px] uppercase tracking-military font-mono border border-border text-muted-foreground" style={{ borderRadius: '2px' }} title={user.unit ? 'Terület: csak ennek a zászlóaljnak az adatát látod' : 'Ezredtörzs: minden zászlóalj adatát látod'}>
+                {user.regionLabel}
+              </span>
+            )}
             <span className="px-2 py-0.5 text-[10px] uppercase tracking-military font-mono border border-border text-muted-foreground" style={{ borderRadius: '2px' }}>
               {roleBadge[user?.role || ''] || user?.role}
             </span>

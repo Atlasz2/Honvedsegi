@@ -24,6 +24,7 @@ const emptyPerson: Omit<Person, 'id'> = {
   unit: '31 TVZ',
   beosztas: '',
   status: 'Aktív',
+  serviceType: '',
   email: '',
   phone: '',
   birthDate: '',
@@ -85,7 +86,7 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
 export default function Personnel() {
   const { canEdit } = useAuth();
   const [data, setData] = useState<Person[]>([]);
-  const [summaryData, setSummaryData] = useState<Person[]>([]);
+  const [statusSummary, setStatusSummary] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<string>('Összes');
   const [qualificationFilter, setQualificationFilter] = useState<string>('');
   const [qualTypeOptions, setQualTypeOptions] = useState<QualificationType[]>([]);
@@ -117,6 +118,7 @@ export default function Personnel() {
   const { data: referenceData } = useReferenceData();
   const ranks = referenceData.ranks.map(rank => rank.name);
   const statuses = referenceData.personStatuses;
+  const serviceTypes = referenceData.serviceTypes ?? {};
   const units = referenceData.units;
 
   const [page, setPage] = useState(1);
@@ -156,21 +158,20 @@ export default function Personnel() {
 
   const refresh = useCallback(async () => {
     try {
-      const [result, allPeople] = await Promise.all([
-        store.getPaged({
-          page,
-          pageSize,
-          search,
-          unit: unitFilter,
-          status: statusFilter,
-          qualification: qualificationFilter,
-          sortBy,
-          sortDir,
-        }),
-        store.getAll(),
-      ]);
+      // Csak az aktuális lap jön le, a státusz-összesítőt a szerver számolja —
+      // a teljes állomány (több ezer akta) letöltése minden szűrésnél lefagyasztotta a felületet.
+      const result = await store.getPaged({
+        page,
+        pageSize,
+        search,
+        unit: unitFilter,
+        status: statusFilter,
+        qualification: qualificationFilter,
+        sortBy,
+        sortDir,
+      });
       setData(result.items);
-      setSummaryData(allPeople);
+      setStatusSummary(result.statusCounts ?? {});
       setTotal(result.total);
       setTotalPages(result.totalPages);
       setPage(result.page);
@@ -236,8 +237,10 @@ export default function Personnel() {
     }
   };
 
-  const statusCounts = { Aktív: 0, Tartalékos: 0, Szabadságon: 0, Leszerelt: 0 };
-  summaryData.forEach(p => { if (p.status in statusCounts) statusCounts[p.status as keyof typeof statusCounts]++; });
+  const statusCounts = {
+    Aktív: statusSummary['Aktív'] ?? 0, Tartalékos: statusSummary['Tartalékos'] ?? 0,
+    Szabadságon: statusSummary['Szabadságon'] ?? 0, Leszerelt: statusSummary['Leszerelt'] ?? 0,
+  };
 
   const openCreate = () => { setForm({ ...emptyPerson }); setErrors({}); setCreating(true); };
   const handleSort = (field: 'name' | 'rank' | 'sztsz' | 'unit' | 'status' | 'joinDate') => {
@@ -261,6 +264,7 @@ export default function Personnel() {
       unit: units.includes(p.unit) ? p.unit : units[0],
       beosztas: p.beosztas || '',
       status: p.status,
+      serviceType: p.serviceType || '',
       email: p.email,
       phone: p.phone,
       birthDate: p.birthDate,
@@ -419,7 +423,7 @@ export default function Personnel() {
                 <td className="font-semibold">{p.name}</td>
                 <td className="font-mono text-primary text-xs">{p.sztsz}</td>
                 <td className="text-brass font-mono text-xs">{p.rank}</td>
-                <td>{p.beosztas || '-'}</td>
+                <td>{p.beosztas || '-'}{p.serviceType ? <span className="block text-[10px] font-mono text-muted-foreground">{p.serviceType}</span> : null}</td>
                 <td>{p.unit}</td>
                 <td>
                   <span className={`inline-flex items-center px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[p.status]}`} style={{ borderRadius: '2px' }}>
@@ -482,10 +486,21 @@ export default function Personnel() {
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Státusz</label>
-            <select value={form.status} onChange={e => setForm(prev => ({ ...prev, status: e.target.value as Person['status'] }))}
+            <select value={form.status} onChange={e => setForm(prev => ({ ...prev, status: e.target.value as Person['status'], serviceType: '' }))}
               className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary" style={{ borderRadius: '2px' }}>
               {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Jogviszony</label>
+            <select value={form.serviceType} disabled={(serviceTypes[form.status] ?? []).length === 0} onChange={e => setForm(prev => ({ ...prev, serviceType: e.target.value }))}
+              className="w-full bg-input border border-border px-3 py-2 text-foreground text-sm focus:outline-none focus:border-primary disabled:opacity-50" style={{ borderRadius: '2px' }}>
+              <option value="">— nem ismert —</option>
+              {(serviceTypes[form.status] ?? []).map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {form.status === 'Tartalékos' ? 'Tartalékos nem vehet ki szabadságot; az állandó behívásosnak szolgálatmentesség jár.' : form.status === 'Aktív' || form.status === 'Szabadságon' ? 'Az aktív (szerződéses vagy hivatásos) állomány vehet ki szabadságot.' : ''}
+            </p>
           </div>
           <FormField label="Email" field="email" form={form} setForm={setForm} errors={errors} type="email" />
           <FormField label="Telefon" field="phone" form={form} setForm={setForm} errors={errors} maxLength={15} placeholder="+36 30 123 4567" inputMode="tel" />

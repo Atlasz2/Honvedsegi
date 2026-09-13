@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from ..audit import record_activity
+from ..core.scope import assert_person_in_scope, scope_units
 from ..core.dependencies import DB, Reader, Editor
 from ..core.time import utc_now
 from ..models import LeaveRequestModel, PersonModel, new_id
@@ -65,8 +66,11 @@ def _serialize(leave: LeaveRequestModel, person_name: str) -> LeaveRequestRead:
 
 
 @router.get("", response_model=list[LeaveRequestRead])
-def list_leave(db: DB, _: Reader, status_filter: str = Query("", alias="status"), personnel_id: str = ""):
+def list_leave(db: DB, user: Reader, status_filter: str = Query("", alias="status"), personnel_id: str = ""):
     query = select(LeaveRequestModel)
+    units = scope_units(user)
+    if units is not None:
+        query = query.where(LeaveRequestModel.personnel_id.in_(select(PersonModel.id).where(PersonModel.unit.in_(units))))
     if status_filter.strip():
         query = query.where(LeaveRequestModel.status == status_filter.strip())
     if personnel_id.strip():
@@ -100,6 +104,7 @@ def create_leave(payload: LeaveRequestCreate, db: DB, user: Editor):
     person = db.get(PersonModel, payload.personnelId)
     if not person:
         raise HTTPException(status_code=400, detail="Ismeretlen személy")
+    assert_person_in_scope(user, person)
     start = _parse_day(payload.startDate)
     end = _parse_day(payload.endDate)
     if end < start:
@@ -127,6 +132,9 @@ def decide_leave(leave_id: str, payload: LeaveDecision, db: DB, user: Editor):
     leave = db.get(LeaveRequestModel, leave_id)
     if not leave:
         raise HTTPException(status_code=404, detail="A kérelem nem található")
+    _person = db.get(PersonModel, leave.personnel_id)
+    if _person is not None:
+        assert_person_in_scope(user, _person)
     before = _snapshot(leave)
     leave.status = "Jóváhagyva" if payload.approve else "Elutasítva"
     leave.decided_by = user.username
@@ -146,6 +154,9 @@ def delete_leave(leave_id: str, db: DB, user: Editor):
     leave = db.get(LeaveRequestModel, leave_id)
     if not leave:
         raise HTTPException(status_code=404, detail="A kérelem nem található")
+    _person = db.get(PersonModel, leave.personnel_id)
+    if _person is not None:
+        assert_person_in_scope(user, _person)
     person = db.get(PersonModel, leave.personnel_id)
     record_activity(db, user, mode="delete", module=MODULE,
                     record_name=person.name if person else leave.personnel_id,

@@ -92,8 +92,21 @@ def test_chapters_are_independent_and_status_advances_automatically(client, admi
         {"role": "Törzsfőnök", "name": "Kis alezredes", "signed": True},
     ]}, headers=admin_headers)
     body = r.json()
+    # minden aláírás megvan, de a kiadás NEM automatikus — külön, megerősített lépés
+    assert body["status"] == "Aláírásra vár" and body["signedCount"] == 2
+    r = client.post(f"/api/orders/{order['id']}/issue", headers=admin_headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
     assert body["status"] == "Kiadva" and body["issuedDate"] == date.today().isoformat()
     assert body["pendingResponsibles"] == []
+    assert client.post(f"/api/orders/{order['id']}/issue", headers=admin_headers).status_code == 400, "kétszer nem adható ki"
+
+
+def test_issue_requires_all_signatures(client, admin_headers):
+    order_type = _type(client, admin_headers)
+    order = client.post("/api/orders", json={"orderTypeId": order_type["id"], "subject": "Félig aláírt"}, headers=admin_headers).json()
+    r = client.post(f"/api/orders/{order['id']}/issue", headers=admin_headers)
+    assert r.status_code == 400
 
 
 def test_type_change_does_not_alter_existing_orders(client, admin_headers):
@@ -243,6 +256,7 @@ def test_order_stats_and_pdf(client, admin_headers):
     done = _order(client, admin_headers, order_type["id"], subject="Kész parancs")
     done = _set_chapter(client, admin_headers, done, 0, "Kész", content="x")
     client.put(f"/api/orders/{done['id']}/signatures", json={"signatures": [{"role": "Parancsnok", "name": "N", "signed": True}]}, headers=admin_headers)
+    assert client.post(f"/api/orders/{done['id']}/issue", headers=admin_headers).status_code == 200
     _order(client, admin_headers, order_type["id"], subject="Nyitott parancs", dueDate="2020-01-01")
 
     stats = client.get("/api/orders/stats", headers=admin_headers).json()

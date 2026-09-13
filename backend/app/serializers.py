@@ -103,9 +103,10 @@ def serialize_exercise(db: Session, item: ExerciseModel, participants: list[Part
     return ExerciseRead(
         id=item.id, name=item.name, type=item.type,
         startDate=item.start_date, endDate=item.end_date, location=item.location,
-        organizer=item.organizer or "", maxPersonnel=item.max_personnel, description=item.description,
+        organizer=item.organizer or "", unit=item.unit or "", maxPersonnel=item.max_personnel, description=item.description,
         status=item.status, qualificationId=item.qualification_id or "",
         seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
+        handover=item.handover or None,
     )
 
 
@@ -120,7 +121,7 @@ def serialize_event(db: Session, item: EventModel, participants: list[Participan
     return EventRead(
         id=item.id, eventType=item.event_type, name=item.name, type=item.type,
         startDate=item.start_date, endDate=item.end_date, location=item.location,
-        organizer=item.organizer or "", maxPersonnel=item.max_personnel,
+        organizer=item.organizer or "", unit=item.unit or "", maxPersonnel=item.max_personnel,
         description=item.description, status=item.status, assigned=assigned,
     )
 
@@ -201,6 +202,7 @@ def serialize_announcement(item: AnnouncementModel) -> AnnouncementRead:
         author=item.author,
         date=item.date,
         pinned=item.pinned,
+        unit=item.unit or "",
     )
 
 

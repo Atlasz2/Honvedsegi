@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertTriangle, BarChart3, Copy, FileDown, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, BarChart3, Copy, FileDown, FileSignature, FileText, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   orders as store,
   personnel as personnelStore,
@@ -19,6 +19,7 @@ import {
 import type { Person } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
+import UnitSelect, { UnitChip } from '@/components/UnitSelect';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DatePickerInput from '@/components/DatePickerInput';
 
@@ -221,7 +222,7 @@ export default function Parancsok() {
               {visibleList.map((o) => (
                 <tr key={o.id} className="cursor-pointer hover:bg-secondary transition-colors" onClick={() => { void openDetail(o); }}>
                   <td className="font-mono text-xs">{o.number || '—'}</td>
-                  <td className="font-medium">{o.subject}</td>
+                  <td className="font-medium">{o.subject} <UnitChip unit={o.unit} /></td>
                   <td className="text-xs text-muted-foreground">{o.typeName}</td>
                   <td className="font-mono text-xs">
                     {o.dueDate || '—'}
@@ -250,6 +251,7 @@ export default function Parancsok() {
           onChanged={(updated) => { setDetail(updated); void refresh(); }}
           onDelete={() => setDeleteTarget(detail)}
           onCopy={() => setCopySource(detail)}
+          onAmended={(created) => { setDetail(created); void refresh(); }}
         />
       )}
 
@@ -283,9 +285,24 @@ export default function Parancsok() {
 // vastagságú — így ránézésre látszik, mi van még hátra. A margón fejezetenként
 // ott van a részleg, ki nyúlt hozzá utoljára és mikor.
 
-export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete, onCopy }: {
-  order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void; onCopy: () => void;
+export function OrderDetailModal({ order, canEdit: canEditProp, onClose, onChanged, onDelete, onCopy, onAmended }: {
+  order: Order; canEdit: boolean; onClose: () => void; onChanged: (o: Order) => void; onDelete: () => void; onCopy: () => void; onAmended?: (o: Order) => void;
 }) {
+  // Kiadott/visszavont parancs befagy: a fejezetek, aláírások, tárgy nem szerkeszthetők
+  // — módosító paranccsal lehet változtatni. Az „Adatok" (állapot, jegyzet) marad.
+  const locked = !!order.locked;
+  const canEdit = canEditProp && !locked;
+  const [amending, setAmending] = useState(false);
+  const amend = async () => {
+    setAmending(false);
+    try {
+      const created = await store.amend(order.id, { subject: `Módosítás: ${order.subject}` });
+      toast.success('Módosító parancs létrehozva — az eredeti érintetlen.');
+      onAmended?.(created);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
   const [metaOpen, setMetaOpen] = useState(false);
   const [status, setStatus] = useState<OrderStatus>(order.status);
   const [number, setNumber] = useState(order.number);
@@ -297,6 +314,7 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
   const [addingChapter, setAddingChapter] = useState(false);
   const [newChapter, setNewChapter] = useState<OrderChapterTemplate>(emptyChapter());
   const [removeChapter, setRemoveChapter] = useState<OrderChapter | null>(null);
+  const [confirmIssue, setConfirmIssue] = useState(false);
 
   useEffect(() => {
     setStatus(order.status); setNumber(order.number); setIssuer(order.issuer);
@@ -327,6 +345,19 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
         dueDate: patch.dueDate ?? chapter.dueDate,
         note: patch.note ?? chapter.note,
       }));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  // Kiadás: nem automatikus — a rendszer rákérdez, és csak akkor lesz „Kiadva".
+  const allSigned = signatures.length > 0 && signatures.every((s) => s.signed);
+  const canIssue = canEdit && allSigned && order.readyToSign && order.status !== 'Kiadva' && order.status !== 'Visszavonva';
+  const issue = async () => {
+    setConfirmIssue(false);
+    try {
+      onChanged(await store.issue(order.id));
+      toast.success('A parancs kiadva.');
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -384,12 +415,27 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
               : <span className="text-emerald-400">minden fejezet elfogadva</span>}
           </div>
           <div className="flex gap-2">
-            {canEdit && <button onClick={onCopy} title="Ugyanez a parancs más személyre" className="btn-mil-secondary text-xs flex items-center gap-1.5"><Copy className="w-3.5 h-3.5" />Másolás</button>}
+            {canEditProp && <button onClick={onCopy} title="Ugyanez a parancs más személyre" className="btn-mil-secondary text-xs flex items-center gap-1.5"><Copy className="w-3.5 h-3.5" />Másolás</button>}
+            {canEditProp && order.status === 'Kiadva' && (
+              <button onClick={() => setAmending(true)} title="Kiadott parancs csak módosító paranccsal változtatható" className="btn-mil-primary text-xs flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />Módosító parancs</button>
+            )}
             <button onClick={() => setMetaOpen((v) => !v)} className="btn-mil-secondary text-xs flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" />Adatok</button>
             <button onClick={() => { void download('docx'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />Word</button>
             <button onClick={() => { void download('pdf'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5"><FileDown className="w-3.5 h-3.5" />PDF</button>
           </div>
         </div>
+
+        {locked && (
+          <div className="border border-emerald-500/40 bg-emerald-500/5 px-3 py-2 text-xs font-mono text-emerald-400 flex items-center gap-2" style={radius}>
+            <FileSignature className="w-3.5 h-3.5" />
+            {order.status === 'Kiadva' ? `Kiadva${order.issuedDate ? ` ${order.issuedDate}` : ''} — a tartalom befagyott, a PDF a kiadáskori állapot.` : 'Visszavonva — a tartalom befagyott.'}
+            {(order.amendedByIds?.length ?? 0) > 0 && <span className="text-muted-foreground">· {order.amendedByIds!.length} módosító parancs hivatkozik rá</span>}
+            {order.amendsOrderId && <span className="text-muted-foreground">· módosító parancs</span>}
+          </div>
+        )}
+        {!locked && order.amendsOrderId && (
+          <p className="text-xs font-mono text-muted-foreground">Ez egy módosító parancs — az eredeti kiadott parancs érintetlen marad.</p>
+        )}
 
         {metaOpen && (
           <div className="border border-border p-3 space-y-3" style={radius}>
@@ -404,8 +450,8 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Állapot</label>
-                <select value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value as OrderStatus)} className={inputClass} style={radius}>
-                  {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                <select value={status} disabled={!canEditProp} onChange={(e) => setStatus(e.target.value as OrderStatus)} className={inputClass} style={radius}>
+                  {(locked ? (['Kiadva', 'Visszavonva'] as OrderStatus[]) : ORDER_STATUSES).map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -418,10 +464,10 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
               </div>
               <div className="md:col-span-3">
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Belső megjegyzés (nem kerül a dokumentumba)</label>
-                <input value={notes} disabled={!canEdit} onChange={(e) => setNotes(e.target.value)} className={inputClass} style={radius} />
+                <input value={notes} disabled={!canEditProp} onChange={(e) => setNotes(e.target.value)} className={inputClass} style={radius} />
               </div>
             </div>
-            {canEdit && (
+            {canEditProp && (
               <div className="flex justify-end">
                 <button onClick={() => { void saveMeta(); }} disabled={!metaDirty} className="btn-mil-primary text-xs">Adatok mentése</button>
               </div>
@@ -546,11 +592,21 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-mono text-muted-foreground">
-            {order.readyToSign
-              ? `Minden kötelező fejezet elfogadva — aláírható (${order.signedCount}/${order.signatures.length}).`
-              : `Aláírásra akkor kerülhet, ha minden kötelező fejezet elfogadott (még: ${order.pendingResponsibles.join(', ')}).`}
+            {order.status === 'Kiadva'
+              ? `Kiadva${order.issuedDate ? ` — ${order.issuedDate}` : ''}.`
+              : canIssue
+                ? 'Minden aláírás megvan — a parancs kiadható. A kiadás külön megerősítést kér.'
+                : order.readyToSign
+                  ? `Minden kötelező fejezet elfogadva — aláírható (${order.signedCount}/${order.signatures.length}).`
+                  : `Aláírásra akkor kerülhet, ha minden kötelező fejezet elfogadott (még: ${order.pendingResponsibles.join(', ')}).`}
           </p>
           <div className="flex gap-2">
+            {canIssue && (
+              <button onClick={() => setConfirmIssue(true)} className="btn-mil-primary text-xs flex items-center gap-1.5">
+                <FileSignature className="w-3.5 h-3.5" />
+                Kiadás
+              </button>
+            )}
             <button onClick={onClose} className="btn-mil-secondary text-xs">Bezárás</button>
             {canEdit && (
               <button onClick={onDelete} className="btn-mil-danger text-xs flex items-center gap-1.5">
@@ -561,6 +617,18 @@ export function OrderDetailModal({ order, canEdit, onClose, onChanged, onDelete,
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={amending}
+        onClose={() => setAmending(false)}
+        onConfirm={() => { void amend(); }}
+        message={`Módosító parancsot készítesz ehhez: „${order.number ? `${order.number} — ` : ''}${order.subject}". Az eredeti kiadott parancs nem változik; az új parancs ugyanazzal a szöveggel indul, szerkeszthető, és az eredetire hivatkozik.`}
+      />
+      <ConfirmDialog
+        open={confirmIssue}
+        onClose={() => setConfirmIssue(false)}
+        onConfirm={() => { void issue(); }}
+        message={`Kiadod a parancsot: „${order.number ? `${order.number} — ` : ''}${order.subject}"? A státusz „Kiadva" lesz, a kelt a mai nap${order.issuedDate ? ` (${order.issuedDate})` : ''}. Ez a lépés naplózódik.`}
+      />
       <ConfirmDialog open={!!removeChapter} onClose={() => setRemoveChapter(null)} onConfirm={() => { void doRemoveChapter(); }} message={`Törlöd a fejezetet: „${removeChapter?.name}"? A szövege elvész.`} />
     </Modal>
   );
@@ -841,6 +909,7 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
 }) {
   const [typeId, setTypeId] = useState('');
   const [subject, setSubject] = useState('');
+  const [unit, setUnit] = useState('');
   const [number, setNumber] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [personSearch, setPersonSearch] = useState('');
@@ -865,14 +934,14 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
     return () => { active = false; clearTimeout(handle); };
   }, [personSearch, selected]);
 
-  const reset = () => { setSubject(''); setNumber(''); setDueDate(''); setPersonSearch(''); setMatches([]); setSelected(null); };
+  const reset = () => { setSubject(''); setUnit(''); setNumber(''); setDueDate(''); setPersonSearch(''); setMatches([]); setSelected(null); };
 
   const submit = async () => {
     if (!typeId) { toast.error('Válassz parancstípust.'); return; }
     if (!subject.trim()) { toast.error('A tárgy kötelező.'); return; }
     setSubmitting(true);
     try {
-      await store.create({ orderTypeId: typeId, subject: subject.trim(), number: number.trim(), personnelId: selected?.id ?? '', dueDate });
+      await store.create({ orderTypeId: typeId, subject: subject.trim(), unit, number: number.trim(), personnelId: selected?.id ?? '', dueDate });
       toast.success('Parancs létrehozva — a fejezetek a sablonból kitöltve, szerkeszthetők.');
       reset();
       await onCreated();
@@ -910,6 +979,7 @@ function NewOrderModal({ open, types, onClose, onCreated }: {
             <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="12/2026" className={inputClass} style={radius} />
           </div>
         </div>
+        <UnitSelect value={unit} onChange={setUnit} />
         <div className="relative">
           <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Érintett személy (a sablon helyőrzőit ebből tölti ki)</label>
           <div className="relative">

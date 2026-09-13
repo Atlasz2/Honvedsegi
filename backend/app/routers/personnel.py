@@ -3,10 +3,11 @@ from __future__ import annotations
 import unicodedata
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..appliers import apply_person
 from ..audit import record_activity
+from ..core.scope import assert_person_in_scope, scoped_persons
 from ..core.dependencies import DB, Reader, Editor
 from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel
 from ..repository import require_model
@@ -56,20 +57,21 @@ def _sort_persons(persons: list[PersonModel], sort_by: str, sort_dir: str) -> li
 
 
 @router.get("", response_model=list[PersonRead])
-def list_personnel(db: DB, _: Reader):
+def list_personnel(db: DB, user: Reader):
     quals_by_person = load_qualification_ids_by_person(db)
-    persons = _sort_persons(db.scalars(select(PersonModel)).all(), "name", "asc")
+    persons = _sort_persons(db.scalars(scoped_persons(select(PersonModel), user)).all(), "name", "asc")
     return [serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in persons]
 
 
 @router.get("/lite", response_model=list[PersonLite])
-def list_personnel_lite(db: DB, _: Reader):
+def list_personnel_lite(db: DB, user: Reader):
     """Csak az azonosításhoz kellő mezők, egyetlen lekérdezésből — a beosztó
     felületek ezt töltik, nem a teljes aktát."""
     rows = db.execute(
-        select(PersonModel.id, PersonModel.name, PersonModel.sztsz, PersonModel.rank, PersonModel.unit, PersonModel.status)
-        .where(PersonModel.status != "Leszerelt")
-        .order_by(PersonModel.name)
+        scoped_persons(
+            select(PersonModel.id, PersonModel.name, PersonModel.sztsz, PersonModel.rank, PersonModel.unit, PersonModel.status)
+            .where(PersonModel.status != "Leszerelt"), user,
+        ).order_by(PersonModel.name)
     ).all()
     return [PersonLite(id=i, name=n, sztsz=s, rank=r, unit=u, status=st) for i, n, s, r, u, st in rows]
 
@@ -77,7 +79,7 @@ def list_personnel_lite(db: DB, _: Reader):
 @router.get("/paged")
 def list_personnel_paged(
     db: DB,
-    _: Reader,
+    user: Reader,
     page: int = 1,
     page_size: int = 25,
     q: str = "",
@@ -91,7 +93,7 @@ def list_personnel_paged(
     page_size = max(1, min(page_size, 100))
 
     # Exact-match filters run in SQL on indexed columns.
-    base_query = select(PersonModel)
+    base_query = scoped_persons(select(PersonModel), user)
     if unit.strip():
         base_query = base_query.where(PersonModel.unit == unit.strip())
     if status_filter.strip() and status_filter.strip() not in ("Osszes", "Összes"):
@@ -125,12 +127,17 @@ def list_personnel_paged(
 
     # Build response objects only for the current page, not the whole result set.
     items = [serialize_person_with_quals(p, quals_by_person.get(p.id, [])) for p in page_persons]
+    # Státusz-összesítő a fejléc kártyáihoz — SQL-ben, a teljes (szűretlen)
+    # állományra, hogy a felületnek ne kelljen a teljes listát letöltenie.
+    counts_query = scoped_persons(select(PersonModel.status, func.count()).group_by(PersonModel.status), user)
+    status_counts = {status: n for status, n in db.execute(counts_query).all()}
     return {
         "items": [i.model_dump() for i in items],
         "page": page,
         "pageSize": page_size,
         "total": total,
         "totalPages": total_pages,
+        "statusCounts": status_counts,
     }
 
 
@@ -141,15 +148,17 @@ _EVENT_MODELS = {
 
 
 @router.get("/{item_id}", response_model=PersonRead)
-def get_person(item_id: str, db: DB, _: Reader):
+def get_person(item_id: str, db: DB, user: Reader):
     """Egy személy aktája — a gyorskereső és a más oldalról érkező megnyitás ezt használja."""
-    return serialize_person_with_qual_table(db, require_model(db, PersonModel, item_id))
+    item = require_model(db, PersonModel, item_id)
+    assert_person_in_scope(user, item)
+    return serialize_person_with_qual_table(db, item)
 
 
 @router.get("/{item_id}/history")
-def get_person_history(item_id: str, db: DB, _: Reader):
+def get_person_history(item_id: str, db: DB, user: Reader):
     """Egy személy teljes eseménytörténete névvel és dátumokkal."""
-    require_model(db, PersonModel, item_id)
+    assert_person_in_scope(user, require_model(db, PersonModel, item_id))
     rows = db.scalars(
         select(ParticipantModel)
         .where(ParticipantModel.personnel_id == item_id)
@@ -206,6 +215,7 @@ def create_person(payload: PersonCreate, db: DB, user: Editor):
 @router.put("/{item_id}", response_model=PersonRead)
 def update_person(item_id: str, payload: PersonUpdate, db: DB, user: Editor):
     item = require_model(db, PersonModel, item_id)
+    assert_person_in_scope(user, item)
     before = _person_snapshot(item)
     normalized = normalize_sztsz(payload.sztsz)
     assert_unique_sztsz(db, normalized, exclude_id=item_id)
@@ -221,6 +231,7 @@ def update_person(item_id: str, payload: PersonUpdate, db: DB, user: Editor):
 @router.delete("/{item_id}", status_code=204)
 def delete_person(item_id: str, db: DB, user: Editor):
     item = require_model(db, PersonModel, item_id)
+    assert_person_in_scope(user, item)
     before = _person_snapshot(item)
     record_name = item.name
     db.delete(item)
@@ -250,10 +261,13 @@ class PersonnelBulkGrant(_BaseModel):
     earnedDate: str
 
 
-def _bulk_targets(db, ids: list[str]) -> list[PersonModel]:
+def _bulk_targets(db, ids: list[str], user=None) -> list[PersonModel]:
     if not ids or len(ids) > 2000:
         raise HTTPException(status_code=400, detail="1–2000 kijelölt személy kell")
-    return db.scalars(select(PersonModel).where(PersonModel.id.in_(ids))).all()
+    query = select(PersonModel).where(PersonModel.id.in_(ids))
+    if user is not None:
+        query = scoped_persons(query, user)   # más terület személye csendben kimarad
+    return db.scalars(query).all()
 
 
 @router.post("/bulk")
@@ -262,7 +276,7 @@ def bulk_update(payload: PersonnelBulkUpdate, db: DB, user: Editor):
     if payload.status is None and (payload.unit is None or not payload.unit.strip()):
         raise HTTPException(status_code=400, detail="Add meg, mit állítunk át: státuszt vagy alegységet")
     changed = 0
-    for person in _bulk_targets(db, payload.ids):
+    for person in _bulk_targets(db, payload.ids, user):
         before = _person_snapshot(person)
         if payload.status is not None:
             person.status = payload.status
@@ -283,7 +297,7 @@ def bulk_grant(payload: PersonnelBulkGrant, db: DB, user: Editor):
     qual_type = db.get(QualificationTypeModel, payload.qualTypeId)
     if not qual_type:
         raise HTTPException(status_code=404, detail="Képesítés-típus nem található")
-    targets = _bulk_targets(db, payload.ids)
+    targets = _bulk_targets(db, payload.ids, user)
     held = {pid for (pid,) in db.execute(
         select(PersonnelQualificationModel.personnel_id).where(
             PersonnelQualificationModel.qual_type_id == qual_type.id,

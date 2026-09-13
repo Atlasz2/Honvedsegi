@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { announcements as announcementStore, attendance, getErrorMessage, leave, operations as operationStore, type AttendanceDay, type OperationsNow } from '@/lib/store';
 import type { Announcement } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { useReferenceData } from '@/lib/queries';
 import { useAutoRefresh } from '@/lib/useAutoRefresh';
 
 const radius = { borderRadius: '2px' } as const;
@@ -36,8 +37,46 @@ export default function Attekintes() {
   const navigate = useNavigate();
   const { canEdit } = useAuth();
   const date = todayIso();
-  const [now, setNow] = useState<OperationsNow | null>(null);
-  const [day, setDay] = useState<AttendanceDay | null>(null);
+  const [nowRaw, setNow] = useState<OperationsNow | null>(null);
+  const [dayRaw, setDay] = useState<AttendanceDay | null>(null);
+  // Ezredtörzs: zászlóaljanként is nézhető (a zászlóalj ügyintézője a szervertől eleve csak a sajátját kapja).
+  const { user } = useAuth();
+  const { data: reference } = useReferenceData();
+  const unitOptions = Object.keys(reference.unitLabels ?? {}).filter((u) => u !== reference.regimentUnit);
+  const [unitView, setUnitView] = useState<string>('all');
+  const inView = (unit: string | undefined) => unitView === 'all' || (unit ?? '') === unitView || (unitView !== '' && !(unit ?? ''));
+  const now = useMemo<OperationsNow | null>(() => {
+    if (!nowRaw || unitView === 'all') return nowRaw;
+    const onTask = nowRaw.onTask.filter((r) => (unitView === '' ? !r.operationUnit : r.unit === unitView || r.operationUnit === unitView));
+    return {
+      ...nowRaw,
+      running: nowRaw.running.filter((r) => (unitView === '' ? !r.unit : inView(r.unit))),
+      onTask,
+      onTaskPeople: new Set(onTask.map((r) => r.personnelId)).size,
+      upcoming: nowRaw.upcoming.filter((r) => (unitView === '' ? !r.unit : inView(r.unit))),
+    };
+  }, [nowRaw, unitView]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const day = useMemo<AttendanceDay | null>(() => {
+    if (!dayRaw || unitView === 'all') return dayRaw;
+    const items = dayRaw.items.filter((i) => (unitView === '' ? i.unit === reference.regimentUnit : i.unit === unitView));
+    const summary: Record<string, number> = {};
+    items.forEach((i) => { summary[i.status] = (summary[i.status] ?? 0) + 1; });
+    return { ...dayRaw, items, summary, total: items.length };
+  }, [dayRaw, unitView, reference.regimentUnit]);
+  // Zászlóalj-sáv: egy sorban, mi hol áll (csak az ezredtörzsnek).
+  const battalionStrip = useMemo(() => {
+    if (!nowRaw || !dayRaw || user?.unit) return [];
+    return unitOptions.map((u) => ({
+      unit: u,
+      label: reference.unitLabels?.[u] ?? u,
+      onTask: new Set(nowRaw.onTask.filter((r) => r.unit === u).map((r) => r.personnelId)).size,
+      running: nowRaw.running.filter((r) => r.unit === u).length,
+      exceptions: dayRaw.items.filter((i) => i.unit === u && i.status !== 'Jelen').length,
+      present: dayRaw.items.filter((i) => i.unit === u && i.status === 'Jelen').length,
+      upcoming: nowRaw.upcoming.filter((r) => r.unit === u).length,
+      closed: dayRaw.closures.find((c) => c.unit === u) ?? null,
+    }));
+  }, [nowRaw, dayRaw, unitOptions, reference.unitLabels, user?.unit]);
   const [pendingLeave, setPendingLeave] = useState(0);
   const [news, setNews] = useState<Announcement[]>([]);
 
@@ -94,6 +133,35 @@ export default function Attekintes() {
           <button onClick={() => navigate('/riportok')} className="btn-mil-secondary text-xs">Riport készítése →</button>
         </div>
       </div>
+
+      {battalionStrip.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-xs uppercase tracking-military font-mono text-muted-foreground">Nézet:</span>
+            {[['all', 'Minden zászlóalj'], ['', 'Ezredszintű'], ...unitOptions.map((u) => [u, reference.unitLabels?.[u] ?? u])].map(([key, label]) => (
+              <button key={key} onClick={() => setUnitView(key)} className={`px-3 py-1 text-xs uppercase tracking-military font-mono ${unitView === key ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>{label}</button>
+            ))}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {battalionStrip.map((b) => (
+              <button key={b.unit} onClick={() => setUnitView(unitView === b.unit ? 'all' : b.unit)} className={`bg-card border p-3 text-left hover:bg-secondary/40 ${unitView === b.unit ? 'border-primary' : 'border-border'}`} style={radius}>
+                <div className="flex items-center justify-between">
+                  <span className="font-rajdhani font-bold uppercase tracking-military text-primary">{b.label}</span>
+                  <span className={`text-[10px] font-mono ${b.closed ? 'text-emerald-400' : 'text-amber-400'}`} title={b.closed ? `Lezárta: ${b.closed.closedByName}` : 'A mai létszám még nincs lezárva'}>
+                    {b.closed ? `létszám lezárva ${new Date(b.closed.closedAt).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}` : 'létszám nyitott'}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-4 gap-2 text-center">
+                  <div><div className="text-lg font-rajdhani font-bold">{b.onTask}</div><div className="text-[10px] uppercase text-muted-foreground">feladatban</div></div>
+                  <div><div className="text-lg font-rajdhani font-bold">{b.running}</div><div className="text-[10px] uppercase text-muted-foreground">futó művelet</div></div>
+                  <div><div className={`text-lg font-rajdhani font-bold ${b.exceptions ? 'text-amber-400' : ''}`}>{b.exceptions}</div><div className="text-[10px] uppercase text-muted-foreground">eltérés</div></div>
+                  <div><div className="text-lg font-rajdhani font-bold">{b.upcoming}</div><div className="text-[10px] uppercase text-muted-foreground">közelgő</div></div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="stats-card border-l-2 border-l-primary">

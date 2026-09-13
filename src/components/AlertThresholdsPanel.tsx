@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Plus, Trash2 } from 'lucide-react';
 import { settings as settingsStore, getErrorMessage, type AlertSetting, type CustomAlertRule, type CustomRuleField } from '@/lib/store';
@@ -32,7 +32,7 @@ export default function AlertThresholdsPanel({ canEdit }: { canEdit: boolean }) 
     setEnabled(Object.fromEntries(list.map((i) => [i.key, i.enabled])));
   };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [result, custom] = await Promise.all([settingsStore.alerts(), settingsStore.customRules()]);
       applyItems(result.items);
@@ -42,8 +42,8 @@ export default function AlertThresholdsPanel({ canEdit }: { canEdit: boolean }) 
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
-  };
-  useEffect(() => { void load(); }, []);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const dirty = items.some((i) => values[i.key] !== String(i.value) || enabled[i.key] !== i.enabled);
   const rulesDirty = JSON.stringify(rules) !== JSON.stringify(savedRules);

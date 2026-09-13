@@ -37,6 +37,7 @@ class UserRead(ORMModel):
     role: Role
     active: bool
     department: str = ""
+    region: str = ""
     last_login: datetime | None = None
 
 
@@ -47,6 +48,7 @@ class UserCreate(BaseModel):
     role: Role
     active: bool = True
     department: str = ""
+    region: str = ""
 
 
 class UserUpdate(BaseModel):
@@ -55,6 +57,7 @@ class UserUpdate(BaseModel):
     active: bool
     password: str | None = None
     department: str = ""
+    region: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -67,6 +70,9 @@ class AuthUser(BaseModel):
     displayName: str
     role: Role
     department: str = ""
+    region: str = ""
+    regionLabel: str = ""   # „31. TVZ – Veszprém" / „Ezredtörzs (Győr)"
+    unit: str = ""          # a saját zászlóalj (üres = ezredtörzs, minden)
     expiry: int
 
 
@@ -86,11 +92,30 @@ class AttendanceEntry(BaseModel):
     note: str = ""
 
 
+class AttendanceClosure(BaseModel):
+    unit: str
+    unitLabel: str
+    closedBy: str
+    closedByName: str
+    closedAt: datetime
+    note: str = ""
+
+
 class AttendanceDayRead(BaseModel):
     date: str
     total: int
     summary: dict[str, int]
     items: list[AttendanceEntry]
+    # Mely zászlóaljak zárták már le a napot (a hatókörön belül).
+    closures: list[AttendanceClosure] = []
+    # A kérő saját zászlóalja (vagy ezredszint) le van-e zárva erre a napra.
+    closedForMe: bool = False
+
+
+class AttendanceCloseRequest(BaseModel):
+    date: str
+    unit: str = ""   # ezredtörzs adhat meg zászlóaljat; a zászlóalj ügyintézője a sajátját zárja
+    note: str = ""
 
 
 class AttendanceMark(BaseModel):
@@ -102,6 +127,8 @@ class AttendanceMark(BaseModel):
 class AttendanceUpdate(BaseModel):
     date: str
     items: list[AttendanceMark]
+    # Lezárt nap módosításához kötelező az indoklás (naplózódik).
+    overrideReason: str = ""
 
 
 class AttendanceFill(BaseModel):
@@ -332,6 +359,7 @@ class ExerciseBase(BaseModel):
     endDate: str
     location: str = ""
     organizer: str = ""
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
     maxPersonnel: int = 0
     description: str = ""
     status: ExerciseStatus
@@ -349,8 +377,23 @@ class ExerciseUpdate(ExerciseBase):
     pass
 
 
+class DutyHandover(BaseModel):
+    handedOverBy: str = ""
+    handedOverAt: str = ""
+    takenOverBy: str = ""
+    takenOverAt: str = ""
+    note: str = ""
+
+
+class DutyHandoverUpdate(BaseModel):
+    action: Literal["handover", "takeover", "clear"]
+    personName: str = ""
+    note: str = ""
+
+
 class ExerciseRead(ExerciseBase):
     id: str
+    handover: DutyHandover | None = None
 
 
 class SeriesBase(BaseModel):
@@ -477,6 +520,7 @@ class EventBase(BaseModel):
     endDate: str
     location: str = ""
     organizer: str = ""
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
     maxPersonnel: int = 0
     description: str = ""
     status: ExerciseStatus
@@ -652,6 +696,7 @@ class AnnouncementBase(BaseModel):
     author: str
     date: str
     pinned: bool = False
+    unit: str = ""   # üres = ezredszintű
 
 
 class AnnouncementCreate(BaseModel):
@@ -659,6 +704,7 @@ class AnnouncementCreate(BaseModel):
     category: AnnouncementCategory
     content: str
     pinned: bool = False
+    unit: str = ""
 
 
 class AnnouncementUpdate(AnnouncementCreate):
@@ -827,6 +873,21 @@ class ImportPreviewItem(BaseModel):
     rawData: dict[str, str] = {}
     unknownData: dict[str, str] = {}
     issues: list[str] = []
+    # Mi változik a meglévő rekordhoz képest: mező → (régi, új). Új rekordnál üres.
+    changes: dict[str, list[str]] = {}
+
+
+class ImportDiffSummary(BaseModel):
+    """„12 új, 3 leszerelt, 5 alegység-váltás" — mielőtt elfogadod."""
+    new: int = 0
+    unchanged: int = 0
+    changed: int = 0
+    discharged: int = 0        # státusz → Leszerelt
+    unitChanges: int = 0
+    statusChanges: int = 0
+    rankChanges: int = 0
+    outOfScope: int = 0        # a fájlban van, de nem az én zászlóaljam
+    byUnit: dict[str, dict[str, int]] = {}   # alegység → {new, changed, discharged}
 
 
 class ImportMissingPerson(BaseModel):
@@ -853,6 +914,7 @@ class ImportPreviewResult(BaseModel):
     # (napi KGIR-exportnál ez a leszereltek / hibás export jelzője).
     missingCount: int = 0
     missing: list[ImportMissingPerson] = []
+    diff: ImportDiffSummary = ImportDiffSummary()
 
 
 class ImportDraftItemUpdate(BaseModel):
@@ -950,6 +1012,7 @@ class OrderSignaturesUpdate(BaseModel):
 class OrderCreate(BaseModel):
     orderTypeId: str
     subject: str
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
     number: str = ""
     issuer: str = ""
     personnelId: str = ""
@@ -980,6 +1043,10 @@ class OrderRead(BaseModel):
     id: str
     orderTypeId: str
     typeName: str
+    unit: str = ""
+    amendsOrderId: str = ""     # ha módosító parancs: az eredeti
+    amendedByIds: list[str] = []  # ha kiadott: a rá hivatkozó módosító parancsok
+    locked: bool = False        # Kiadva/Visszavonva: a tartalom befagyott
     number: str
     issuer: str
     subject: str
