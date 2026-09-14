@@ -37,6 +37,6 @@ def test_partial_match_finds_booking_and_free_day_is_empty(client, admin_headers
 
 
 def test_cancelled_event_does_not_block(client, admin_headers):
-    _add_exercise(name="Törölt lövészet", location="Aknavető lőtér", start="2027-01-05", end="2027-01-05", status="Törölve")
+    _add_exercise(name="Törölt lövészet", location="Aknavető lőtér", start="2027-01-05", end="2027-01-05", status="Lemondva")
     result = client.get("/api/availability?start_date=2027-01-05&q=aknaveto", headers=admin_headers).json()
     assert result == []

@@ -14,7 +14,7 @@ const statusDot: Record<string, string> = {
   Tervezett: "bg-blue-500",
   Folyamatban: "bg-green-500",
   Befejezett: "bg-gray-400",
-  Törölve: "bg-red-500",
+  Lemondva: "bg-red-500",
 };
 
 function TreeItem({

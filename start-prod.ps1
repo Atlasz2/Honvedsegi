@@ -22,8 +22,10 @@ $env:BACKEND_ALLOWED_HOSTS = '*'
 # használatban; a változó csak nem lehet üres production módban.
 $env:BACKEND_ALLOWED_ORIGINS = 'http://localhost'
 
-# Több párhuzamos riport-generálásnál (PDF/Excel/Word) érdemes lehet 2-4-re
-# emelni. Minimális erőforrásigényhez hagyd 1-en.
+# MARADJON 1! A rendszer folyamaton belüli állapotot használ (import-tervezetek,
+# változás-számláló, státusz-frissítés időzítője) és SQLite az adatbázis — több
+# worker esetén ezek szétesnének (az egyik folyamat nem látná a másik tervezetét).
+# Több felhasználó kiszolgálását a folyamaton belüli szálak adják (64), nem a workerek.
 $Workers = '1'
 
 # ── Titkok betöltése (backend\prod.env) ─────────────────────────────────────
@@ -48,4 +50,20 @@ if (-not (Test-Path (Join-Path $root 'dist\index.html'))) {
 # ── Indítás ─────────────────────────────────────────────────────────────────
 $python = Join-Path $root '.venv\Scripts\python.exe'
 Set-Location (Join-Path $root 'backend')
-& $python -m uvicorn app.main:app --host $BindHost --port $Port --workers $Workers
+# ── HTTPS (ajánlott az intraneten is: a jelszó ne menjen nyílt szövegben) ────
+# Tanúsítvány + kulcs PEM formátumban a backend\certs mappában (server.crt, server.key).
+# Önaláírt tanúsítvány készítése egyszer:  python make_selfsigned_cert.py  (a backend mappából)
+# Ilyenkor a böngésző első alkalommal „nem biztonságos” figyelmeztetést ad — a
+# tanúsítványt a kliens gépekre telepítve (Megbízható gyökér) ez eltűnik.
+$certFile = Join-Path $root 'backend\certs\server.crt'
+$keyFile  = Join-Path $root 'backend\certs\server.key'
+$sslArgs = @()
+if ((Test-Path $certFile) -and (Test-Path $keyFile)) {
+    $sslArgs = @('--ssl-certfile', $certFile, '--ssl-keyfile', $keyFile)
+    Write-Host "HTTPS: https://<gep-neve>:$Port  (tanúsítvány: $certFile)" -ForegroundColor Green
+} else {
+    Write-Warning "Nincs tanúsítvány (backend\certs\server.crt + server.key) — a rendszer HTTP-n fut, a jelszó nyílt szövegben megy a hálózaton."
+    Write-Warning "Készíts egyet: cd backend ; ..\.venv\Scripts\python.exe make_selfsigned_cert.py"
+}
+
+& $python -m uvicorn app.main:app --host $BindHost --port $Port --workers $Workers @sslArgs

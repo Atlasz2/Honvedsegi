@@ -1,23 +1,26 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { useLocation } from 'react-router-dom';
 import { Calendar, MapPin, Plus, Search, Trash2, Users, Pencil } from 'lucide-react';
 import { events, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
-import type { AppEvent, BasicAssignment, Person } from '@/lib/types';
+import type { AppEvent, BasicAssignment, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { rankWeight, shortRank } from '@/lib/rank';
 import Modal from '@/components/Modal';
+import UnitSelect, { UnitChip } from '@/components/UnitSelect';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DatePickerInput from '@/components/DatePickerInput';
+import DateTimePickerInput from '@/components/DateTimePickerInput';
 import { toast } from 'sonner';
 
-type EventStatus = 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
-const STATUSES: EventStatus[] = ['Tervezett', 'Folyamatban', 'Befejezett', 'Törölve'];
+type EventStatus = 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
+const STATUSES: EventStatus[] = ['Tervezett', 'Folyamatban', 'Befejezett', 'Lemondva'];
 
 const statusClass: Record<EventStatus, string> = {
   Tervezett: 'badge-planned',
   Folyamatban: 'badge-ongoing',
   Befejezett: 'badge-completed',
-  Törölve: 'badge-cancelled',
+  Lemondva: 'badge-cancelled',
 };
 
 const emptyForm: Omit<AppEvent, 'id'> = {
@@ -28,6 +31,7 @@ const emptyForm: Omit<AppEvent, 'id'> = {
   endDate: '',
   location: '',
   organizer: '',
+  unit: '',
   maxPersonnel: 20,
   description: '',
   status: 'Tervezett',
@@ -38,10 +42,11 @@ export default function Events() {
   const location = useLocation();
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<AppEvent[]>([]);
-  const [personnelData, setPersonnelData] = useState<Person[]>([]);
+  const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'Összes' | EventStatus>('Összes');
+  // Alapból csak az aktuális (tervezett + folyamatban): a lezajlottak nem töltik meg a listát.
+  const [filter, setFilter] = useState<'Összes' | 'Aktuális' | EventStatus>('Aktuális');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [creating, setCreating] = useState(false);
@@ -60,10 +65,9 @@ export default function Events() {
 
   const refresh = useCallback(async () => {
     try {
-      const [items, people] = await Promise.all([events.getAll(), pStore.getAll()]);
+      const items = await events.getAll();
       const sorted = [...items].sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(sorted);
-      setPersonnelData(people);
       if (detailRef.current) {
         const updated = sorted.find((x) => x.id === detailRef.current!.id) ?? null;
         setDetail(updated);
@@ -75,17 +79,19 @@ export default function Events() {
     }
   }, []);
 
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
+
+  // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
   useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => void refresh(), 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+    pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
+  }, []);
 
   const filtered = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
       if (normalized && ![item.name, item.type, item.location, item.organizer, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
-      if (filter !== 'Összes' && item.status !== filter) return false;
+      if (filter === 'Aktuális' ? !(item.status === 'Tervezett' || item.status === 'Folyamatban') : filter !== 'Összes' && item.status !== filter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
       return true;
@@ -96,7 +102,7 @@ export default function Events() {
   const safePage = Math.min(page, totalPages);
   const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const statusCounts: Record<EventStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Törölve: 0 };
+  const statusCounts: Record<EventStatus, number> = { Tervezett: 0, Folyamatban: 0, Befejezett: 0, Lemondva: 0 };
   data.forEach((item) => { statusCounts[item.status] += 1; });
 
   useEffect(() => {
@@ -221,10 +227,14 @@ export default function Events() {
     }
   };
 
+  // Az eseménynél az óra a lényeg (állománygyűlés 18:00): ha van idő, mutatjuk.
   const formatDate = (value: string) => {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString('hu-HU');
+    const hasTime = value.includes('T');
+    return hasTime
+      ? parsed.toLocaleString('hu-HU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : parsed.toLocaleDateString('hu-HU');
   };
 
   return (
@@ -241,7 +251,7 @@ export default function Events() {
         <div className="stats-card"><div className="stats-number">{statusCounts.Tervezett}</div><div className="stats-label">Tervezett</div></div>
         <div className="stats-card"><div className="stats-number">{statusCounts.Folyamatban}</div><div className="stats-label">Folyamatban</div></div>
         <div className="stats-card"><div className="stats-number">{statusCounts.Befejezett}</div><div className="stats-label">Befejezett</div></div>
-        <div className="stats-card"><div className="stats-number">{statusCounts.Törölve}</div><div className="stats-label">Törölve</div></div>
+        <div className="stats-card"><div className="stats-number">{statusCounts.Lemondva}</div><div className="stats-label">Lemondva</div></div>
       </div>
 
       <div className="flex gap-2 mb-6 flex-wrap items-end">
@@ -255,8 +265,8 @@ export default function Events() {
             style={{ borderRadius: '2px' }}
           />
         </div>
-        {['Összes', ...STATUSES].map((s) => (
-          <button key={s} onClick={() => { setFilter(s as 'Összes' | EventStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+        {['Aktuális', 'Összes', ...STATUSES].map((s) => (
+          <button key={s} onClick={() => { setFilter(s as 'Összes' | 'Aktuális' | EventStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`} title={s === 'Aktuális' ? 'Tervezett + folyamatban' : undefined}>
             {s}
           </button>
         ))}
@@ -286,9 +296,15 @@ export default function Events() {
                     {item.status}
                   </span>
                 </div>
-                <span className="mono-chip text-xs mb-3 inline-block">{item.type}</span>
+                <span className="mono-chip text-xs mb-3 inline-block">{item.type}</span> <UnitChip unit={item.unit} />
                 <div className="space-y-1 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span className="font-mono text-xs text-muted-foreground">{item.startDate.slice(0, 10)}</span>
+                    {item.startDate.includes('T') && <span className="font-rajdhani font-bold text-xl text-primary leading-none">{item.startDate.slice(11, 16)}</span>}
+                    {item.endDate.includes('T') && item.endDate.slice(0, 10) === item.startDate.slice(0, 10) && <span className="font-mono text-xs text-muted-foreground">– {item.endDate.slice(11, 16)}</span>}
+                    {item.endDate.slice(0, 10) !== item.startDate.slice(0, 10) && <span className="font-mono text-xs text-muted-foreground">→ {formatDate(item.endDate)}</span>}
+                  </div>
                   <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />{item.location || 'Nincs megadva'}</div>
                   <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /><span className="font-mono text-primary">{item.assigned.length}</span>/{item.maxPersonnel} fő</div>
                   <div className="text-xs">Szervező: <span className="font-mono text-primary">{item.organizer?.trim() || 'Nincs megadva'}</span></div>
@@ -390,13 +406,13 @@ export default function Events() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete *</label>
-              <DatePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} />
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kezdete (dátum és óra) *</label>
+              <DateTimePickerInput value={form.startDate} onChange={(value) => setForm({ ...form, startDate: value })} />
               {errors.startDate && <p className="text-destructive text-xs mt-1">{errors.startDate}</p>}
             </div>
             <div>
-              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége *</label>
-              <DatePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} />
+              <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Vége (dátum és óra) *</label>
+              <DateTimePickerInput value={form.endDate} onChange={(value) => setForm({ ...form, endDate: value })} />
               {errors.endDate && <p className="text-destructive text-xs mt-1">{errors.endDate}</p>}
             </div>
           </div>
@@ -408,6 +424,7 @@ export default function Events() {
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Szervező</label>
             <input value={form.organizer} onChange={(e) => setForm({ ...form, organizer: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} />
           </div>
+          <UnitSelect value={form.unit ?? ''} onChange={(unit) => setForm({ ...form, unit })} />
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Max létszám</label>
             <input type="number" value={form.maxPersonnel} onChange={(e) => setForm({ ...form, maxPersonnel: Number(e.target.value) || 0 })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} />

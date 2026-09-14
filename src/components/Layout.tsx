@@ -1,43 +1,73 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, ShieldAlert, CalendarRange, CalendarDays, Megaphone, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, Activity, CalendarSearch, History,
+  LayoutDashboard, ListChecks, Users, Crosshair, Shield as ShieldIcon,
+  Package, Truck, CalendarRange, CalendarDays, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, History, FileSignature,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
+import CommandPalette, { openCommandPalette } from '@/components/CommandPalette';
+import { useConnection, setOnline } from '@/lib/connection';
+import { Search, WifiOff } from 'lucide-react';
+import NewsBell from '@/components/NewsBell';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import { activeNavPath } from '@/lib/navigation';
 
-const navItems = [
-  { path: '/', label: 'Áttekintés', icon: LayoutDashboard },
-  { path: '/helyzetkep', label: 'Helyzetkép', icon: Activity },
+// A menü sorrendje a napi munka sorrendje: ami rám vár → mi a helyzet → naptár →
+// emberek → feladatok → parancsok → figyelmeztetések → napló → beállítások.
+// A Helyzetkép az Áttekintésbe, a Foglaltság a Közös naptárba, a Hírek az
+// Áttekintésbe olvadt; a logisztika (felszerelés/készlet/jármű) külön csoport a
+// végén — 2 hét múlva dől el, kell-e egyáltalán.
+type NavItem = { path: string; label: string; icon: typeof Users; alertBadge?: boolean; editorOnly?: boolean; group?: string };
+
+const navItems: NavItem[] = [
+  { path: '/', label: 'Teendőim', icon: ListChecks },
+  { path: '/attekintes', label: 'Áttekintés', icon: LayoutDashboard },
   { path: '/kozos-naptar', label: 'Közös naptár', icon: CalendarRange },
-  { path: '/foglaltsag', label: 'Foglaltság', icon: CalendarSearch },
   { path: '/personnel', label: 'Személyek', icon: Users },
   { path: '/letszam', label: 'Létszám', icon: ClipboardCheck },
   { path: '/szabadsag', label: 'Szabadság', icon: Palmtree },
-  { path: '/duties', label: 'Szolgálatok', icon: ShieldAlert },
   { path: '/operations', label: 'Műveletek', icon: Crosshair },
   { path: '/events', label: 'Események', icon: CalendarDays },
-  { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon },
-  { path: '/inventory', label: 'Készletek', icon: Package },
-  { path: '/vehicles', label: 'Járművek', icon: Truck },
-  { path: '/announcements', label: 'Hírek', icon: Megaphone },
+  { path: '/parancsok', label: 'Parancsok', icon: FileSignature },
   { path: '/figyelmeztetesek', label: 'Figyelmeztetések', icon: BellRing, alertBadge: true },
   { path: '/activity-log', label: 'Napló', icon: History },
   { path: '/settings', label: 'Beállítások', icon: Settings, editorOnly: true },
+  { path: '/equipment', label: 'Felszerelés', icon: ShieldIcon, group: 'Logisztika' },
+  { path: '/inventory', label: 'Készletek', icon: Package, group: 'Logisztika' },
+  { path: '/vehicles', label: 'Járművek', icon: Truck, group: 'Logisztika' },
 ];
 
 const roleBadge: Record<string, string> = {
   admin: 'ADMIN',
   reader: 'OLVASÓ',
   editor: 'SZERKESZTŐ',
-  fejleszto: 'FEJLESZTŐ',
+  fejleszto: 'ALKOTÓ',
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout, isAdmin, canEdit } = useAuth();
+  const { user, logout, canEdit } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
+  const online = useConnection();
+  const location = useLocation();
+  const activePath = activeNavPath(location.pathname, navItems.map((item) => item.path));
+
+  // Kapcsolat-vesztéskor 5 másodpercenként megpróbáljuk a health-végpontot,
+  // és amint válaszol, a sáv eltűnik.
+  useEffect(() => {
+    if (online) return;
+    const iv = setInterval(async () => {
+      try {
+        const response = await fetch('/api/health', { cache: 'no-store' });
+        if (response.ok) setOnline(true);
+      } catch {
+        // még mindig nincs kapcsolat
+      }
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [online]);
 
   useEffect(() => {
     const fetchAlertCount = async () => {
@@ -52,40 +82,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const iv = setInterval(() => { void fetchAlertCount(); }, 5 * 60 * 1000);
     return () => clearInterval(iv);
   }, []);
-  const [devTapCount, setDevTapCount] = useState(0);
-  const [showEasterEgg, setShowEasterEgg] = useState(false);
-  const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const eggHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const location = useLocation();
-
-  useEffect(() => {
-    return () => {
-      if (tapResetRef.current) clearTimeout(tapResetRef.current);
-      if (eggHideRef.current) clearTimeout(eggHideRef.current);
-    };
-  }, []);
-
-  const handleDevNamesClick = () => {
-    setDevTapCount(prev => {
-      const next = prev + 1;
-
-      if (tapResetRef.current) clearTimeout(tapResetRef.current);
-      tapResetRef.current = setTimeout(() => setDevTapCount(0), 3000);
-
-      if (next >= 5) {
-        if (tapResetRef.current) clearTimeout(tapResetRef.current);
-        setShowEasterEgg(true);
-        if (eggHideRef.current) clearTimeout(eggHideRef.current);
-        eggHideRef.current = setTimeout(() => setShowEasterEgg(false), 2600);
-        return 0;
-      }
-
-      return next;
-    });
-  };
-
   return (
     <div className="flex min-h-screen bg-background">
+      <CommandPalette />
       {/* Sidebar */}
       <aside
         className={`fixed top-0 left-0 h-screen bg-sidebar border-r border-border flex flex-col z-50 transition-all duration-200 scanline-overlay ${collapsed ? 'w-16' : 'w-56'}`}
@@ -104,14 +103,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 py-2 overflow-y-auto">
-          {navItems.map(item => {
-            if (item.adminOnly && !isAdmin) return null;
+          {navItems.map((item, index) => {
             if (item.editorOnly && !canEdit) return null;
-            const active = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
+            const groupStart = item.group && navItems[index - 1]?.group !== item.group;
+            const active = item.path === activePath;
             const badge = item.alertBadge && alertCount > 0 ? alertCount : 0;
             return (
+              <React.Fragment key={item.path}>
+              {groupStart && !collapsed && (
+                <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-military font-mono text-muted-foreground/70">{item.group}</p>
+              )}
+              {groupStart && collapsed && <div className="mx-3 my-2 h-px bg-border" />}
               <NavLink
-                key={item.path}
                 to={item.path}
                 className={`flex items-center gap-3 px-3 py-2.5 mx-1 my-0.5 text-sm transition-colors ${
                   active
@@ -136,6 +139,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </span>
                 )}
               </NavLink>
+              </React.Fragment>
             );
           })}
         </nav>
@@ -153,34 +157,47 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className={`flex-1 flex flex-col transition-all duration-200 ${collapsed ? 'ml-16' : 'ml-56'}`}>
         {/* Top bar */}
         <header className="h-12 bg-sidebar border-b border-border flex items-center justify-between px-4 sticky top-0 z-40">
-          <div />
+          <div className="flex-1 flex items-center justify-center gap-3 px-4">
+            <NewsBell />
+            <button
+              onClick={openCommandPalette}
+              className="w-full max-w-md flex items-center gap-2 bg-input border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-foreground transition-colors"
+              style={{ borderRadius: '2px' }}
+              title="Gyorskereső (Ctrl+K is nyitja)"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span className="flex-1 text-left">Keresés: név, SZTSZ, parancs, művelet…</span>
+              <span className="hidden md:inline font-mono text-[10px] border border-border px-1" style={{ borderRadius: '2px' }}>Ctrl+K</span>
+            </button>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-brass font-rajdhani font-semibold text-sm">{user?.displayName}</span>
+            {user?.regionLabel && (
+              <span className="hidden md:inline px-2 py-0.5 text-[10px] uppercase tracking-military font-mono border border-border text-muted-foreground" style={{ borderRadius: '2px' }} title={user.unit ? 'Terület: csak ennek a zászlóaljnak az adatát látod' : 'Ezredtörzs: minden zászlóalj adatát látod'}>
+                {user.regionLabel}
+              </span>
+            )}
             <span className="px-2 py-0.5 text-[10px] uppercase tracking-military font-mono border border-border text-muted-foreground" style={{ borderRadius: '2px' }}>
               {roleBadge[user?.role || ''] || user?.role}
             </span>
-            <button onClick={logout} className="text-muted-foreground hover:text-destructive transition-colors p-1" title="Kijelentkezés">
+            <button onClick={() => setConfirmLogout(true)} className="text-muted-foreground hover:text-destructive transition-colors p-1" title="Kijelentkezés">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         </header>
 
+        <ConfirmDialog open={confirmLogout} onClose={() => setConfirmLogout(false)} onConfirm={() => { setConfirmLogout(false); logout(); }} message="Biztosan kijelentkezel? A mentetlen változások elvesznek." confirmLabel="Kijelentkezés" tone="primary" />
+
+        {!online && (
+          <div className="bg-destructive/15 border-b border-destructive/40 text-destructive px-4 py-2 text-xs font-mono flex items-center gap-2">
+            <WifiOff className="w-4 h-4" />
+            Nincs kapcsolat a központi géppel — a rendszer 5 másodpercenként újra próbálkozik. Amíg ez látszik, a mentések nem mennek át.
+          </div>
+        )}
+
         {/* Page content */}
         <main className="flex-1 p-6 crosshair-bg overflow-auto">
           {children}
-          <button
-            type="button"
-            onClick={handleDevNamesClick}
-            className="mt-8 w-full text-center text-[10px] tracking-military text-muted-foreground opacity-30 hover:opacity-60 transition-opacity select-none cursor-default"
-          >
-            Fejlesztők: Kovács Martin · Rédli Máté · Tóth Rafael
-          </button>
-
-          {showEasterEgg && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2 bg-card border border-primary text-primary text-xs font-mono shadow-md" style={{ borderRadius: '2px' }}>
-              🍓 Málnás édesség unlocked!
-            </div>
-          )}
         </main>
       </div>
     </div>

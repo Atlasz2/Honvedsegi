@@ -1,5 +1,6 @@
 const RANK_ORDER: Record<string, number> = {
-  kozkatona: 1,
+  honved: 1,
+  kozkatona: 1,   // migráció előtti elnevezés
   orvezeto: 2,
   tizedes: 3,
   szakaszvezeto: 4,
@@ -22,26 +23,27 @@ const RANK_ORDER: Record<string, number> = {
 };
 
 const RANK_SHORT: Record<string, string> = {
-  kozkatona: 'Kk',
-  orvezeto: 'Orv',
+  honved: 'Hv',
+  kozkatona: 'Hv',   // migráció előtti elnevezés
+  orvezeto: 'Örv',
   tizedes: 'Tiz',
   szakaszvezeto: 'Szkv',
-  ormester: 'Orm',
-  torzsormester: 'Torm',
-  fotorzsormester: 'Ftorm',
+  ormester: 'Őrm',
+  torzsormester: 'Törm',
+  fotorzsormester: 'Ftörm',
   zaszlos: 'Zls',
   torzszaszlos: 'Tzls',
   fotorzszaszlos: 'Ftzls',
   hadnagy: 'Hdgy',
   fohadnagy: 'Fhdgy',
   szazados: 'Szd',
-  ornagy: 'Orgy',
+  ornagy: 'Őrgy',
   alezredes: 'Alez',
   ezredes: 'Ezds',
   dandartabornok: 'Ddtbk',
-  vezerornagy: 'Vorgy',
-  altabornagy: 'AAtbrgy',
-  vezerezredes: 'Vezezds',
+  vezerornagy: 'Vőrgy',
+  altabornagy: 'Altbgy',
+  vezerezredes: 'Vezds',
 };
 
 function normalizeRank(rank: string): string {

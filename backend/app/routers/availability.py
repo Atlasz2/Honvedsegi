@@ -6,28 +6,23 @@ egyezést igénylő szerkesztő-ellenőrzéshez a /api/conflicts való.
 """
 from __future__ import annotations
 
-import unicodedata
 from datetime import date as date_cls
-from typing import Annotated
+import unicodedata
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..deps import _get_current_user as require_reader
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel, UserModel
+from ..constants import unit_label
+from ..core.scope import owned_in_scope
+from ..core.dependencies import DB, Reader
+from ..models import visible_events, EventModel, ExerciseModel
 
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
-DB = Annotated[Session, Depends(get_db)]
-Reader = Annotated[UserModel, Depends(require_reader)]
 
 _SOURCES = [
     ("exercise", ExerciseModel),
-    ("training", TrainingModel),
     ("event", EventModel),
-    ("duty", DutyModel),
 ]
 # Ezek nem foglalják az erőforrást.
 _INACTIVE_STATUSES = {"Törölve", "Befejezett", "Lemondva"}
@@ -63,7 +58,7 @@ def list_locations(db: DB, _: Reader):
 
 @router.get("")
 def check_availability(
-    db: DB, _: Reader,
+    db: DB, user: Reader,
     start_date: str = Query(..., description="ÉÉÉÉ-HH-NN"),
     end_date: str = "",
     q: str = "",
@@ -78,7 +73,10 @@ def check_availability(
     needle = _norm(q)
     bookings: list[dict] = []
     for event_type, model in _SOURCES:
-        for item in db.scalars(select(model)).all():
+        # NEM a hatókörre szűrünk: a lőtér/bázis foglaltsága mindenkit érint.
+        # Az idegen zászlóalj foglalása névtelen („foglalt — 83. TVZ"), hogy ne
+        # ütközzenek, de a részletek ne szivárogjanak.
+        for item in db.scalars(visible_events() if model is EventModel else select(model)).all():
             location = (getattr(item, "location", "") or "").strip()
             if not location:
                 continue
@@ -89,11 +87,14 @@ def check_availability(
             if not _overlaps(start, end, item.start_date, item.end_date):
                 continue
             name = getattr(item, "name", None) or f"{item.type} – {getattr(item, 'person_name', '') or item.id}"
+            foreign = not owned_in_scope(user, getattr(item, "unit", ""))
             bookings.append({
                 "location": location,
                 "eventType": event_type,
-                "eventId": item.id,
-                "eventName": name,
+                "eventId": "" if foreign else item.id,
+                "eventName": f"foglalt — {unit_label(item.unit or '')}" if foreign else name,
+                "unit": item.unit or "",
+                "foreign": foreign,
                 "startDate": item.start_date,
                 "endDate": item.end_date,
                 "status": getattr(item, "status", ""),

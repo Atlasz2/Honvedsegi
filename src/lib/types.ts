@@ -6,6 +6,10 @@ export interface User {
   displayName: string;
   role: Role;
   active: boolean;
+  /** Részleg (Ügyvitel, Jog, Kiképzés, Személyügy, Pénzügy) vagy üres — a Teendőimhez. */
+  department?: string;
+  /** Terület (megye): melyik zászlóalj állományát látja; üres = ezredtörzs, mindent. */
+  region?: string;
   lastLogin?: string;
 }
 
@@ -13,8 +17,17 @@ export interface AuthToken {
   username: string;
   displayName: string;
   role: Role;
+  department?: string;
+  region?: string;
+  /** „31. TVZ – Veszprém" / „Ezredtörzs (Győr)" — a fejlécbe. */
+  regionLabel?: string;
+  /** A saját zászlóalj; üres = ezredtörzs, mindent lát. */
+  unit?: string;
   expiry: number;
 }
+
+/** A választókhoz elég ennyi (GET /api/personnel/lite). */
+export type PersonLite = Pick<Person, 'id' | 'name' | 'sztsz' | 'rank' | 'unit' | 'status'>;
 
 export interface Person {
   id: string;
@@ -23,7 +36,9 @@ export interface Person {
   rank: string;
   unit: string;
   beosztas: string;
-  status: 'Aktív' | 'Tartalékos' | 'Szabadságon' | 'Leszerelt';
+  status: 'Aktív' | 'Tartalékos' | 'Leszerelt';
+  /** Jogviszony altípusa: Aktív → Szerződéses/Hivatásos; Tartalékos → Önkéntes tartalékos/Állandó behívásos. Üres = nem ismert. */
+  serviceType: string;
   email: string;
   phone: string;
   birthDate: string;
@@ -31,16 +46,28 @@ export interface Person {
   joinDate: string;
   notes: string;
   qualifications: string[];
+  /** Importból átemelt, nem modellezett oszlopok (KGIR-export). */
+  extra?: Record<string, string>;
 }
 
-export interface ExerciseAssignment {
+/** Egy eseményhez beosztott személy közös mezői; a művelet-beosztás ezt bővíti. */
+export interface PersonAssignment {
   personId: string;
   personName: string;
-  role: string;
   attendance?: string;
   rank?: string;
   rankShort?: string;
   sztsz?: string;
+}
+
+export type ParticipantAttendance = 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Visszamondta';
+
+export interface ExerciseAssignment extends PersonAssignment {
+  role: string;
+  attendance?: ParticipantAttendance;
+  qualificationApproved?: boolean;
+  /** A beosztás indoklása, pl. parancsnoki engedély átfedésre. */
+  notes?: string;
 }
 
 export interface Exercise {
@@ -50,42 +77,35 @@ export interface Exercise {
   startDate: string;
   endDate: string;
   location: string;
+  /** A kiképzés beolvadt a műveletbe: a szervező mezője ide került. */
+  organizer: string;
+  /** Melyik zászlóaljé; üres = ezredszintű (mindenki látja). */
+  unit?: string;
+  /** Karcsú listánál: létszám + első nevek (a teljes `assigned` csak a részletnél jön). */
+  assignedCount?: number;
+  assignedNames?: string[];
+  /** Szolgálat átadás-átvétel (csak szolgálat-típusnál). */
+  handover?: { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string } | null;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
   qualificationId?: string;
-  series?: string;
+  seriesId?: string;
   level?: string;
   assigned: ExerciseAssignment[];
 }
 
-export interface TrainingAssignment {
-  personId: string;
-  personName: string;
-  attendance: 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg';
-  qualificationApproved?: boolean;
-  rank?: string;
-  rankShort?: string;
-  sztsz?: string;
-}
-
-export interface Training {
+export interface Series {
   id: string;
   name: string;
-  type: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  organizer: string;
-  qualificationId: string;
-  maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett';
-  series?: string;
-  level?: string;
-  assigned: TrainingAssignment[];
+  /** Melyik zászlóaljé; üres = ezredszintű. */
+  unit?: string;
+  /** Alsorozat szülője (7×20 → Támadás → Támadás Alap). */
+  parentId?: string;
+  itemCount: number;
+  childCount?: number;
 }
-
 
 export interface BasicAssignment {
   personId: string;
@@ -106,9 +126,10 @@ export interface AppEvent {
   endDate: string;
   location: string;
   organizer: string;
+  unit?: string;
   maxPersonnel: number;
   description: string;
-  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Törölve';
+  status: 'Tervezett' | 'Folyamatban' | 'Befejezett' | 'Lemondva';
   assigned: BasicAssignment[];
 }
 
@@ -179,19 +200,6 @@ export interface Vehicle {
   serviceLog: ServiceRecord[];
 }
 
-export interface Duty {
-  id: string;
-  type: string;
-  startDate: string;
-  endDate: string;
-  location: string;
-  personId: string;
-  personName: string;
-  assigned: BasicAssignment[];
-  notes: string;
-  status: 'Tervezett' | 'Teljesített' | 'Lemondva';
-}
-
 export interface Announcement {
   id: string;
   title: string;
@@ -200,6 +208,8 @@ export interface Announcement {
   author: string;
   date: string;
   pinned: boolean;
+  /** Üres = ezredszintű közlemény; egyébként a zászlóalj. */
+  unit?: string;
 }
 
 export interface ActivityLogEntry {
@@ -267,7 +277,7 @@ export interface QualificationStat {
 // ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 export type ParticipantStatus =
-  | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva';
+  | 'Jelentkezett' | 'Tervezett' | 'Megjelent' | 'Hiányzott' | 'Beteg' | 'Teljesített' | 'Lemondva' | 'Visszamondta';
 
 export interface Participant {
   id: string;
@@ -285,10 +295,108 @@ export interface Participant {
 // ── Személytörténet ────────────────────────────────────────────────────────────
 
 export interface PersonHistoryEntry {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'event';
   eventId: string;
   status: string;
   role: string;
   qualificationApproved: boolean;
   notes: string;
+}
+
+// ── Napi létszámjelentés (A1) ─────────────────────────────────────────────
+// NEM keverendő a művelet-jelenléttel alább: ez naptári nap szerinti,
+// az eseményhez kötött.
+
+export type AttendanceStatus =
+  | 'Jelen' | 'Szabadság' | 'Betegállomány' | 'Vezényelve'
+  | 'Szolgálatban' | 'Kiküldetés' | 'Igazolt távollét' | 'Igazolatlan távollét';
+
+export interface AttendanceEntry {
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  status: AttendanceStatus;
+  note: string;
+}
+
+export interface AttendanceClosure {
+  unit: string;
+  unitLabel: string;
+  closedBy: string;
+  closedByName: string;
+  closedAt: string;
+  note: string;
+}
+
+export interface AttendanceDay {
+  date: string;
+  total: number;
+  summary: Record<string, number>;
+  items: AttendanceEntry[];
+  /** Mely zászlóaljak zárták már le a napot (a hatókörön belül). */
+  closures: AttendanceClosure[];
+  /** A saját zászlóaljam (vagy ezredszint) lezárva erre a napra. */
+  closedForMe: boolean;
+}
+
+export interface AttendanceMark {
+  personnelId: string;
+  status: AttendanceStatus;
+  note?: string;
+}
+
+// ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
+
+export interface OperationTreeNode {
+  id: string;
+  eventType: 'esemeny';
+  parentId: string | null;
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  organizer: string;
+  maxPersonnel: number;
+  description: string;
+  status: string;
+  assigned: Record<string, unknown>[];
+  children: OperationTreeNode[];
+}
+
+/** Egy művelet jelenléti íve — külön fogalom a napi létszám AttendanceStatus-ától. */
+export type OperationAttendanceStatus = 'Present' | 'Excused' | 'Absent' | 'Pending';
+
+export interface OperationAttendanceEntry {
+  personId: string;
+  personName: string;
+  status: OperationAttendanceStatus;
+  note: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type RequirementStatus = 'Requested' | 'Approved' | 'Fulfilled';
+
+export interface MaterialRequirement {
+  id: string;
+  operationId: string;
+  itemName: string;
+  quantity: number;
+  unit: string;
+  note: string;
+  status: RequirementStatus;
+}
+
+export interface OperationDocument {
+  id: string;
+  operationId: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  title: string;
 }

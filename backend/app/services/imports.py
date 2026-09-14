@@ -8,14 +8,18 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..constants import IMPORT_DRAFT_TTL_MINUTES
-from ..deps import _apply_exercise, _apply_person, _normalize_sztsz, _utc_now
+from ..constants import IMPORT_DRAFT_TTL_MINUTES, IMPORT_MISSING_LIST_LIMIT
+from ..appliers import apply_exercise, apply_person
+from ..audit import record_activity
+from ..core.time import utc_now
+from ..validation import normalize_sztsz
 from ..importers import ENTITY_CONFIG, ImportRow, parse_import
-from ..models import ExerciseModel, PersonModel
+from ..models import ExerciseModel, PersonModel, UserModel
 from ..schemas import ExerciseCreate, ImportConfirmResult, ImportDraftUpdateRequest, ImportPreviewResult, PersonCreate
 
 IMPORT_DRAFTS: dict[str, dict[str, Any]] = {}
 SUPPORTED_IMPORT_ENTITIES = {"personnel", "exercises"}
+ENTITY_LABELS = {"personnel": "Személyzet", "exercises": "Gyakorlatok"}
 
 
 def _save_draft(draft_id: str, entity: str, rows, operations, created, updated, skipped) -> str:
@@ -26,7 +30,7 @@ def _save_draft(draft_id: str, entity: str, rows, operations, created, updated, 
         "created": created,
         "updated": updated,
         "skipped": skipped,
-        "expires_at": _utc_now() + timedelta(minutes=IMPORT_DRAFT_TTL_MINUTES),
+        "expires_at": utc_now() + timedelta(minutes=IMPORT_DRAFT_TTL_MINUTES),
     }
     return draft_id
 
@@ -41,7 +45,7 @@ def _get_draft(entity: str, draft_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Import draft nem talalhato")
     if draft["entity"] != entity:
         raise HTTPException(status_code=400, detail="A draft mas entitashoz tartozik")
-    if draft["expires_at"] < _utc_now():
+    if draft["expires_at"] < utc_now():
         IMPORT_DRAFTS.pop(draft_id, None)
         raise HTTPException(status_code=410, detail="Import draft lejart")
     return draft
@@ -58,7 +62,7 @@ def _normalize_mapping(data: dict[str, Any] | None) -> dict[str, str]:
     return {str(k).strip(): ("" if v is None else str(v).strip()) for k, v in data.items() if str(k).strip()}
 
 
-def _serialize_row(row: ImportRow | dict) -> dict[str, Any]:
+def serialize_row(row: ImportRow | dict) -> dict[str, Any]:
     if isinstance(row, ImportRow):
         return {
             "line": row.source_line,
@@ -120,7 +124,90 @@ def _fallback_identity(entity: str, line: int, data: dict, raw: dict) -> tuple[s
     return key, key
 
 
-def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any]:
+def _collect_unknown_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """A fel nem ismert fejlécek, első előfordulás sorrendjében."""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for header in row["unknownData"]:
+            seen.setdefault(header, None)
+    return list(seen)
+
+
+def _find_missing_personnel(db: Session, operations: list[dict[str, Any]]) -> tuple[int, list[dict[str, str]]]:
+    """Akik a nyilvántartásban vannak, de az érvényes sorok között nem szerepelnek.
+
+    A leszerelteket nem számoljuk: ők jogosan hiányoznak egy aktuális exportból."""
+    present = {op["payload"]["sztsz"] for op in operations if op["entity"] == "personnel"}
+    stmt = (
+        select(PersonModel.id, PersonModel.name, PersonModel.sztsz, PersonModel.unit, PersonModel.status)
+        .where(PersonModel.status != "Leszerelt")
+        .order_by(PersonModel.name)
+    )
+    missing = [
+        {"id": pid, "name": name, "sztsz": sztsz, "unit": unit, "status": status}
+        for pid, name, sztsz, unit, status in db.execute(stmt)
+        if sztsz not in present
+    ]
+    return len(missing), missing[:IMPORT_MISSING_LIST_LIMIT]
+
+
+_DIFF_FIELDS = ("name", "rank", "unit", "beosztas", "status", "serviceType", "email", "phone", "birthDate", "address", "joinDate")
+
+
+def _person_changes(existing: PersonModel, payload) -> dict[str, list[str]]:
+    """Mező → [régi, új], csak ahol tényleg más az érték."""
+    current = {
+        "name": existing.name, "rank": existing.rank, "unit": existing.unit, "beosztas": existing.beosztas or "",
+        "status": existing.status, "serviceType": existing.service_type or "", "email": existing.email or "",
+        "phone": existing.phone or "", "birthDate": existing.birth_date or "", "address": existing.address or "",
+        "joinDate": existing.join_date or "",
+    }
+    incoming = payload.model_dump()
+    out: dict[str, list[str]] = {}
+    for field in _DIFF_FIELDS:
+        new = str(incoming.get(field) or "").strip()
+        old = str(current.get(field) or "").strip()
+        if new and new != old:
+            out[field] = [old, new]
+    return out
+
+
+def _diff_summary(items: list[dict[str, Any]], scope_units_: tuple[str, ...] | None) -> dict[str, Any]:
+    summary = {"new": 0, "unchanged": 0, "changed": 0, "discharged": 0, "unitChanges": 0, "statusChanges": 0,
+               "rankChanges": 0, "outOfScope": 0, "byUnit": {}}
+    for item in items:
+        if item["action"] == "skip":
+            continue
+        unit = str(item["data"].get("unit") or "")
+        changes = item.get("changes") or {}
+        old_unit = changes.get("unit", [unit])[0]
+        # Az én hatóköröm: aki most nálam van VAGY hozzám kerül (az elköltöző is az én változásom).
+        if scope_units_ is not None and unit not in scope_units_ and old_unit not in scope_units_:
+            summary["outOfScope"] += 1
+            continue
+        bucket = summary["byUnit"].setdefault(unit or "—", {"new": 0, "changed": 0, "discharged": 0})
+        if item["action"] == "create":
+            summary["new"] += 1
+            bucket["new"] += 1
+            continue
+        if not changes:
+            summary["unchanged"] += 1
+            continue
+        summary["changed"] += 1
+        bucket["changed"] += 1
+        if "unit" in changes:
+            summary["unitChanges"] += 1
+        if "rank" in changes:
+            summary["rankChanges"] += 1
+        if "status" in changes:
+            summary["statusChanges"] += 1
+            if changes["status"][1] == "Leszerelt":
+                summary["discharged"] += 1
+                bucket["discharged"] += 1
+    return summary
+
+
+def _evaluate_rows(entity: str, source_rows: list, db: Session, scope_units_: tuple[str, ...] | None = None) -> dict[str, Any]:
     created = updated = skipped = 0
     issues: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
@@ -128,7 +215,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
     rows: list[dict[str, Any]] = []
 
     for source in source_rows:
-        row = _serialize_row(source)
+        row = serialize_row(source)
         rows.append(row)
         line, enabled = row["line"], row["enabled"]
         data, raw_data = row["data"], row["rawData"]
@@ -138,6 +225,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         key, name = _fallback_identity(entity, line, prev_data, prev_raw)
         item_issues: list[str] = []
         action = "skip"
+        changes: dict[str, list[str]] = {}
 
         if not enabled:
             item_issues.append("Felhasználó által kihagyva")
@@ -149,11 +237,13 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                 try:
                     if entity == "personnel":
                         payload = PersonCreate(**prev_data)
-                        payload.sztsz = _normalize_sztsz(payload.sztsz)
+                        payload.sztsz = normalize_sztsz(payload.sztsz)
                         existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == payload.sztsz))
                         action = "update" if existing else "create"
                         key = payload.sztsz
                         name = payload.name
+                        if existing is not None:
+                            changes = _person_changes(existing, payload)
                     else:
                         payload = ExerciseCreate(**prev_data)
                         existing = db.scalar(
@@ -171,7 +261,7 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                         created += 1
                     else:
                         updated += 1
-                    operations.append({"entity": entity, "action": action, "payload": payload.model_dump()})
+                    operations.append({"entity": entity, "action": action, "payload": payload.model_dump(), "extra": prev_unk})
                 except Exception as exc:
                     item_issues.extend(_extract_messages(exc))
 
@@ -192,11 +282,23 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
                 "rawData": prev_raw,
                 "unknownData": prev_unk,
                 "issues": item_issues,
+                "changes": changes,
             }
         )
 
     if not rows:
         issues.append({"line": 0, "message": "Nem sikerült értelmezhető sort kiolvasni a fájlból."})
+
+    unknown_columns = _collect_unknown_columns(rows)
+    if unknown_columns:
+        issues.append({
+            "line": 0,
+            "message": "Nem felismert oszlop(ok) — a személy „Importált adatok” részébe kerülnek: " + ", ".join(unknown_columns),
+        })
+
+    missing_count, missing = (0, [])
+    if entity == "personnel" and operations:
+        missing_count, missing = _find_missing_personnel(db, operations)
 
     return {
         "entity": entity,
@@ -208,6 +310,10 @@ def _evaluate_rows(entity: str, source_rows: list, db: Session) -> dict[str, Any
         "items": items,
         "operations": operations,
         "rows": rows,
+        "unknownColumns": unknown_columns,
+        "missingCount": missing_count,
+        "missing": missing,
+        "diff": _diff_summary(items, scope_units_) if entity == "personnel" else {},
     }
 
 
@@ -221,10 +327,14 @@ def _preview_response(payload: dict[str, Any], draft_id: str) -> ImportPreviewRe
         skipped=payload["skipped"],
         issues=payload["issues"],
         items=payload["items"],
+        unknownColumns=payload["unknownColumns"],
+        missingCount=payload["missingCount"],
+        missing=payload["missing"],
+        diff=payload.get("diff") or {},
     )
 
 
-def preview_import_data(entity: str, filename: str, content: bytes, db: Session) -> ImportPreviewResult:
+def preview_import_data(entity: str, filename: str, content: bytes, db: Session, scope_units_: tuple[str, ...] | None = None) -> ImportPreviewResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
     if not content:
@@ -235,13 +345,13 @@ def preview_import_data(entity: str, filename: str, content: bytes, db: Session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    preview = _evaluate_rows(entity, source_rows, db)
+    preview = _evaluate_rows(entity, source_rows, db, scope_units_)
     valid = preview["created"] + preview["updated"]
     if source_rows and valid == 0:
         alt = "exercises" if entity == "personnel" else "personnel"
         try:
             alt_rows = parse_import(alt, filename or "", content)
-            alt_preview = _evaluate_rows(alt, alt_rows, db)
+            alt_preview = _evaluate_rows(alt, alt_rows, db, scope_units_)
             if alt_preview["created"] + alt_preview["updated"] > 0:
                 alt_preview["issues"].insert(0, {"line": 0, "message": "Automatikus átváltás a másik import célra."})
                 preview = alt_preview
@@ -260,7 +370,7 @@ def preview_import_data(entity: str, filename: str, content: bytes, db: Session)
     return _preview_response(preview, draft_id)
 
 
-def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: Session) -> ImportPreviewResult:
+def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpdateRequest, db: Session, scope_units_: tuple[str, ...] | None = None) -> ImportPreviewResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
 
@@ -276,7 +386,7 @@ def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpd
             updated_row["data"] = _normalize_mapping(upd.data)
         source_rows.append(updated_row)
 
-    preview = _evaluate_rows(entity, source_rows, db)
+    preview = _evaluate_rows(entity, source_rows, db, scope_units_)
     _save_draft(
         draft_id,
         entity,
@@ -289,7 +399,7 @@ def update_import_draft_data(entity: str, draft_id: str, payload: ImportDraftUpd
     return _preview_response(preview, draft_id)
 
 
-def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfirmResult:
+def confirm_import_draft(entity: str, draft_id: str, db: Session, current_user: UserModel) -> ImportConfirmResult:
     if entity not in SUPPORTED_IMPORT_ENTITIES:
         raise HTTPException(status_code=400, detail="Nem támogatott import cél")
 
@@ -298,13 +408,14 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfi
         p = op["payload"]
         if entity == "personnel":
             dto = PersonCreate(**p)
-            dto.sztsz = _normalize_sztsz(dto.sztsz)
+            dto.sztsz = normalize_sztsz(dto.sztsz)
             existing = db.scalar(select(PersonModel).where(PersonModel.sztsz == dto.sztsz))
-            if existing:
-                _apply_person(existing, dto)
-            else:
-                item = PersonModel()
-                _apply_person(item, dto)
+            item = existing or PersonModel()
+            apply_person(item, dto)
+            # A nem modellezett oszlopok (pl. anyja neve) is átjönnek — kulcsonként frissítve.
+            if op.get("extra"):
+                item.extra = {**(item.extra or {}), **op["extra"]}
+            if not existing:
                 db.add(item)
         else:
             dto = ExerciseCreate(**p)
@@ -316,12 +427,28 @@ def confirm_import_draft(entity: str, draft_id: str, db: Session) -> ImportConfi
                 )
             )
             if existing:
-                _apply_exercise(existing, dto)
+                apply_exercise(existing, dto)
             else:
                 item = ExerciseModel()
-                _apply_exercise(item, dto)
+                apply_exercise(item, dto)
                 db.add(item)
 
+    # Összesítő bejegyzés, nem soronkénti: egy import több száz rekordot érinthet,
+    # és a napló csak akkor használható, ha nem fullad zajba. A tételes tartalom
+    # a preview-ban látszik, a hatás itt.
+    record_activity(
+        db, current_user,
+        mode="create",
+        module="Import",
+        record_name=ENTITY_LABELS.get(entity, entity),
+        entity=f"import_{entity}",
+        after={
+            "entity": entity,
+            "created": draft["created"],
+            "updated": draft["updated"],
+            "skipped": draft["skipped"],
+        },
+    )
     db.commit()
     return ImportConfirmResult(
         draftId=draft_id,

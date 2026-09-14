@@ -7,15 +7,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..deps import _date_overlap, _parse_iso_date, _utc_now
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel
+from ..core.time import date_overlap, parse_iso_date, utc_now
+from ..models import EventModel, ExerciseModel, visible_events
 
 
 def report_title(template: str) -> str:
     return {
         "overview": "Összesített műveleti riport",
         "operations": "Műveleti naptár riport",
-        "duties": "Szolgálati kivonat",
         "events": "Eseménynaptár riport",
         "focus": "Részletes fókusz riport",
     }.get(template, template)
@@ -25,13 +24,12 @@ def report_filename_base(template: str, focus_type: str | None = None) -> str:
     return {
         "overview": "osszesitett-muveleti-riport",
         "operations": "muveleti-naptar-riport",
-        "duties": "szolgalati-kivonat",
         "events": "esemenynaptar-riport",
         "focus": f"fokusz-riport-{focus_type or 'elem'}",
     }.get(template, "riport")
 
 
-def _serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
+def serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
     if item_type == "duty":
         return {
             "id": item.id,
@@ -64,7 +62,7 @@ def _serialize_report_item(item: Any, item_type: str) -> dict[str, Any]:
     return payload
 
 
-def _serialize_focus(item: Any, focus_type: str, focus_id: str) -> dict[str, Any]:
+def serialize_focus(item: Any, focus_type: str, focus_id: str) -> dict[str, Any]:
     if focus_type == "duty":
         return {
             "type": focus_type,
@@ -117,16 +115,16 @@ def build_report_data(
     focus_type: str | None,
     focus_id: str | None,
 ) -> dict[str, Any]:
-    allowed_templates = {"overview", "operations", "duties", "events", "focus"}
-    allowed_focus = {"exercise", "training", "event", "duty"}
+    allowed_templates = {"overview", "operations", "events", "focus"}
+    allowed_focus = {"exercise", "event"}
 
     if template not in allowed_templates:
         raise HTTPException(status_code=400, detail="Nem tamogatott riportminta")
     if focus_type and focus_type not in allowed_focus:
         raise HTTPException(status_code=400, detail="Nem tamogatott fokusz tipus")
 
-    start_date = _parse_iso_date(date_from) if date_from else _utc_now().date()
-    end_date = _parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
+    start_date = parse_iso_date(date_from) if date_from else utc_now().date()
+    end_date = parse_iso_date(date_to) if date_to else start_date + timedelta(days=30)
     if not start_date or not end_date:
         raise HTTPException(status_code=400, detail="Ervenytelen datumtartomany")
     if end_date < start_date:
@@ -135,22 +133,12 @@ def build_report_data(
     exercises = [
         i
         for i in db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
-    ]
-    trainings = [
-        i
-        for i in db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
     events = [
         i
-        for i in db.scalars(select(EventModel).order_by(EventModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
-    ]
-    duties = [
-        i
-        for i in db.scalars(select(DutyModel).order_by(DutyModel.start_date)).all()
-        if _date_overlap(i.start_date, i.end_date, start_date, end_date)
+        for i in db.scalars(visible_events().order_by(EventModel.start_date)).all()
+        if date_overlap(i.start_date, i.end_date, start_date, end_date)
     ]
 
     sections: list[dict[str, Any]] = []
@@ -163,7 +151,7 @@ def build_report_data(
                 "title": title,
                 "count": len(items),
                 "truncated": len(items) > len(visible),
-                "items": [_serialize_report_item(i, itype) for i in visible],
+                "items": [serialize_report_item(i, itype) for i in visible],
             }
         )
 
@@ -173,24 +161,18 @@ def build_report_data(
             raise HTTPException(status_code=400, detail="A fokusz riporthoz tipus es azonosito szukseges")
         model_map = {
             "exercise": ExerciseModel,
-            "training": TrainingModel,
             "event": EventModel,
-            "duty": DutyModel,
         }
         model = model_map[focus_type]
         item = db.scalar(select(model).where(model.id == focus_id))
         if not item:
             raise HTTPException(status_code=404, detail="A kivalasztott rekord nem talalhato")
-        focus_payload = _serialize_focus(item, focus_type, focus_id)
+        focus_payload = serialize_focus(item, focus_type, focus_id)
     else:
         if template in {"overview", "operations"}:
             add_section("exercises", "Gyakorlatok", exercises, "exercise", 300)
-            add_section("trainings", "Kikepzesek", trainings, "training", 300)
         if template == "overview":
             add_section("events", "Esemenyek", events, "event", 300)
-            add_section("duties", "Szolgalatok", duties, "duty", 400)
-        elif template == "duties":
-            add_section("duties", "Szolgalatok", duties, "duty", 400)
         elif template == "events":
             add_section("events", "Esemenyek", events, "event", 300)
 
@@ -202,9 +184,7 @@ def build_report_data(
         "focusId": focus_id,
         "summary": {
             "exercises": len(exercises),
-            "trainings": len(trainings),
             "events": len(events),
-            "duties": len(duties),
         },
         "sections": sections,
         "focus": focus_payload,
@@ -229,16 +209,12 @@ def build_excel_report_bytes(data: dict[str, Any], template: str, focus_type: st
     ws["A1"] = data["title"]
     ws["A1"].font = Font(size=14, bold=True)
     ws["A2"] = f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}"
-    ws["A4"] = "Gyakorlatok"
+    ws["A4"] = "Muveletek"
     ws["B4"] = data["summary"]["exercises"]
-    ws["A5"] = "Kikepzesek"
-    ws["B5"] = data["summary"]["trainings"]
-    ws["A6"] = "Esemenyek"
-    ws["B6"] = data["summary"]["events"]
-    ws["A7"] = "Szolgalatok"
-    ws["B7"] = data["summary"]["duties"]
+    ws["A5"] = "Esemenyek"
+    ws["B5"] = data["summary"]["events"]
 
-    row = 9
+    row = 7
     if data["focus"]:
         focus = data["focus"]
         ws.cell(row=row, column=1, value="Fokusz riport").font = Font(bold=True)
@@ -343,7 +319,7 @@ def build_docx_report_bytes(data: dict[str, Any], template: str, focus_type: str
     doc.add_paragraph(f"Intervallum: {data['interval']['dateFrom']} - {data['interval']['dateTo']}")
     s = data["summary"]
     doc.add_paragraph(
-        f"Osszesites: Gyakorlatok {s['exercises']}, Kikepzesek {s['trainings']}, Esemenyek {s['events']}, Szolgalatok {s['duties']}"
+        f"Osszesites: Gyakorlatok {s['exercises']}, Esemenyek {s['events']}"
     )
 
     if data["focus"]:
@@ -510,12 +486,11 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
     story.append(Spacer(1, 0.4 * cm))
 
     card_labels = [
-        ("Gyakorlatok", str(summary["exercises"])),
-        ("Kikepzesek", str(summary["trainings"])),
+        ("Muveletek", str(summary["exercises"])),
         ("Esemenyek", str(summary["events"])),
-        ("Szolgalatok", str(summary["duties"])),
     ]
-    card_w = W_pt / 4 - 0.1 * cm
+    card_count = len(card_labels)
+    card_w = W_pt / card_count - 0.1 * cm
     card_data = [
         [
             Table(
@@ -529,7 +504,7 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
         ]
     ]
     card_styles = []
-    for col in range(4):
+    for col in range(card_count):
         card_styles += [
             ("BACKGROUND", (col, 0), (col, 0), C_LIGHT),
             ("BOX", (col, 0), (col, 0), 0.5, C_BORDER),
@@ -538,7 +513,7 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
             ("LEFTPADDING", (col, 0), (col, 0), 10),
             ("RIGHTPADDING", (col, 0), (col, 0), 10),
         ]
-    cards_tbl = Table(card_data, colWidths=[card_w + 0.1 * cm] * 4)
+    cards_tbl = Table(card_data, colWidths=[card_w + 0.1 * cm] * card_count)
     cards_tbl.setStyle(TableStyle(card_styles))
     story.append(cards_tbl)
     story.append(Spacer(1, 0.5 * cm))
@@ -603,10 +578,9 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
         col_cfg = {
             "duty": (["Kezdes", "Vege", "Tipus", "Szemely", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 2.8 * cm, 4.5 * cm, 3.5 * cm, 2.5 * cm]),
             "exercise": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
-            "training": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
             "event": (["Kezdes", "Vege", "Megnevezes", "Helyszin", "Statusz"], [2.2 * cm, 2.2 * cm, 5.5 * cm, 4.0 * cm, 3.5 * cm]),
         }
-        type_map = {"duties": "duty", "exercises": "exercise", "trainings": "training", "events": "event"}
+        type_map = {"duties": "duty", "exercises": "exercise", "events": "event"}
         for sec in data["sections"]:
             itype = type_map.get(sec["key"], "exercise")
             headers, widths = col_cfg.get(itype, col_cfg["exercise"])
@@ -659,7 +633,6 @@ def build_pdf_report_bytes(data: dict[str, Any], template: str, focus_type: str 
     filename_map = {
         "overview": "osszesitett-muveleti-riport.pdf",
         "operations": "muveleti-naptar-riport.pdf",
-        "duties": "szolgalati-kivonat.pdf",
         "events": "esemenynaptar-riport.pdf",
         "focus": f"fokusz-riport-{focus_type or 'elem'}.pdf",
     }

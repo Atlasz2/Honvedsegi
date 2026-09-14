@@ -8,17 +8,40 @@ from sqlalchemy.orm import Session
 from .models import (
     ActivityLogModel,
     AnnouncementModel,
-    DutyModel,
     EquipmentModel,
     EventModel,
     ExerciseModel,
     PersonModel,
     SessionTokenModel,
     SupplyModel,
-    TrainingModel,
     UserModel,
     VehicleModel,
 )
+from .constants import UNITS
+from .core.privileged import god_username
+
+# A generált állomány rendfokozat-eloszlása. Modulszinten, hogy tesztelhető
+# legyen: minden itt szereplő fokozatnak szerepelnie kell a constants.RANKS
+# hivatalos létrájában, különben a kliens nem tudja rendezni/rövidíteni.
+BATTALION_RANK_WEIGHTS: list[tuple[str, int]] = [
+    ("Honvéd", 26), ("Őrvezető", 18), ("Tizedes", 15), ("Szakaszvezető", 14), ("Őrmester", 10),
+    ("Törzsőrmester", 7), ("Főtörzsőrmester", 4), ("Zászlós", 2), ("Hadnagy", 2), ("Főhadnagy", 1),
+    ("Százados", 1),
+]
+
+STAFF_RANK_WEIGHTS: list[tuple[str, int]] = [
+    ("Szakaszvezető", 6), ("Őrmester", 8), ("Törzsőrmester", 10), ("Főtörzsőrmester", 10), ("Zászlós", 8),
+    ("Törzszászlós", 6), ("Hadnagy", 11), ("Főhadnagy", 13), ("Százados", 13), ("Őrnagy", 8),
+    ("Alezredes", 5), ("Ezredes", 2),
+]
+
+# Tervezett létszám egységenként. A kulcsainak fedniük kell a constants.UNITS-t.
+UNIT_PLAN: dict[str, int] = {
+    "31 TVZ": 400,
+    "83 TVZ": 400,
+    "19 TVZ": 400,
+    "Ezredtörzs": 100,
+}
 from .security import assert_password_strength, hash_password
 
 
@@ -51,13 +74,13 @@ def seed_database(db: Session) -> None:
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "olvaso123")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "szerkeszto123")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Alkotó", role="fejleszto", active=True, protected=True),
     ]
 
     personnel = [
@@ -65,10 +88,10 @@ def seed_database(db: Session) -> None:
         PersonModel(id="p2", name="Kovács János", sztsz="10000002", rank="Szakaszvezető", unit="1. szakasz", status="Aktív", email="kovacs.j@honved.hu", phone="+36 30 333 4444", join_date="2019-06-01"),
         PersonModel(id="p3", name="Nagy Péter", sztsz="10000003", rank="Tizedes", unit="1. szakasz", status="Tartalékos", email="nagy.peter@gmail.com", join_date="2020-09-10"),
         PersonModel(id="p4", name="Horváth Zoltán", sztsz="10000004", rank="Őrmester", unit="2. szakasz", status="Aktív", email="horvath.z@honved.hu", phone="+36 70 555 6666", join_date="2017-01-20"),
-        PersonModel(id="p5", name="Kiss Erzsébet", sztsz="10000005", rank="Főhadnagy", unit="Törzs", status="Szabadságon", email="kiss.e@honved.hu", join_date="2015-07-04", notes="Szülési szabadság"),
-        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Közkatona", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
+        PersonModel(id="p5", name="Kiss Erzsébet", sztsz="10000005", rank="Főhadnagy", unit="Törzs", status="Aktív", email="kiss.e@honved.hu", join_date="2015-07-04", notes="Szülési szabadság"),
+        PersonModel(id="p6", name="Varga Gábor", sztsz="10000006", rank="Honvéd", unit="2. szakasz", status="Aktív", email="varga.g@gmail.com", phone="+36 20 777 8888", join_date="2023-02-14"),
         PersonModel(id="p9", name="Molnár Dóra", sztsz="10000009", rank="Hadnagy", unit="Törzs", status="Aktív", email="molnar.d@honved.hu", phone="+36 30 999 0000", join_date="2020-03-01"),
-        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Közkatona", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
+        PersonModel(id="p10", name="Simon Ádám", sztsz="10000010", rank="Honvéd", unit="3. szakasz", status="Aktív", email="simon.a@gmail.com", join_date="2024-01-08"),
         PersonModel(id="p11", name="Lukács Béla", sztsz="10000011", rank="Törzsőrmester", unit="2. szakasz", status="Aktív", email="lukacs.b@honved.hu", join_date="2014-08-22"),
         PersonModel(id="p12", name="Farkas Réka", sztsz="10000012", rank="Százados", unit="Törzs", status="Aktív", email="farkas.r@honved.hu", phone="+36 20 444 5555", join_date="2012-04-10"),
     ]
@@ -80,8 +103,8 @@ def seed_database(db: Session) -> None:
     ]
 
     trainings = [
-        TrainingModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", organizer="Egészségügyi Csoport", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
-        TrainingModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", organizer="Kiképzési Törzs", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
+        ExerciseModel(id="t1", name="Elsősegély tanfolyam", type="Elsősegély", organizer="Egészségügyi Csoport", start_date="2026-03-10", end_date="2026-03-14", location="Budapest, Katonai Kórház", max_personnel=15, status="Befejezett", assigned=[{"personId":"p9","personName":"Molnár Dóra","attendance":"Megjelent"},{"personId":"p4","personName":"Horváth Zoltán","attendance":"Megjelent"}]),
+        ExerciseModel(id="t2", name="Lövészeti mesterkurzus", type="Lövészeti", organizer="Kiképzési Törzs", start_date="2026-04-22", end_date="2026-04-25", location="Esztergom, Lőtér", max_personnel=8, status="Tervezett", assigned=[{"personId":"p2","personName":"Kovács János","attendance":"Tervezett"},{"personId":"p11","personName":"Lukács Béla","attendance":"Tervezett"}]),
     ]
 
     equipment = [
@@ -106,11 +129,12 @@ def seed_database(db: Session) -> None:
         VehicleModel(id="v3", plate_number="GHI-789", type="Tehergépjármű", make_model="MAN TGS", year=2017, km=187600, next_service="2026-04-30", next_inspection="2026-05-12", status="Szervizben", service_log=[]),
     ]
 
+    # A szolgálat is művelet: gyakorlat a szolgálat típusával, a szolgálatot adó a beosztott.
     duties = [
-        DutyModel(id="d1", type="Őrszolgálat", start_date="2026-03-21T08:00", end_date="2026-03-22T08:00", location="Laktanya főbejárat", person_id="p6", person_name="Varga Gábor", status="Tervezett"),
-        DutyModel(id="d2", type="Ügyeleti szolgálat", start_date="2026-03-22T00:00", end_date="2026-03-23T00:00", location="Parancsnoki épület", person_id="p11", person_name="Lukács Béla", status="Tervezett"),
-        DutyModel(id="d3", type="Készenléti szolgálat", start_date="2026-03-25T06:00", end_date="2026-03-26T06:00", location="Laktanya", person_id="p4", person_name="Horváth Zoltán", status="Tervezett"),
-        DutyModel(id="d4", type="Rendezvénybiztosítás", start_date="2026-04-02T09:00", end_date="2026-04-02T18:00", location="Városháza tér", person_id="p2", person_name="Kovács János", status="Tervezett"),
+        ExerciseModel(id="d1", name="Őrszolgálat – Laktanya főbejárat", type="Őrszolgálat", start_date="2026-03-21T08:00", end_date="2026-03-22T08:00", location="Laktanya főbejárat", max_personnel=1, status="Tervezett", assigned=[{"personId": "p6", "personName": "Varga Gábor", "role": "szolgálat"}]),
+        ExerciseModel(id="d2", name="Ügyeleti szolgálat – Parancsnoki épület", type="Ügyeleti szolgálat", start_date="2026-03-22T00:00", end_date="2026-03-23T00:00", location="Parancsnoki épület", max_personnel=1, status="Tervezett", assigned=[{"personId": "p11", "personName": "Lukács Béla", "role": "szolgálat"}]),
+        ExerciseModel(id="d3", name="Készenléti szolgálat – Laktanya", type="Készenléti szolgálat", start_date="2026-03-25T06:00", end_date="2026-03-26T06:00", location="Laktanya", max_personnel=1, status="Tervezett", assigned=[{"personId": "p4", "personName": "Horváth Zoltán", "role": "szolgálat"}]),
+        ExerciseModel(id="d4", name="Rendezvénybiztosítás – Városháza tér", type="Rendezvénybiztosítás", start_date="2026-04-02T09:00", end_date="2026-04-02T18:00", location="Városháza tér", max_personnel=1, status="Tervezett", assigned=[{"personId": "p2", "personName": "Kovács János", "role": "szolgálat"}]),
     ]
 
     announcements = [
@@ -143,7 +167,6 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         EquipmentModel,
         EventModel,
         ExerciseModel,
-        TrainingModel,
         SupplyModel,
         VehicleModel,
         PersonModel,
@@ -154,13 +177,13 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
 
     admin_pwd = _require_secret("BACKEND_ADMIN_PASSWORD")
     dev_pwd = _require_secret("BACKEND_DEV_MASTER_PASSWORD")
-    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "OlvasoTeszt_2026!")
-    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "SzerkesztoTeszt_2026!")
+    reader_pwd = _optional_secret_for_nonprod("BACKEND_READER_PASSWORD", "olvaso123")
+    editor_pwd = _optional_secret_for_nonprod("BACKEND_EDITOR_PASSWORD", "szerkeszto123")
     users = [
         UserModel(username="admin", password_hash=hash_password(admin_pwd), display_name="Rendszer Admin", role="admin", active=True, protected=False),
         UserModel(username="olvaso", password_hash=hash_password(reader_pwd), display_name="Teszt Olvasó", role="reader", active=True, protected=False),
         UserModel(username="szerkeszto", password_hash=hash_password(editor_pwd), display_name="Teszt Szerkesztő", role="editor", active=True, protected=False),
-        UserModel(username="dev_master", password_hash=hash_password(dev_pwd), display_name="Fejlesztő Mester", role="fejleszto", active=True, protected=True),
+        UserModel(username=god_username(), password_hash=hash_password(dev_pwd), display_name="Alkotó", role="fejleszto", active=True, protected=True),
     ]
 
     male_first_names = [
@@ -176,22 +199,9 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         "Lakatos", "Takács", "Juhász", "Mészáros", "Oláh", "Simon", "Rácz", "Fekete", "Bíró", "Boros", "Kelemen", "Lukács",
         "Gulyás", "Sipos", "Veres", "Bodnár", "Király", "Szalai",
     ]
-    battalion_rank_weights = [
-        ("Honvéd", 26), ("Őrvezető", 18), ("Tizedes", 15), ("Szakaszvezető", 14), ("Őrmester", 10),
-        ("Törzsőrmester", 7), ("Főtörzsőrmester", 4), ("Zászlós", 2), ("Hadnagy", 2), ("Főhadnagy", 1),
-        ("Százados", 1),
-    ]
-    staff_rank_weights = [
-        ("Szakaszvezető", 6), ("Őrmester", 8), ("Törzsőrmester", 10), ("Főtörzsőrmester", 10), ("Zászlós", 8),
-        ("Törzszászlós", 6), ("Hadnagy", 11), ("Főhadnagy", 13), ("Százados", 13), ("Őrnagy", 8),
-        ("Alezredes", 5), ("Ezredes", 2),
-    ]
-    unit_plan = {
-        "31 TVZ": 400,
-        "83 TVZ": 400,
-        "19 TVZ": 400,
-        "Ezredtörzs": 100,
-    }
+    battalion_rank_weights = BATTALION_RANK_WEIGHTS
+    staff_rank_weights = STAFF_RANK_WEIGHTS
+    unit_plan = UNIT_PLAN
 
     locations_by_unit = {
         "31 TVZ": ["Budapest", "Szentendre", "Gödöllő", "Cegléd"],
@@ -229,7 +239,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
             first = rng.choice(female_first_names if rng.random() < 0.18 else male_first_names)
             last = rng.choice(last_names)
             full_name = f"{last} {first}"
-            status = rng.choices(["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"], weights=[76, 16, 6, 2], k=1)[0]
+            status = rng.choices(["Aktív", "Tartalékos", "Leszerelt"], weights=[80, 18, 2], k=1)[0]
 
             join_year = rng.randint(2010, 2025)
             join_month = rng.randint(1, 12)
@@ -267,7 +277,7 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
     exercise_name_prefixes = ["Acél Pajzs", "Vihar", "Őrszem", "Turul", "Hajnal", "Kard", "Fokozott Készenlét", "Zrínyi"]
     training_types = ["Alapkiképzés", "Szakmai kiképzés", "Parancsnoki tanfolyam", "Elsősegély", "Lövészeti", "Híradó"]
     training_name_prefixes = ["Törzsvezetési", "Rádióforgalmi", "Harcászati", "Lövészeti", "Logisztikai", "Egészségügyi"]
-    duty_types = ["Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás", "Egyéb"]
+    duty_types = ["Őrszolgálat", "Ügyeleti szolgálat", "Készenléti szolgálat", "Rendezvénybiztosítás"]
 
     base_date = datetime(2026, 1, 1)
 
@@ -297,12 +307,12 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                     "Objektumvédelmi és reagálási eljárások gyakorlása.",
                     "Parancsnoki döntési ciklus és törzsmunka gyakorlása.",
                 ]),
-                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
+                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]),
                 assigned=assigned,
             )
         )
 
-    trainings: list[TrainingModel] = []
+    trainings: list[ExerciseModel] = []  # a kiképzés is művelet
     for index in range(1, 181):
         start = base_date + timedelta(days=rng.randint(0, 365))
         duration = rng.randint(1, 4)
@@ -315,14 +325,14 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
             for pid in assigned_ids
         ]
         trainings.append(
-            TrainingModel(
+            ExerciseModel(
                 id=f"t{index}",
                 name=f"{rng.choice(training_name_prefixes)} felkészítés {index:03d}",
                 type=rng.choice(training_types),
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Budapest", "Kecskemét", "Szolnok", "Debrecen", "Esztergom"]),
-                organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
+                organizer=rng.choice(UNITS),
                 max_personnel=max_personnel,
                 description=rng.choice([
                     "Beosztáshoz kötött éves felkészítés.",
@@ -357,40 +367,44 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
                 start_date=start.strftime("%Y-%m-%d"),
                 end_date=end.strftime("%Y-%m-%d"),
                 location=rng.choice(["Budapest", "Szentendre", "Veszprém", "Kecskemét", "Szolnok", "Pápa"]),
-                organizer=rng.choice(["31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs"]),
+                organizer=rng.choice(UNITS),
                 max_personnel=max_personnel,
                 description=rng.choice([
                     "Helyőrségi szintű koordinációs és tájékoztató esemény.",
                     "Állományt érintő szervezési és adminisztratív feladatok egyeztetése.",
                     "A tartalékos állomány részvételével végrehajtott esemény.",
                 ]),
-                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Törölve"]),
+                status=rng.choice(["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]),
                 assigned=assigned,
             )
         )
 
-    duties: list[DutyModel] = []
+    # Szolgálatok = gyakorlatok szolgálat-típussal (a Műveletekbe olvadtak).
+    duties: list[ExerciseModel] = []
     for index in range(1, 361):
         start = base_date + timedelta(days=rng.randint(0, 365), hours=rng.choice([0, 6, 8, 12, 18]))
         duration_hours = rng.choice([8, 12, 24, 36])
         end = start + timedelta(hours=duration_hours)
         pid = rng.choice(active_or_reserve)
+        dtype = rng.choice(duty_types)
+        location = rng.choice(["Laktanya", "Főkapu", "Parancsnoki épület", "Lőtér", "Raktárbázis"])
         duties.append(
-            DutyModel(
+            ExerciseModel(
                 id=f"d{index}",
-                type=rng.choice(duty_types),
+                name=f"{dtype} – {location}",
+                type=dtype,
                 start_date=start.strftime("%Y-%m-%dT%H:%M"),
                 end_date=end.strftime("%Y-%m-%dT%H:%M"),
-                location=rng.choice(["Laktanya", "Főkapu", "Parancsnoki épület", "Lőtér", "Raktárbázis"]),
-                person_id=pid,
-                person_name=person_names[pid],
-                notes=rng.choice([
+                location=location,
+                max_personnel=1,
+                description=rng.choice([
                     "Váltás átadás-átvétel naplózva.",
                     "Szolgálati eligazítás megtartva.",
                     "Rendkívüli esemény nem történt.",
                     "Megerősített készültségi fokozat.",
                 ]),
-                status=rng.choice(["Tervezett", "Teljesített", "Lemondva"]),
+                status=rng.choice(["Tervezett", "Befejezett", "Lemondva"]),
+                assigned=[{"personId": pid, "personName": person_names[pid], "role": "szolgálat", "attendance": "Megjelent"}],
             )
         )
 
@@ -505,10 +519,10 @@ def reseed_large_test_database(db: Session, random_seed: int = 42) -> None:
         )
 
     logs: list[ActivityLogModel] = []
-    display_name_map = {"admin": "Rendszer Admin", "olvaso": "Teszt Olvasó", "szerkeszto": "Teszt Szerkesztő", "dev_master": "Fejlesztő Mester"}
+    display_name_map = {"admin": "Rendszer Admin", "olvaso": "Teszt Olvasó", "szerkeszto": "Teszt Szerkesztő", "devmaster": "Alkotó"}
     for index in range(1, 401):
         ts = base_date + timedelta(days=rng.randint(0, 365), hours=rng.randint(0, 23), minutes=rng.randint(0, 59))
-        log_user_id = rng.choice(["admin", "olvaso", "szerkeszto", "dev_master"])
+        log_user_id = rng.choice(["admin", "olvaso", "szerkeszto", "devmaster"])
         logs.append(
             ActivityLogModel(
                 id=f"al{index}",

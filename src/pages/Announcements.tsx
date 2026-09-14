@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { announcements as store, logAction, getErrorMessage } from '@/lib/store';
 import { Announcement } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import Modal from '@/components/Modal';
+import UnitSelect, { UnitChip } from '@/components/UnitSelect';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 import { Plus, Pin } from 'lucide-react';
@@ -12,12 +15,13 @@ const catClass: Record<string, string> = { 'Általános': 'badge-general', 'Font
 
 export default function AnnouncementsPage() {
   const { canEdit, user } = useAuth();
+  const location = useLocation();
   const [data, setData] = useState<Announcement[]>([]);
   const [filterCat, setFilterCat] = useState('');
   const [detail, setDetail] = useState<Announcement | null>(null);
   const [editing, setEditing] = useState<Announcement | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ title: '', category: 'Általános' as Announcement['category'], content: '', pinned: false });
+  const [form, setForm] = useState({ title: '', category: 'Általános' as Announcement['category'], content: '', pinned: false, unit: '' });
   const [deleteTarget, setDeleteTarget] = useState<Announcement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -33,11 +37,16 @@ export default function AnnouncementsPage() {
     }
   }, []);
 
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
+
+  // A fejléc-harangból érkezve a kiválasztott közlemény rögtön megnyílik.
   useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+    const navState = location.state as { openAnnouncementId?: string } | null;
+    if (!navState?.openAnnouncementId || data.length === 0) return;
+    const found = data.find((a) => a.id === navState.openAnnouncementId);
+    if (found) setDetail(found);
+  }, [location.state, data]);
 
   const sorted = [...data].filter(a => !filterCat || a.category === filterCat).sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
@@ -68,7 +77,7 @@ export default function AnnouncementsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Hírek és közlemények</h1>
-        {canEdit && <button onClick={() => { setForm({ title: '', category: 'Általános', content: '', pinned: false }); setCreating(true); }} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új közlemény</button>}
+        {canEdit && <button onClick={() => { setForm({ title: '', category: 'Általános', content: '', pinned: false, unit: '' }); setCreating(true); }} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új közlemény</button>}
       </div>
 
       <div className="flex gap-2 mb-6">
@@ -82,13 +91,14 @@ export default function AnnouncementsPage() {
         {sorted.map(a => (
           <div
             key={a.id}
-            className={`bg-card border border-border cursor-pointer transition-colors hover:bg-secondary ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
+            className={`bg-card border cursor-pointer transition-colors hover:bg-secondary ${a.category === 'Sürgős' ? 'border-destructive' : 'border-border'} ${a.pinned ? 'border-l-2 border-l-primary' : ''}`}
             style={{ borderRadius: '2px' }}
             onClick={() => setDetail(a)}
           >
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2 min-w-0">
                 {a.pinned && <Pin className="w-3.5 h-3.5 text-primary shrink-0" />}
+                <UnitChip unit={a.unit} />
                 <h3 className="font-bold font-rajdhani uppercase tracking-military truncate">{a.title}</h3>
               </div>
               <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${catClass[a.category]}`} style={{ borderRadius: '2px' }}>
@@ -118,7 +128,7 @@ export default function AnnouncementsPage() {
             <p className="text-foreground whitespace-pre-wrap">{detail.content}</p>
             {canEdit && (
               <div className="flex gap-2 justify-end pt-4">
-                <button onClick={() => { setForm({ title: detail.title, category: detail.category, content: detail.content, pinned: detail.pinned }); setEditing(detail); }} className="btn-mil-secondary text-xs">Szerkesztés</button>
+                <button onClick={() => { setForm({ title: detail.title, category: detail.category, content: detail.content, pinned: detail.pinned, unit: detail.unit ?? '' }); setEditing(detail); }} className="btn-mil-secondary text-xs">Szerkesztés</button>
                 <button onClick={() => setDeleteTarget(detail)} className="btn-mil-danger text-xs">Törlés</button>
               </div>
             )}
@@ -131,6 +141,7 @@ export default function AnnouncementsPage() {
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Cím *</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }} /></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value as Announcement['category'] })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: '2px' }}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
           <div><label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Tartalom *</label><textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm resize-none h-32" style={{ borderRadius: '2px' }} /></div>
+          <UnitSelect value={form.unit} onChange={(unit) => setForm({ ...form, unit })} label="Kinek szól" />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.pinned} onChange={e => setForm({ ...form, pinned: e.target.checked })} className="accent-primary" />Rögzített (kitűzött)</label>
           <div className="flex gap-3 justify-end pt-4"><button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button><button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button></div>
         </div>

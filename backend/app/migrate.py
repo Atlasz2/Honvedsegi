@@ -7,18 +7,14 @@ Idempotens – biztonságos többször is futtatni.
 from __future__ import annotations
 
 import json
+import uuid
 import logging
 from datetime import date, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import (
-    ParticipantModel,
-    PersonnelQualificationModel,
-    QualificationTypeModel,
-    new_id,
-)
+from .models import new_id
 
 log = logging.getLogger(__name__)
 
@@ -344,6 +340,177 @@ def _migrate_qualifications_from_trainings(db: Session) -> None:
     log.info("Képesítés-migráció kiképzésekből: %d bejegyzés", count)
 
 
+# ── migration: rendfokozat-nevek egységesítése ────────────────────────────────
+
+# A rendfokozatok korábban három helyen, egymástól függetlenül éltek, ezért
+# elcsúsztak: a seed fix demó-személyei "Közkatona"-t kaptak, a generált
+# állomány "Honvéd"-et, a frontend legördülője pedig csak az előbbit ismerte.
+# A hivatalos létra (constants.RANKS) a "Honvéd"-et használja; ez a migráció a
+# meglévő adatbázisokat is arra igazítja, hogy ne maradjon ismeretlen fokozat.
+_RANK_RENAMES = {"Közkatona": "Honvéd"}
+
+
+def _migrate_rank_names(db: Session) -> None:
+    key = "v2_rank_names_official"
+    if _migration_done(db, key):
+        return
+
+    for old_name, new_name in _RANK_RENAMES.items():
+        result = db.execute(
+            text("UPDATE personnel SET rank = :new WHERE rank = :old"),
+            {"new": new_name, "old": old_name},
+        )
+        if result.rowcount:
+            log.info("Rendfokozat átnevezve: %s -> %s (%d fő)", old_name, new_name, result.rowcount)
+
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_cancelled_status(db: Session) -> None:
+    """A gyakorlat „Törölve" státusza „Lemondva" lett (a kiképzés is kapta)."""
+    key = "v3_cancelled_status_lemondva"
+    if _migration_done(db, key):
+        return
+    for table in ("exercises", "trainings"):
+        if not _table_exists(db, table):
+            continue
+        result = db.execute(text(f"UPDATE {table} SET status = 'Lemondva' WHERE status = 'Törölve'"))
+        if result.rowcount:
+            log.info("%s: %d Törölve → Lemondva", table, result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_duties_into_exercises(db: Session) -> None:
+    """A szolgálatok a Műveletekbe olvadnak (döntés: 2026-09-12). Minden szolgálat
+    gyakorlat lesz a szolgálat típusával, a beosztottak résztvevők; az azonosító
+    megmarad. A duties tábla üresen marad, a kód nem használja többé."""
+    key = "v4_duties_into_exercises"
+    if _migration_done(db, key) or not _table_exists(db, "duties"):
+        _mark_done(db, key) if not _migration_done(db, key) else None
+        return
+    from .services.lifecycle import derive_temporal_status
+
+    rows = db.execute(text(
+        "SELECT id, type, start_date, end_date, location, person_id, person_name, assigned, notes, status FROM duties"
+    )).fetchall()
+    moved = 0
+    for (duty_id, dtype, start, end, location, person_id, person_name, assigned_json, notes, dstatus) in rows:
+        if db.execute(text("SELECT 1 FROM exercises WHERE id=:id"), {"id": duty_id}).first():
+            continue
+        assigned = json.loads(assigned_json) if isinstance(assigned_json, str) and assigned_json else (assigned_json or [])
+        people = [{"personId": person_id, "personName": person_name}] if person_id else []
+        people += [a for a in assigned if isinstance(a, dict) and a.get("personId")]
+        status = "Lemondva" if dstatus == "Lemondva" else derive_temporal_status(start or "", end or "")
+        db.execute(text(
+            "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, unit, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+            "VALUES (:id, :name, :type, :start, :end, :location, '', '', :maxp, :desc, :status, '', '', '', '[]')"
+        ), {
+            "id": duty_id, "name": f"{dtype} – {location}".strip(" –") if location else dtype, "type": dtype,
+            "start": start or "", "end": end or start or "", "location": location or "",
+            "maxp": max(1, len(people)), "desc": notes or "", "status": status,
+        })
+        participant_status = "Megjelent" if dstatus == "Teljesített" else "Tervezett"
+        seen: set[str] = set()
+        for person in people:
+            pid = str(person.get("personId", ""))
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            db.execute(text(
+                "INSERT INTO participants (id, event_type, event_id, personnel_id, person_name, rank, rank_short, sztsz, role, status, qualification_approved, notes) "
+                "VALUES (:id, 'exercise', :eid, :pid, :pname, '', '', '', 'szolgálat', :status, 0, '')"
+            ), {"id": uuid.uuid4().hex, "eid": duty_id, "pid": pid, "pname": person.get("personName", ""), "status": participant_status})
+        # a korábban duty-ként rögzített résztvevők is átkerülnek
+        db.execute(text("UPDATE participants SET event_type='exercise' WHERE event_type='duty' AND event_id=:eid"), {"eid": duty_id})
+        moved += 1
+    db.execute(text("DELETE FROM duties"))
+    if moved:
+        log.info("Szolgálatok átvezetve a Műveletekbe: %d", moved)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _mark_shadow_events(db: Session) -> None:
+    """A gyakorlat/kiképzés azonosítójával létrejött event-sorok árnyékok, nem
+    események — eddig duplán látszottak a naptárban és a foglaltságban."""
+    key = "v5_mark_shadow_events"
+    if _migration_done(db, key):
+        return
+    from .constants import SHADOW_EVENT_TYPE
+    sources = [t for t in ("exercises", "trainings") if _table_exists(db, t)]
+    if not sources:
+        _mark_done(db, key)
+        return
+    subquery = " OR ".join(f"id IN (SELECT id FROM {t})" for t in sources)
+    result = db.execute(text(f"UPDATE events SET event_type = :t WHERE {subquery}"), {"t": SHADOW_EVENT_TYPE})
+    if result.rowcount:
+        log.info("Árnyék-esemény megjelölve: %d", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_event_cancelled_status(db: Session) -> None:
+    """Az esemény „Törölve" státusza is „Lemondva" — egy szó a teljes rendszerben."""
+    key = "v7_event_cancelled_lemondva"
+    if _migration_done(db, key):
+        return
+    result = db.execute(text("UPDATE events SET status = 'Lemondva' WHERE status = 'Törölve'"))
+    if result.rowcount:
+        log.info("events: %d Törölve → Lemondva", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_leave_status_to_active(db: Session) -> None:
+    """A „Szabadságon" személy-státusz megszűnt: az ilyen rekord Aktív (a szabadság a Szabadság modulban van)."""
+    key = "v8_person_status_no_szabadsagon"
+    if _migration_done(db, key):
+        return
+    result = db.execute(text("UPDATE personnel SET status = 'Aktív' WHERE status = 'Szabadságon'"))
+    if result.rowcount:
+        log.info("personnel: %d Szabadságon → Aktív", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
+def _migrate_trainings_into_exercises(db: Session) -> None:
+    """A kiképzés is művelet (döntés: 2026-09-13). Minden trainings-sor gyakorlat
+    lesz ugyanazzal az azonosítóval (a szervező mező átmegy), a résztvevők,
+    követelmények és képesítés-források event_type-ja 'exercise' lesz."""
+    key = "v6_trainings_into_exercises"
+    if _migration_done(db, key):
+        return
+    if not _table_exists(db, "trainings"):
+        _mark_done(db, key)
+        return
+    ex_cols = {r[1] for r in db.execute(text("PRAGMA table_info(exercises)")).fetchall()}
+    if "organizer" not in ex_cols:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN organizer TEXT DEFAULT ''"))
+    if "unit" not in ex_cols:
+        db.execute(text("ALTER TABLE exercises ADD COLUMN unit TEXT DEFAULT ''"))
+    tr_cols = {r[1] for r in db.execute(text("PRAGMA table_info(trainings)")).fetchall()}
+    def col(name, default="''"):
+        return name if name in tr_cols else default
+    moved = db.execute(text(
+        "INSERT INTO exercises (id, name, type, start_date, end_date, location, organizer, unit, max_personnel, description, status, qualification_id, series_id, level, assigned) "
+        f"SELECT id, name, type, start_date, end_date, COALESCE(location,''), COALESCE({col('organizer')},''), '', COALESCE(max_personnel,0), COALESCE(description,''), "
+        f"CASE WHEN status='Törölve' THEN 'Lemondva' ELSE COALESCE(status,'Tervezett') END, COALESCE({col('qualification_id')},''), COALESCE({col('series_id')},''), COALESCE({col('level')},''), COALESCE(assigned,'[]') "
+        "FROM trainings WHERE id NOT IN (SELECT id FROM exercises)"
+    )).rowcount
+    db.execute(text("UPDATE participants SET event_type='exercise' WHERE event_type='training'"))
+    if _table_exists(db, "event_prerequisites"):
+        db.execute(text("UPDATE event_prerequisites SET event_type='exercise' WHERE event_type='training'"))
+    if _table_exists(db, "personnel_qualifications"):
+        db.execute(text("UPDATE personnel_qualifications SET source_event_type='exercise' WHERE source_event_type='training'"))
+    db.execute(text("DELETE FROM trainings"))
+    if moved:
+        log.info("Kiképzések átvezetve a Műveletekbe: %d", moved)
+    db.commit()
+    _mark_done(db, key)
+
+
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
 def run_all(db: Session) -> None:
@@ -352,3 +519,10 @@ def run_all(db: Session) -> None:
     _migrate_participants(db)
     _migrate_qualifications(db)
     _migrate_qualifications_from_trainings(db)
+    _migrate_rank_names(db)
+    _migrate_cancelled_status(db)
+    _migrate_duties_into_exercises(db)
+    _mark_shadow_events(db)
+    _migrate_trainings_into_exercises(db)
+    _migrate_event_cancelled_status(db)
+    _migrate_leave_status_to_active(db)

@@ -1,19 +1,27 @@
+import { OFFLINE_MESSAGE, isNetworkError, setOnline } from '@/lib/connection';
 import {
   ActivityLogEntry,
   Announcement,
   AuthToken,
-  Duty,
   Equipment,
   Exercise,
   Person,
+  PersonLite,
   PersonHistoryEntry,
   PersonnelQualification,
   QualificationAlert,
   QualificationStat,
   QualificationType,
   Supply,
-  Training,
+  Series,
   AppEvent,
+  AttendanceDay,
+  AttendanceMark,
+  AttendanceStatus,
+  MaterialRequirement,
+  OperationAttendanceEntry,
+  OperationDocument,
+  OperationTreeNode,
   User,
   Vehicle,
 } from './types';
@@ -32,6 +40,8 @@ type BackendUser = {
   display_name: string;
   role: User['role'];
   active: boolean;
+  department?: string;
+  region?: string;
   last_login?: string | null;
 };
 
@@ -41,6 +51,8 @@ type PersonnelPagedResult = {
   pageSize: number;
   total: number;
   totalPages: number;
+  /** Státusz → létszám a teljes (szűretlen) állományra — a fejléc kártyáihoz. */
+  statusCounts: Record<string, number>;
 };
 
 export type ImportIssue = {
@@ -60,6 +72,16 @@ export type ImportPreviewItem = {
   rawData: Record<string, string>;
   unknownData: Record<string, string>;
   issues: string[];
+  /** Mező → [régi, új] a meglévő rekordhoz képest. */
+  changes?: Record<string, [string, string]>;
+};
+
+export type ImportMissingPerson = {
+  id: string;
+  name: string;
+  sztsz: string;
+  unit: string;
+  status: string;
 };
 
 export type ImportPreviewResult = {
@@ -71,6 +93,17 @@ export type ImportPreviewResult = {
   skipped: number;
   issues: ImportIssue[];
   items: ImportPreviewItem[];
+  /** Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — a személy „Importált adatok" részébe kerülnek. */
+  unknownColumns: string[];
+  /** Csak személyzetnél: a nyilvántartásban vannak, de a fájlból hiányoznak. */
+  missingCount: number;
+  missing: ImportMissingPerson[];
+  /** „12 új, 3 leszerelt, 5 alegység-váltás" — a hatókörömben. */
+  diff: ImportDiffSummary;
+};
+export type ImportDiffSummary = {
+  new: number; unchanged: number; changed: number; discharged: number; unitChanges: number; statusChanges: number; rankChanges: number; outOfScope: number;
+  byUnit: Record<string, { new: number; changed: number; discharged: number }>;
 };
 
 export type ImportDraftUpdateItem = {
@@ -116,6 +149,8 @@ function toUser(raw: BackendUser): User {
     displayName: raw.display_name,
     role: raw.role,
     active: raw.active,
+    department: raw.department || '',
+    region: raw.region || '',
     lastLogin: raw.last_login || undefined,
   };
 }
@@ -133,7 +168,24 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
     }
   }
 
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    // 503 = az adatbázis pillanatnyilag foglalt (sok egyidejű mentés): egyszer,
+    // a szerver által kért szünet után újrapróbáljuk — a felhasználó nem lát hibát.
+    if (response.status === 503 && !init.signal?.aborted) {
+      const wait = Math.min(5, Number(response.headers.get('Retry-After') || 2)) * 1000;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    }
+  } catch (error) {
+    if (isNetworkError(error)) {
+      setOnline(false);
+      throw new Error(OFFLINE_MESSAGE);
+    }
+    throw error;
+  }
+  setOnline(true);
   if (response.status === 204) {
     return undefined as T;
   }
@@ -160,7 +212,7 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
           ? data
           : '';
 
-    throw new Error(detail || `A k?r?s sikertelen volt (${response.status})`);
+    throw new Error(detail || `A kérés sikertelen volt (${response.status})`);
   }
 
   return data as T;
@@ -215,8 +267,28 @@ function createCrud<T extends { id: string }, TCreate extends Omit<T, 'id'> = Om
   };
 }
 
+export type QuickSearchResult = {
+  persons: { id: string; name: string; sztsz: string; rank: string; unit: string; status: string }[];
+  orders: { id: string; number: string; subject: string; typeName: string; status: string }[];
+  operations: { id: string; source: 'exercise'; name: string; type: string; startDate: string; status: string }[];
+};
+export const changes = {
+  version: () => request<{ version: number }>('/changes'),
+};
+
+export const search = {
+  quick: (q: string) => request<QuickSearchResult>(`/search?q=${encodeURIComponent(q)}`),
+};
+
 export const personnel = {
   ...createCrud<Person>('/personnel'),
+  get: (id: string) => request<Person>(`/personnel/${id}`),
+  bulkUpdate: (payload: { ids: string[]; status?: Person['status']; unit?: string }) =>
+    request<{ changed: number }>('/personnel/bulk', { method: 'POST', body: JSON.stringify(payload) }),
+  bulkGrant: (payload: { ids: string[]; qualTypeId: string; earnedDate: string }) =>
+    request<{ granted: number; skipped: number; summariesGranted: number }>('/personnel/bulk-grant', { method: 'POST', body: JSON.stringify(payload) }),
+  /** Könnyű lista a beosztó/kiadó felületeknek — a teljes akta helyett. */
+  getLite: () => request<PersonLite[]>('/personnel/lite'),
   getPaged: (params: { page: number; pageSize: number; search?: string; unit?: string; status?: string; qualification?: string; sortBy?: string; sortDir?: 'asc' | 'desc' }) => {
     const query = new URLSearchParams({
       page: String(params.page),
@@ -231,6 +303,38 @@ export const personnel = {
     return request<PersonnelPagedResult>(`/personnel/paged?${query.toString()}`);
   },
   getHistory: (id: string) => request<PersonHistoryEntry[]>(`/personnel/${id}/history`),
+  /** Személy-akta időszalag: minden, amit a rendszer tud róla, időrendben. */
+  getTimeline: (id: string) => request<PersonTimeline>(`/personnel/${id}/timeline`),
+};
+
+export type TimelineKind = 'operation' | 'duty' | 'event' | 'leave' | 'attendance' | 'qualification' | 'qualification-expiry' | 'document' | 'document-expiry' | 'order' | 'milestone';
+export type PersonTimeline = {
+  personnelId: string; name: string;
+  items: { date: string; endDate: string; kind: TimelineKind; title: string; subtitle: string; status: string; ref: { type?: string; id?: string } }[];
+};
+
+export type ReferenceData = {
+  units: string[];
+  personStatuses: string[];
+  /** Státusz → választható jogviszony-altípusok. */
+  serviceTypes: Record<string, string[]>;
+  /** Terület (megye) → zászlóalj(ak). */
+  regions: Record<string, string[]>;
+  /** Megjelenítés: terület-kulcs → „31. TVZ – Veszprém"; "" → ezredtörzs. */
+  regionLabels: Record<string, string>;
+  /** „31 TVZ" → „31. TVZ". */
+  unitLabels: Record<string, string>;
+  regimentUnit: string;
+  ranks: { name: string; short: string }[];
+};
+
+/**
+ * Törzsadatok a backendből. Korábban az egységek, rendfokozatok és státuszok a
+ * Personnel.tsx-ben voltak hardkódolva, a seedtől függetlenül — így a kettő el
+ * tudott (és el is szokott) csúszni egymástól.
+ */
+export const reference = {
+  get: () => request<ReferenceData>('/reference'),
 };
 
 export const qualificationTypes = {
@@ -269,9 +373,11 @@ export const qualificationAlerts = {
 };
 
 export type LocationConflict = {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
+  /** Idegen zászlóalj foglalása: csak „foglalt — 83. TVZ", részletek nélkül. */
+  foreign?: boolean;
   startDate: string;
   endDate: string;
   status: string;
@@ -289,10 +395,182 @@ export function checkLocationConflicts(
   if (excludeId) params.set('exclude_id', excludeId);
   return request<LocationConflict[]>(`/conflicts?${params.toString()}`);
 }
-export const exercises = createCrud<Exercise>('/exercises');
-export const trainings = createCrud<Training>('/trainings');
+export type PersonConflict = {
+  eventType: string; eventId: string; eventName: string; startDate: string; endDate: string; status: string; participantStatus: string;
+};
+/** Ugyanaz a személy más, átfedő műveletben — a beosztásnál figyelmeztetünk. */
+export function checkPersonConflicts(personnelId: string, startDate: string, endDate: string, excludeType?: string, excludeId?: string): Promise<PersonConflict[]> {
+  const params = new URLSearchParams({ personnel_id: personnelId, start_date: startDate, end_date: endDate });
+  if (excludeType) params.set('exclude_type', excludeType);
+  if (excludeId) params.set('exclude_id', excludeId);
+  return request<PersonConflict[]>(`/conflicts/person?${params.toString()}`);
+}
+export type AssignmentForecast = { assignable: number; busy: number; busyPeople: { personnelId: string; name: string; unit: string; events: string[] }[] };
+/** Már a dátum megadásakor: hányan lesznek foglaltak a hatókörömben az időszak alatt. */
+export function assignmentForecast(startDate: string, endDate: string, excludeType?: string, excludeId?: string): Promise<AssignmentForecast> {
+  const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (excludeType) params.set('exclude_type', excludeType);
+  if (excludeId) params.set('exclude_id', excludeId);
+  return request<AssignmentForecast>(`/conflicts/forecast?${params.toString()}`);
+}
+/** „Átkerül ide": az ütköző műveletekben a részvétel „Visszamondta" lesz, megjegyzéssel. */
+export function movePersonFromConflicts(personnelId: string, fromEvents: { eventType: string; eventId: string }[], targetName: string): Promise<{ moved: { eventType: string; eventId: string; eventName: string }[] }> {
+  return request(`/conflicts/person/move`, { method: 'POST', body: JSON.stringify({ personnelId, fromEvents, targetName }) });
+}
+
+export const exercises = {
+  ...createCrud<Exercise>('/exercises'),
+  /** Karcsú lista: résztvevők nélkül (~5× kisebb) — rács, naptár, riport-választó. */
+  getLite: () => request<Exercise[]>('/exercises?lite=true'),
+  /** Egy művelet a teljes beosztással. */
+  get: (id: string) => request<Exercise>(`/exercises/${id}`),
+};
+export type DutyHandover = { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string };
+/** Szolgálat átadás-átvétel: név + időpont, naplózva. */
+export function dutyHandover(exerciseId: string, action: 'handover' | 'takeover' | 'clear', personName = '', note = ''): Promise<Exercise> {
+  return request<Exercise>(`/exercises/${exerciseId}/handover`, { method: 'POST', body: JSON.stringify({ action, personName, note }) });
+}
+
+export type SeriesMatrix = {
+  operations: { id: string; name: string; level: string; source: string; startDate: string; seriesId?: string; seriesName?: string }[];
+  rows: { personnelId: string; name: string; completed: string[] }[];
+};
+
+export const series = {
+  getAll: () => request<Series[]>('/series'),
+  create: (payload: { name: string; description?: string; parentId?: string; unit?: string }) =>
+    request<Series>('/series', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (id: string, payload: { name: string; description?: string; parentId?: string; unit?: string }) =>
+    request<Series>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (id: string) => request<void>(`/series/${id}`, { method: 'DELETE' }),
+  matrix: (id: string) => request<SeriesMatrix>(`/series/${id}/matrix`),
+};
+
+export type UnexcusedAlert = { personnelId: string; name: string; rank: string; unit: string; date: string; note: string };
+export type ReadinessGap = { personnelId: string; name: string; rank: string; unit: string };
+
+export type LeaveMinimumItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  takenDays: number; missingDays: number;
+};
+/** Éves kötelezettség határideje (dec. 31.) és az előrejelzés állapota. */
+export type YearDeadline = { deadline: string; daysLeft: number; warnDays: number; isOverdue: boolean; isDueSoon: boolean };
+export type LeaveMinimumResult = YearDeadline & { year: number; minDays: number; items: LeaveMinimumItem[] };
+export type ServiceMinimumItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  servedDays: number; missingDays: number;
+};
+export type ServiceMinimumResult = YearDeadline & { year: number; minDays: number; items: ServiceMinimumItem[] };
+export type BasicTrainingItem = {
+  personnelId: string; name: string; rank: string; unit: string;
+  joinDate: string; deadline: string | null; daysLeft: number | null;
+  isOverdue: boolean; isDueSoon: boolean;
+  completedModules: number; totalModules: number; missingModules: string[];
+};
+export type BasicTrainingResult = {
+  modules: { id: string; name: string }[];
+  deadlineDays: number;
+  warnDays: number;
+  items: BasicTrainingItem[];
+};
+
+export const alerts = {
+  unexcused: (days = 30) => request<UnexcusedAlert[]>(`/alerts/unexcused?days=${days}`),
+  readinessGaps: () => request<ReadinessGap[]>('/alerts/readiness-gaps'),
+  leaveMinimum: (year?: number) => request<LeaveMinimumResult>(`/alerts/leave-minimum${year ? `?year=${year}` : ''}`),
+  basicTraining: () => request<BasicTrainingResult>('/alerts/basic-training'),
+  serviceMinimum: (year?: number) => request<ServiceMinimumResult>(`/alerts/service-minimum${year ? `?year=${year}` : ''}`),
+  orderDeadlines: () => request<OrderDeadlinesResult>('/alerts/order-deadlines'),
+  /** Az admin egyéni dátum-szabályai kiértékelve. */
+  custom: () => request<CustomRuleAlertsResult>('/alerts/custom'),
+};
+
+export type CustomRuleAlertItem = {
+  ruleId: string; ruleLabel: string; personnelId: string; name: string; rank: string; unit: string;
+  baseDate: string; deadline: string; daysLeft: number; isOverdue: boolean;
+};
+export type CustomRuleAlertsResult = { rules: CustomAlertRule[]; items: CustomRuleAlertItem[] };
+
+export type OrderDeadlineItem = {
+  orderId: string; number: string; subject: string; orderStatus: string;
+  kind: 'order' | 'chapter'; label: string; responsible: string; assignee: string;
+  dueDate: string; daysLeft: number; isOverdue: boolean; isDueSoon: boolean;
+};
+export type OrderDeadlinesResult = { warnDays: number; items: OrderDeadlineItem[] };
+
+export type ApplicantMatch = { line: string; personnelId: string; name: string; sztsz: string };
+export type ApplicantPasteResult = {
+  added: ApplicantMatch[];
+  alreadyPresent: ApplicantMatch[];
+  unmatched: string[];
+  ambiguous: { line: string; candidates: ApplicantMatch[] }[];
+};
+export type CampaignRow = {
+  participantId: string; personnelId: string; name: string; rank: string; unit: string; sztsz: string;
+  personStatus: string; status: string; role: string; eligible: boolean; missing: string[];
+};
+export type CampaignPlan = {
+  eventType: string; eventId: string; eventName: string; startDate: string; endDate: string; location: string;
+  requirements: string[]; rows: CampaignRow[];
+};
+
+type CampaignSource = 'exercise';
+
+export const campaign = {
+  pasteApplicants: (source: CampaignSource, eventId: string, text: string) =>
+    request<ApplicantPasteResult>(`/campaign/${source}/${eventId}/applicants`, { method: 'POST', body: JSON.stringify({ text }) }),
+  plan: (source: CampaignSource, eventId: string) => request<CampaignPlan>(`/campaign/${source}/${eventId}/plan`),
+  exportXlsx: (source: CampaignSource, eventId: string) =>
+    downloadBlob(`/campaign/${source}/${eventId}/plan/export.xlsx`, 'kampanyterv.xlsx'),
+  exportPdf: (source: CampaignSource, eventId: string) =>
+    downloadBlob(`/campaign/${source}/${eventId}/plan/export.pdf`, 'kampanyterv.pdf'),
+};
+
+export type PersonDocument = {
+  id: string;
+  personnelId: string;
+  category: string;
+  name: string;
+  identifier: string;
+  issuedDate: string;
+  expiryDate: string | null;
+  notes: string;
+  isExpired: boolean;
+  daysUntilExpiry: number | null;
+};
+
+export type DocumentPayload = {
+  category: string;
+  name: string;
+  identifier?: string;
+  issuedDate?: string;
+  expiryDate?: string | null;
+  notes?: string;
+};
+
+export type ExpiringDocument = {
+  documentId: string;
+  personnelId: string;
+  name: string;
+  rank: string;
+  unit: string;
+  category: string;
+  documentName: string;
+  expiryDate: string | null;
+  isExpired: boolean;
+  daysUntilExpiry: number;
+};
+
+export const documents = {
+  getForPerson: (personId: string) => request<PersonDocument[]>(`/documents/personnel/${personId}`),
+  add: (personId: string, payload: DocumentPayload) =>
+    request<PersonDocument>(`/documents/personnel/${personId}`, { method: 'POST', body: JSON.stringify(payload) }),
+  update: (docId: string, payload: DocumentPayload) =>
+    request<PersonDocument>(`/documents/${docId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (docId: string) => request<void>(`/documents/${docId}`, { method: 'DELETE' }),
+  expiring: (days = 60) => request<ExpiringDocument[]>(`/documents/expiring?days=${days}`),
+};
 export const events = createCrud<AppEvent>('/events');
-export const duties = createCrud<Duty>('/duties');
 export const announcements = createCrud<Announcement>('/announcements',);
 
 export const equipment = {
@@ -318,24 +596,28 @@ export const users = {
     const result = await request<BackendUser[]>('/users');
     return result.map(toUser);
   },
-  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string }) => {
+  create: async (payload: Required<Pick<User, 'username' | 'displayName' | 'role' | 'active'>> & { password: string; department?: string; region?: string }) => {
     const result = await request<BackendUser>('/users', {
       method: 'POST',
       body: JSON.stringify({
         username: payload.username,
         password: payload.password,
         display_name: payload.displayName,
+        department: payload.department ?? '',
+        region: payload.region ?? '',
         role: payload.role,
         active: payload.active,
       }),
     });
     return toUser(result);
   },
-  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string }) => {
+  update: async (username: string, payload: Pick<User, 'displayName' | 'role' | 'active'> & { password?: string; department?: string; region?: string }) => {
     const result = await request<BackendUser>(`/users/${username}`, {
       method: 'PUT',
       body: JSON.stringify({
         display_name: payload.displayName,
+        department: payload.department ?? '',
+        region: payload.region ?? '',
         role: payload.role,
         active: payload.active,
         password: payload.password || null,
@@ -346,8 +628,62 @@ export const users = {
   remove: (username: string) => request<void>(`/users/${username}`, { method: 'DELETE' }),
 };
 
+export type BackupResult = {
+  ok: boolean; file: string | null; sizeBytes?: number; createdAt?: string;
+  verification: { ok: boolean; integrity: string; counts: Record<string, number | null> };
+  removedOld: number;
+};
+
+export type SystemStatus = {
+  time: string;
+  startedAt: string;
+  uptimeSeconds: number;
+  database: { path: string; sizeBytes: number };
+  lastBackup: { name: string; sizeBytes: number; modifiedAt: string; count: number } | null;
+  backups: { name: string; sizeBytes: number; createdAt: string }[];
+  sessions: { active: number; expired: number; activeUsers: number };
+  users: { byRole: Record<string, number> };
+  lockedAccounts: number;
+};
+
+/**
+ * Karbantartás — kizárólag a god (devmaster) éri el. Nem-god hívónál a backend
+ * semleges 403-at ad, ezért a felület ezt a szekciót csak god esetén jeleníti meg.
+ */
+export type OpsHealth = {
+  backup: {
+    latest: { name: string; sizeBytes: number; createdAt: string } | null; ageHours: number | null; count: number; staleAfterHours: number;
+    mirror: { configured: boolean; path: string; reachable: boolean; latest: string | null };
+    disk: { freeBytes: number; totalBytes: number }; database: { sizeBytes: number; walBytes: number }; warnings: string[];
+  };
+  archive: { lastRun: string | null; logRows: number; keepMonths: number; archiveFiles: string[]; archiveDir: string };
+};
+export const opsHealth = () => request<OpsHealth>('/settings/health');
+
+export const maintenance = {
+  status: () => request<SystemStatus>('/maintenance/status'),
+  purgeSessions: () => request<{ removed: number }>('/maintenance/sessions/purge', { method: 'POST' }),
+  backupNow: () => request<BackupResult>('/maintenance/backup', { method: 'POST' }),
+  archiveLogs: () => request<{ archived: number; files: string[] }>('/maintenance/archive-logs', { method: 'POST' }),
+  forceLogout: (username: string) => request<{ revoked: number }>(`/maintenance/users/${username}/logout`, { method: 'POST' }),
+  unlock: (username: string) => request<{ status: string }>(`/maintenance/users/${username}/unlock`, { method: 'POST' }),
+};
+
+export type ActivityLogQuery = { dateFrom?: string; dateTo?: string; user?: string; module?: string; q?: string; limit?: number };
+
 export const activityLog = {
-  getAll: () => request<ActivityLogEntry[]>('/activity-log'),
+  getAll: (params: ActivityLogQuery = {}) => {
+    const query = new URLSearchParams();
+    if (params.dateFrom) query.set('date_from', params.dateFrom);
+    if (params.dateTo) query.set('date_to', params.dateTo);
+    if (params.user) query.set('user', params.user);
+    if (params.module) query.set('module', params.module);
+    if (params.q) query.set('q', params.q);
+    if (params.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return request<ActivityLogEntry[]>(`/activity-log${qs ? `?${qs}` : ''}`);
+  },
+  facets: () => request<{ users: string[]; modules: string[] }>('/activity-log/facets'),
   add: (payload: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => request<ActivityLogEntry>('/activity-log', { method: 'POST', body: JSON.stringify(payload) }),
   restore: (id: string) => request<ActivityLogEntry>(`/activity-log/${id}/restore`, { method: 'POST' }),
 };
@@ -371,7 +707,7 @@ export function initializeData() {
 
 export type ReportPreviewListItem = {
   id: string;
-  itemType: 'exercise' | 'training' | 'event' | 'duty';
+  itemType: 'exercise' | 'event';
   name?: string;
   type?: string;
   personId?: string;
@@ -405,7 +741,7 @@ export type ReportPreviewFocusParticipant = {
 };
 
 export type ReportPreviewFocus = {
-  type: 'exercise' | 'training' | 'event' | 'duty';
+  type: 'exercise' | 'event';
   id: string;
   headline: string;
   description: string;
@@ -414,19 +750,17 @@ export type ReportPreviewFocus = {
 };
 
 export type ReportPreviewResponse = {
-  template: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
+  template: 'overview' | 'operations' | 'events' | 'focus';
   title: string;
   interval: {
     dateFrom: string;
     dateTo: string;
   };
-  focusType: 'exercise' | 'training' | 'event' | 'duty' | null;
+  focusType: 'exercise' | 'event' | null;
   focusId: string | null;
   summary: {
     exercises: number;
-    trainings: number;
     events: number;
-    duties: number;
   };
   sections: ReportPreviewSection[];
   focus: ReportPreviewFocus | null;
@@ -435,8 +769,8 @@ export const reports = {
   previewOperationsReport: (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    template?: 'overview' | 'operations' | 'events' | 'focus';
+    focusType?: 'exercise' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -450,8 +784,8 @@ export const reports = {
   downloadOperationsPdf: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: 'overview' | 'operations' | 'duties' | 'events' | 'focus';
-    focusType?: 'exercise' | 'training' | 'event' | 'duty';
+    template?: 'overview' | 'operations' | 'events' | 'focus';
+    focusType?: 'exercise' | 'event';
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -499,8 +833,8 @@ export const reports = {
   downloadOperationsExcel: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: "overview" | "operations" | "duties" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event" | "duty";
+    template?: "overview" | "operations" | "events" | "focus";
+    focusType?: "exercise" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -548,8 +882,8 @@ export const reports = {
   downloadOperationsWord: async (params?: {
     dateFrom?: string;
     dateTo?: string;
-    template?: "overview" | "operations" | "duties" | "events" | "focus";
-    focusType?: "exercise" | "training" | "event" | "duty";
+    template?: "overview" | "operations" | "events" | "focus";
+    focusType?: "exercise" | "event";
     focusId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -595,6 +929,11 @@ export const reports = {
     window.URL.revokeObjectURL(url);
   },
 };
+/** Próbaüzem-PDF: a változáslista elfogadás előtt, aláírható. */
+export function exportImportDryRunPdf(entity: ImportEntity, draftId: string, filename: string): Promise<void> {
+  return downloadBlob(`/import/${entity}/draft/${draftId}/export.pdf?filename=${encodeURIComponent(filename)}`, `import-probauzem-${draftId.slice(0, 8)}.pdf`);
+}
+
 export async function previewImport(entity: ImportEntity, file: File): Promise<ImportPreviewResult> {
   const formData = new FormData();
   formData.append('file', file);
@@ -617,31 +956,7 @@ export async function confirmImport(entity: ImportEntity, draftId: string): Prom
   });
 }
 
-export type AttendanceStatus =
-  | 'Jelen' | 'Szabadság' | 'Betegállomány' | 'Vezényelve'
-  | 'Szolgálatban' | 'Kiküldetés' | 'Igazolt távollét' | 'Igazolatlan távollét';
-
-export type AttendanceEntry = {
-  personnelId: string;
-  name: string;
-  rank: string;
-  unit: string;
-  status: AttendanceStatus;
-  note: string;
-};
-
-export type AttendanceDay = {
-  date: string;
-  total: number;
-  summary: Record<string, number>;
-  items: AttendanceEntry[];
-};
-
-export type AttendanceMark = {
-  personnelId: string;
-  status: AttendanceStatus;
-  note?: string;
-};
+export type { AttendanceStatus, AttendanceEntry, AttendanceDay, AttendanceMark } from './types';
 
 function attendanceQuery(date: string, unit?: string, includeReserve?: boolean): string {
   const query = new URLSearchParams({ date });
@@ -650,13 +965,21 @@ function attendanceQuery(date: string, unit?: string, includeReserve?: boolean):
   return query.toString();
 }
 
-async function downloadBlob(path: string, filename: string): Promise<void> {
+async function downloadBlob(path: string, filename: string, body?: unknown): Promise<void> {
   const token = getAccessToken();
   const headers = new Headers();
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
+  } catch (error) {
+    if (isNetworkError(error)) { setOnline(false); throw new Error(OFFLINE_MESSAGE); }
+    throw error;
+  }
+  setOnline(true);
   if (!response.ok) {
     throw new Error((await response.text()) || 'A letöltés sikertelen');
   }
@@ -672,17 +995,28 @@ async function downloadBlob(path: string, filename: string): Promise<void> {
 }
 
 export type AttendanceEventOption = {
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'event';
   eventId: string;
   name: string;
   participantCount: number;
+  /** Hány résztvevőnek van már rekordja az adott napon (más ügyintéző már rögzíthette). */
+  recordedCount: number;
+  recordedStatuses: Record<string, number>;
 };
 
 export const attendance = {
   getDay: (date: string, unit?: string, includeReserve?: boolean) =>
     request<AttendanceDay>(`/attendance?${attendanceQuery(date, unit, includeReserve)}`),
-  setDay: (date: string, items: AttendanceMark[]) =>
-    request<AttendanceDay>('/attendance', { method: 'PUT', body: JSON.stringify({ date, items }) }),
+  setDay: (date: string, items: AttendanceMark[], overrideReason = '') =>
+    request<AttendanceDay>('/attendance', { method: 'PUT', body: JSON.stringify({ date, items, overrideReason }) }),
+  /** Napi zárás: „Lezárva: Kiss őrm., 08:12". */
+  closeDay: (date: string, note = '', unit = '') =>
+    request<AttendanceDay>('/attendance/close', { method: 'POST', body: JSON.stringify({ date, note, unit }) }),
+  reopenDay: (date: string, reason: string, unit = '') =>
+    request<AttendanceDay>(`/attendance/close?date=${date}&unit=${encodeURIComponent(unit)}&reason=${encodeURIComponent(reason)}`, { method: 'DELETE' }),
+  /** Egy művelet/esemény résztvevőinek azonosítói — a létszám gyors kitöltés „kit rakunk be" nézetéhez. */
+  eventParticipantIds: (eventType: 'exercise' | 'event', eventId: string) =>
+    request<{ personnelId: string }[]>(`/${eventType === 'exercise' ? 'exercises' : 'events'}/${eventId}/participants`).then((rows) => rows.map((r) => r.personnelId)),
   eventsOnDay: (date: string) =>
     request<AttendanceEventOption[]>(`/attendance/events?date=${encodeURIComponent(date)}`),
   fillFromEvent: (date: string, eventType: string, eventId: string, status: AttendanceStatus) =>
@@ -693,7 +1027,7 @@ export const attendance = {
     downloadBlob(`/attendance/export.pdf?${attendanceQuery(date, unit, includeReserve)}`, `letszamjelentes-${date}.pdf`),
 };
 
-export type LeaveType = 'Szabadság' | 'Betegszabadság' | 'Kiküldetés' | 'Egyéb';
+export type LeaveType = 'Szabadság' | 'Szolgálatmentesség' | 'Betegszabadság' | 'Kiküldetés' | 'Egyéb';
 export type LeaveStatus = 'Beadva' | 'Jóváhagyva' | 'Elutasítva';
 
 export type LeaveRequest = {
@@ -729,9 +1063,12 @@ export const leave = {
 
 export type Booking = {
   location: string;
-  eventType: 'exercise' | 'training' | 'event' | 'duty';
+  eventType: 'exercise' | 'event';
   eventId: string;
   eventName: string;
+  /** Másik zászlóalj foglalása — csak „foglalt — 83. TVZ". */
+  foreign?: boolean;
+  unit?: string;
   startDate: string;
   endDate: string;
   status: string;
@@ -778,11 +1115,243 @@ export const prerequisites = {
   },
 };
 
+// ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
 
+export type OperationNodePayload = {
+  eventType: 'esemeny';
+  name: string;
+  type: string;
+  startDate: string;
+  endDate: string;
+  location?: string;
+  organizer?: string;
+  maxPersonnel?: number;
+  description?: string;
+  status: string;
+  parentId?: string | null;
+};
 
+export type OperationsNow = {
+  date: string;
+  running: { id: string; source: 'exercise'; name: string; type: string; unit: string; isDuty: boolean; startDate: string; endDate: string; location: string; assignedCount: number }[];
+  onTask: { personnelId: string; name: string; rank: string; unit: string; personStatus: string; operationId: string; source: 'exercise'; operationName: string; isDuty: boolean; operationUnit: string; startDate: string; endDate: string; participantStatus: string }[];
+  onTaskPeople: number;
+  todayEvents: { id: string; name: string; type: string; startDate: string; endDate: string; location: string; status: string }[];
+  /** A következő 7 napban induló műveletek — a sorozat-elemek is. */
+  upcoming: { id: string; source: 'exercise'; name: string; type: string; unit: string; isDuty: boolean; seriesId: string; startDate: string; endDate: string; location: string }[];
+};
+export const operations = {
+  now: () => request<OperationsNow>('/operations/now'),
+};
 
+export const operationTree = {
+  get: () => request<OperationTreeNode[]>('/operations/tree'),
+  create: (payload: OperationNodePayload) =>
+    request<{ id: string }>('/operations/tree', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (nodeId: string, payload: OperationNodePayload) =>
+    request<{ id: string }>(`/operations/tree/${nodeId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (nodeId: string) => request<void>(`/operations/tree/${nodeId}`, { method: 'DELETE' }),
+};
 
+export const operationAttendance = {
+  get: (operationId: string) =>
+    request<OperationAttendanceEntry[]>(`/operations/${operationId}/attendance`),
+  saveBatch: (operationId: string, entries: Array<Pick<OperationAttendanceEntry, 'personId' | 'personName' | 'status' | 'note'>>) =>
+    request<OperationAttendanceEntry[]>(`/operations/${operationId}/attendance`, {
+      method: 'PUT',
+      body: JSON.stringify({ entries }),
+    }),
+  patch: (operationId: string, personId: string, payload: Partial<Pick<OperationAttendanceEntry, 'personName' | 'status' | 'note'>>) =>
+    request<OperationAttendanceEntry>(`/operations/${operationId}/attendance/${personId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+};
 
+export const operationRequirements = {
+  get: (operationId: string) =>
+    request<MaterialRequirement[]>(`/operations/${operationId}/requirements`),
+  create: (operationId: string, payload: Omit<MaterialRequirement, 'id' | 'operationId'>) =>
+    request<MaterialRequirement>(`/operations/${operationId}/requirements`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  update: (operationId: string, id: string, payload: Partial<Omit<MaterialRequirement, 'id' | 'operationId'>>) =>
+    request<MaterialRequirement>(`/operations/${operationId}/requirements/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  remove: (operationId: string, id: string) =>
+    request<void>(`/operations/${operationId}/requirements/${id}`, { method: 'DELETE' }),
+};
 
+export const operationDocuments = {
+  get: (operationId: string) =>
+    request<OperationDocument[]>(`/operations/${operationId}/documents`),
+  upload: (operationId: string, file: File, title: string) => {
+    const body = new FormData();
+    body.append('file', file);
+    body.append('title', title);
+    return request<OperationDocument>(`/operations/${operationId}/documents`, { method: 'POST', body });
+  },
+  remove: (operationId: string, docId: string) =>
+    request<void>(`/operations/${operationId}/documents/${docId}`, { method: 'DELETE' }),
+  download: (operationId: string, docId: string, originalName: string) =>
+    downloadBlob(`/operations/${operationId}/documents/${docId}/download`, originalName),
+  view: (operationId: string, docId: string, originalName: string) =>
+    downloadBlob(`/operations/${operationId}/documents/${docId}/view`, originalName),
+};
 
+// ── Parancs-műhely (I5) ─────────────────────────────────────────────────────
+
+export type OrderStatus = 'Előkészítés' | 'Aláírásra vár' | 'Kiadva' | 'Visszavonva';
+export type OrderChapterStatus = 'Nincs elkezdve' | 'Folyamatban' | 'Kész' | 'Nem szükséges';
+export type OrderChapterTemplate = { name: string; responsible: string; required: boolean; template: string };
+export type OrderType = {
+  id: string; name: string; description: string; chapters: OrderChapterTemplate[]; signers: string[]; orderCount: number;
+};
+export type OrderChapter = {
+  id: string; position: number; name: string; responsible: string; required: boolean; content: string;
+  status: OrderChapterStatus; assignee: string; dueDate: string; note: string; updatedBy: string; updatedAt: string | null;
+};
+export type OrderSignature = { role: string; name: string; signed: boolean; signedAt: string; signedBy: string };
+export type Order = {
+  id: string; orderTypeId: string; typeName: string; unit?: string; number: string; issuer: string; subject: string;
+  /** Módosító parancs: az eredeti; kiadott parancsnál: a rá hivatkozó módosítók; locked: a tartalom befagyott. */
+  amendsOrderId?: string; amendedByIds?: string[]; locked?: boolean;
+  personnelId: string; personName: string; status: OrderStatus; dueDate: string; issuedDate: string; notes: string;
+  createdBy: string; createdAt: string; doneChapters: number; totalChapters: number;
+  pendingResponsibles: string[]; readyToSign: boolean; signedCount: number; isOverdue: boolean;
+  signatures: OrderSignature[]; chapters: OrderChapter[];
+};
+function statsQuery(year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = ''): string {
+  const q = new URLSearchParams({ period });
+  if (year && period === 'year') q.set('year', String(year));
+  if (anchor) q.set('anchor', anchor);
+  return q.toString();
+}
+
+export type OrderStats = {
+  year: number | null;
+  period?: { kind: 'year' | 'month' | 'week'; from: string; to: string };
+  generatedAt: string;
+  totals: { orders: number; issued: number; open: number; overdue: number; avgLeadDays: number | null };
+  byType: { type: string; count: number; issued: number; open: number; withdrawn: number; overdue: number; avgDays: number | null }[];
+  byResponsible: { responsible: string; chapters: number; done: number; open: number; overdue: number; avgDays: number | null }[];
+  slowestResponsible: string | null;
+};
+export type OrderOverview = {
+  openOrders: number; overdueOrders: number;
+  byResponsible: { responsible: string; openChapters: number; overdueChapters: number; blockingOrders: number }[];
+};
+
+type OrderTypePayload = { name: string; description?: string; chapters: OrderChapterTemplate[]; signers: string[] };
+
+export const orders = {
+  types: () => request<OrderType[]>('/orders/types'),
+  createType: (payload: OrderTypePayload) => request<OrderType>('/orders/types', { method: 'POST', body: JSON.stringify(payload) }),
+  updateType: (id: string, payload: OrderTypePayload) => request<OrderType>(`/orders/types/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  removeType: (id: string) => request<void>(`/orders/types/${id}`, { method: 'DELETE' }),
+  list: (openOnly: boolean) => request<Order[]>(`/orders${openOnly ? '?open_only=true' : ''}`),
+  overview: () => request<OrderOverview>('/orders/overview'),
+  get: (id: string) => request<Order>(`/orders/${id}`),
+  create: (payload: { orderTypeId: string; subject: string; unit?: string; number?: string; issuer?: string; personnelId?: string; dueDate?: string; notes?: string }) =>
+    request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
+  update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
+    request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
+  /** period: év (year + `year`), hónap vagy hét (az `anchor` napot tartalmazó). */
+  stats: (year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = '') =>
+    request<OrderStats>(`/orders/stats?${statsQuery(year, period, anchor)}`),
+  exportStatsPdf: (year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = '') =>
+    downloadBlob(`/orders/stats/export.pdf?${statsQuery(year, period, anchor)}`, `parancs-atfutas-${period === 'year' ? (year ?? 'osszes') : `${period}-${anchor}`}.pdf`),
+  /** Módosító parancs egy kiadott parancshoz — az eredeti érintetlen marad. */
+  amend: (id: string, payload: { subject: string; number?: string; dueDate?: string }) =>
+    request<Order>(`/orders/${id}/amend`, { method: 'POST', body: JSON.stringify(payload) }),
+  copy: (id: string, payload: { subject: string; personnelId?: string; number?: string; dueDate?: string }) =>
+    request<Order>(`/orders/${id}/copy`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateChapter: (orderId: string, chapterId: string, payload: { status: OrderChapterStatus; content: string; assignee?: string; dueDate?: string; note?: string }) =>
+    request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  addChapter: (orderId: string, payload: OrderChapterTemplate) =>
+    request<Order>(`/orders/${orderId}/chapters`, { method: 'POST', body: JSON.stringify(payload) }),
+  removeChapter: (orderId: string, chapterId: string) =>
+    request<Order>(`/orders/${orderId}/chapters/${chapterId}`, { method: 'DELETE' }),
+  /** Kiadás — kézi, megerősített lépés; csak ha minden aláírás megvan. */
+  issue: (orderId: string) => request<Order>(`/orders/${orderId}/issue`, { method: 'POST' }),
+  updateSignatures: (orderId: string, signatures: { role: string; name: string; signed: boolean }[]) =>
+    request<Order>(`/orders/${orderId}/signatures`, { method: 'PUT', body: JSON.stringify({ signatures }) }),
+  exportDocx: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.docx`, `parancs-${number || orderId.slice(0, 8)}.docx`),
+  exportPdf: (orderId: string, number: string) => downloadBlob(`/orders/${orderId}/export.pdf`, `parancs-${number || orderId.slice(0, 8)}.pdf`),
+};
+
+/** Bármely (már megszűrt) táblázat Excelbe — a szerver csak formáz. */
+export const tableExport = {
+  xlsx: (title: string, headers: string[], rows: string[][], filename: string) =>
+    downloadBlob('/reports/table.xlsx', filename, { title, headers, rows }),
+};
+
+// ── Alapkiképzés-tábla import (név/SZTSZ + modulonként egy oszlop) ──────────
+
+export type BasicTrainingImportPreview = {
+  draftId: string;
+  totalRows: number;
+  matchedPersons: number;
+  unmatched: { line: number; name: string; sztsz: string; problem: string; completedCount: number }[];
+  modules: { header: string; qualTypeId: string | null; known: boolean }[];
+  unknownModules: string[];
+  newGrants: number;
+  alreadyHeld: number;
+  items: { line: number; personnelId: string; name: string; sztsz: string; completedCount: number; newCount: number }[];
+};
+export type BasicTrainingImportResult = { granted: number; createdModules: string[]; skippedUnknownModules: number; summariesGranted: number };
+
+export const basicTrainingImport = {
+  preview: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request<BasicTrainingImportPreview>('/import/basic-training/preview', { method: 'POST', body: formData });
+  },
+  confirm: (draftId: string, createMissingModules: boolean) =>
+    request<BasicTrainingImportResult>(`/import/basic-training/confirm/${draftId}?create_missing_modules=${createMissingModules}`, { method: 'POST' }),
+};
+
+// ── Teendőim ────────────────────────────────────────────────────────────────
+
+export type DailyDigest = { date: string; scope: string; lines: { kind: 'info' | 'warn' | 'ok' | 'todo'; text: string; to: string | null }[] };
+export type MyTodos = {
+  department: string;
+  /** A saját zászlóalj; üres = ezredtörzs. */
+  unit: string;
+  /** Reggeli összefoglaló — a rendszer állítja össze, e-mail nélkül. */
+  digest: DailyDigest;
+  /** Mi tartozik hozzám a részleg szerint: chapters | orders | leave | training | operations */
+  duties: string[];
+  /** Időpont/helyszín módosulások az elmúlt 7 napból — mindenkinek. */
+  changes: { id: string; title: string; content: string; date: string; author: string }[];
+  myChapters: { orderId: string; number: string; subject: string; chapterId: string; chapter: string; status: string; assignee: string; dueDate: string; daysLeft: number | null; isOverdue: boolean; hasText: boolean }[];
+  waitingSignature: number;
+  pendingLeave: { id: string; personName: string; type: string; startDate: string; endDate: string }[];
+  pendingLeaveCount: number;
+  alerts: { overdueOrderDeadlines: number; dueSoonOrderDeadlines: number; basicTrainingOverdue: number; basicTrainingDueSoon: number };
+};
+
+export type AlertSetting = {
+  key: string; label: string; value: number; default: number; min: number; max: number; help: string;
+  /** Ki-be kapcsolható figyelmeztetés-fajta (a paraméterek nem). */
+  toggleable: boolean; enabled: boolean;
+};
+export type CustomAlertRule = { id: string; label: string; field: string; validityDays: number; warnDays: number; enabled: boolean };
+export type CustomRuleField = { key: string; label: string };
+export const settings = {
+  alerts: () => request<{ items: AlertSetting[] }>('/settings/alerts'),
+  updateAlerts: (values: Record<string, number>, enabled: Record<string, boolean> = {}) =>
+    request<{ items: AlertSetting[]; changed: string[] }>('/settings/alerts', { method: 'PUT', body: JSON.stringify({ values, enabled }) }),
+  customRules: () => request<{ rules: CustomAlertRule[]; fields: CustomRuleField[] }>('/settings/alerts/custom'),
+  updateCustomRules: (rules: CustomAlertRule[]) =>
+    request<{ rules: CustomAlertRule[] }>('/settings/alerts/custom', { method: 'PUT', body: JSON.stringify({ rules }) }),
+};
+
+export const me = {
+  todos: () => request<MyTodos>('/me/todos'),
+};
 

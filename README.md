@@ -47,18 +47,35 @@ A cél az volt, hogy a korábbi localStorage-alapú demó helyett olyan rendszer
 guard-guard-duty/
   backend/
     app/
-      db.py
-      main.py
-      models.py
-      schemas.py
-      security.py
-      seed.py
+      core/           auth.py, time.py, dependencies.py — alaprétegek
+      routers/        HTTP-végpontok (csak kérés/válasz fordítás)
+      services/       üzleti logika (import, riport, műveletek, életciklus)
+      serializers.py  modell -> API-válasz
+      appliers.py     API-kérés -> modell
+      participants.py résztvevők olvasása/szinkronizálása
+      validation.py   bemenet-ellenőrzés (SZTSz)
+      repository.py   generikus model-getter
+      audit.py        mező-szintű tevékenységnapló
+      models.py       SQLAlchemy modellek
+      schemas.py      Pydantic sémák
+      constants.py    törzsadatok (egységek, rendfokozatok) + beállítások
+      migrate.py      idempotens adatmigrációk
+      static_serving.py  a frontend kiszolgálása ugyanabból a processzből
+    tests/            pytest (136 teszt)
     requirements.txt
   src/
-    components/
-    lib/
-    pages/
+    components/       közös UI + operations/ almodul
+    lib/              store (API), types, auth, rank, phone
+    pages/            útvonalanként egy oldal
+  ops/windows/        telepítő-, mentés- és tűzfal-scriptek
+  docs/               roadmap, állapotfelmérés, cselekvési terv
 ```
+
+### Rétegszabály
+
+A router HTTP-t fordít, a service üzleti szabályt tud, a serializer alakot vált.
+Ezek nem keverednek: ha egy routerben üzleti logikát találsz, az a service-be
+való.
 
 ## Indítás fejlesztéshez
 
@@ -95,6 +112,28 @@ A frontend alapértelmezetten relatív API útvonalat használ:
 
 Ha ettől eltérő backend címet akarsz használni, állítsd be a `VITE_API_URL` környezeti változót.
 
+## Minőségkapu (fejlesztéshez)
+
+Minden változtatás után futtasd le mind a négyet — a CI is ezeket futtatja
+(`.github/workflows/ci.yml`):
+
+```powershell
+npm run lint          # ESLint
+npm run typecheck     # tsc --noEmit — a vite build NEM ellenőriz típust!
+npm test              # vitest (frontend)
+npm run build         # produkciós build
+
+cd backend
+..\.venv\Scripts\python.exe -m pytest -q                      # 136 teszt
+..\.venv\Scripts\python.exe -m pytest -q --cov=app --cov-report=term
+```
+
+> A `vite build` az SWC miatt **nem** végez típusellenőrzést, csak transzpilál —
+> ezért a `typecheck` külön lépés, és nem hagyható ki.
+
+A CI a fejlesztéshez tartozik, **nem a telepítéshez**: az éles rendszer offline
+intraneten fut, oda a build eredményét kézzel visszük át.
+
 ## Offline / intranet üzem (internet nélkül)
 
 A rendszer internet nélkül is futtatható, ha a függőségeket előre letöltöd vagy belső tükörből szolgálod ki.
@@ -107,7 +146,9 @@ A rendszer internet nélkül is futtatható, ha a függőségeket előre letölt
   - telepítés intraneten: `pip install --no-index --find-links backend/wheels -r backend/requirements.txt`
 - Frontend kiadás:
   - `npm run build`
-  - a `dist/` kimenetet szolgáld ki intranetes webszerverről (IIS/Nginx)
+  - a `dist/` kimenetet **maga a backend szolgálja ki** ugyanabból a processzből
+    (`app/static_serving.py`) — nem kell külön IIS/Nginx. A helye a
+    `BACKEND_FRONTEND_DIR` változóval felülírható.
 - API kommunikáció:
   - javasolt, hogy ugyanazon host alatt menjen frontend + backend
   - frontend útvonal: `/api`
@@ -122,7 +163,6 @@ A backend indításához kötelezően be kell állítani:
 - `BACKEND_DEV_MASTER_PASSWORD`
 - `BACKEND_PASSWORD_PEPPER` (hosszú, random, csak szerveren tárolt titok)
 - `BACKEND_TOKEN_PEPPER` (session token fingerprinthez használt külön titok)
-- `BACKEND_DATA_KEY` (Fernet base64 kulcs a személyzeti adatok érzékeny mezőinek DB-szintű titkosításához; `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` paranccsal generálható)
 - `BACKEND_READER_PASSWORD` (olvasó tesztfiók jelszava)
 - `BACKEND_EDITOR_PASSWORD` (szerkesztő tesztfiók jelszava)
 
@@ -136,15 +176,35 @@ A backend indításához kötelezően be kell állítani:
 
 Fontos: production módban a backend API dokumentáció (`/docs`, `/redoc`, `/openapi.json`) le van tiltva.
 
-A rendszerben csak a `dev_master` lehet fejlesztői (god-level) szerepben.
-Más felhasználóhoz a `fejleszto` szerep API-n keresztül nem rendelhető.
-
 ## Szerepkörök (éles modell)
 
 - **Olvasó (`reader`)**: csak olvasás, módosítás nélkül.
 - **Szerkesztő (`editor`)**: olvasás + adatmódosítás.
-- **Admin (`admin`)**: olvasás + adatmódosítás + beállítások (felhasználókezelés) az alkalmazáson belül.
-- **Dev master (`fejleszto`, `dev_master` felhasználó)**: teljes jogosultság (god-level), kizárólag a fejlesztői csapatnak, más felhasználónak nem adható ki.
+- **Admin (`admin`)**: olvasás + adatmódosítás + felhasználókezelés — de **csak
+  olvasó/szerkesztő** fiókokat kezelhet. Másik admint nem hozhat létre, nem
+  módosíthat és nem törölhet, és admin szintet nem oszthat ki.
+- **Dev master (god, `fejleszto` szerep)**: a legmagasabb szint, az admin
+  fölött. Ez kezelheti az adminokat is, és csak ez éri el a karbantartó
+  végpontokat (`/api/maintenance/*`: rendszerállapot, munkamenet-ürítés,
+  kényszerkiléptetés, zárolás-feloldás).
+
+### A god-szint garantált tulajdonságai
+
+- **Kizárólagos és mindig létezik.** A `fejleszto` szerepet egyetlen fiók
+  birtokolhatja; az indítás minden alkalommal újra megerősíti (ha törölnék vagy
+  lefokoznák, a következő induláskor visszaáll). API-n keresztül nem hozható
+  létre és nem osztható ki.
+- **Az admin nem látja és nem éri el.** A felhasználó-listából ki van szűrve, a
+  rá irányuló admin-kérés pedig `404` (mintha nem is létezne) — így a puszta
+  létezése sem szivárog. A karbantartó végpontok semleges `403`-at adnak
+  nem-god hívónak, ugyanazt, mint bármely jogosultsági hiba.
+- **Nem törölhető, nem módosítható** az alkalmazáson keresztül — még maga a god
+  által sem.
+- **A neve a kódban nincs benne.** A `BACKEND_DEV_MASTER_USERNAME` környezeti
+  változó adja; éles telepítésen egyedi, csak a telepítő által ismert értéket
+  állíts be. Alapérték fejlesztéshez: `devmaster`.
+- **A műveletei naplózódnak**, de a tevékenységnaplóban csak god-szinten
+  láthatók — az admin ezeket sem látja. (Elszámoltathatóság + rejtés együtt.)
 
 ## Teszt belépések (jelenlegi)
 
@@ -158,21 +218,24 @@ A jelenlegi rendszerben a bejelentkezési adatok környezeti változókból jön
 Gyors helyi teszthez (csak teszt környezetben) használhatsz fix értékeket:
 
 ```powershell
-$env:BACKEND_READER_PASSWORD = "OlvasoTeszt_2026!"
-$env:BACKEND_EDITOR_PASSWORD = "SzerkesztoTeszt_2026!"
-$env:BACKEND_ADMIN_PASSWORD = "AdminTeszt_2026!"
-$env:BACKEND_DEV_MASTER_PASSWORD = "DevMasterTeszt_2026!"
+$env:BACKEND_READER_PASSWORD = "olvaso123"
+$env:BACKEND_EDITOR_PASSWORD = "szerkeszto123"
+$env:BACKEND_ADMIN_PASSWORD = "Admin123"
+$env:BACKEND_DEV_MASTER_PASSWORD = "Malnas123"
 $env:BACKEND_PASSWORD_PEPPER = "HOSSZU_RANDOM_PEPPER_CSERELD_LE_ELESBEN"
 $env:BACKEND_TOKEN_PEPPER = "KULON_RANDOM_TOKEN_PEPPER_CSERELD_LE_ELESBEN"
-$env:BACKEND_DATA_KEY = "<Fernet.generate_key() kimenetét add meg itt>"
 ```
 
 Ezek után a teszt loginok:
 
-- `olvaso` / `OlvasoTeszt_2026!`
-- `szerkeszto` / `SzerkesztoTeszt_2026!`
-- `admin` / `AdminTeszt_2026!`
-- `dev_master` / `DevMasterTeszt_2026!`
+- `olvaso` / `olvaso123`
+- `szerkeszto` / `szerkeszto123`
+- `admin` / `Admin123`
+- `devmaster` / `Malnas123` (alkotó — az admin nem látja)
+
+Ha a fiókok elromlottak vagy régi jelszóval vannak: `cd backend; ../.venv/Scripts/python.exe reset_users.py`
+kisöpri az összeset és ezt a négyet hozza létre. (Fejlesztés közben a jelszószabály laza: 8 karakter, betű+szám;
+`BACKEND_ENV=production` alatt 14 karakter és mind a négy karakterosztály.)
 
 ## Éles intranet checklist (Windows)
 
@@ -190,7 +253,8 @@ Ezek után a teszt loginok:
    - Ne interaktív felhasználó alatt fusson.
 
 4. Frontend kiadás
-   - `npm run build` kimenetet szolgáld ki belső webszerverről (IIS/Nginx intraneten).
+   - `npm run build`, majd a `dist/` a backend mellett marad — a backend maga
+     szolgálja ki, egy porton, egy processzből.
    - Dev szervert (`npm run dev`) ne használd élesben.
 
 5. Tűzfal szabályok
@@ -279,9 +343,10 @@ Ez a terhelési szint (kb. 10 egyidejű szerkesztő + 40 olvasó, ~1000 fő adat
 A következő scriptek a `ops/windows` mappában találhatók:
 
 - `set-guardduty-secrets.ps1`
-- `install-guardduty-service.ps1`
+- `install-guardduty-autostart-task.ps1` — gépindításkor indul, hiba után újraindul (ajánlott)
+- `install-guardduty-service.ps1` — Windows-szolgálat (csak burkolóval, pl. NSSM, működik megbízhatóan)
 - `new-guardduty-firewall-rules.ps1`
-- `backup-guardduty-db.ps1`
+- `backup-guardduty-db.ps1` — konzisztens SQLite-mentés + visszaállítás-próba (`python -m app.backup`), majd tömörített archívum
 - `install-guardduty-backup-task.ps1`
 - `test-guardduty-health.ps1`
 
@@ -301,14 +366,15 @@ cd <repo>\ops\windows
   -AllowedHosts "192.168.1.50,localhost"
 
 .\new-guardduty-firewall-rules.ps1 -BackendPort 8000 -AllowedSubnet "192.168.1.0/24"
-.\install-guardduty-service.ps1 -BackendHost "0.0.0.0" -BackendPort 8000
+.\install-guardduty-autostart-task.ps1 -BackendHost "0.0.0.0" -BackendPort 8000
 .\install-guardduty-backup-task.ps1 -DailyAt "02:00"
 ```
 
-Szolgáltatás ellenőrzés:
+Ellenőrzés:
 
 ```powershell
-Get-Service GuardGuardDutyApi
+Get-ScheduledTaskInfo -TaskName GuardGuardDuty-Backend
+Get-Service GuardGuardDutyApi   # ha szolgálatként telepítetted
 ```
 
 Kézi mentés futtatása:

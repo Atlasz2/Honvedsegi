@@ -1,7 +1,7 @@
-import type { AttendanceEntry, AttendanceStatus } from "@/lib/types";
+import type { OperationAttendanceEntry, OperationAttendanceStatus } from "@/lib/types";
 
 type Props = {
-  entries: AttendanceEntry[];
+  entries: OperationAttendanceEntry[];
   canEdit: boolean;
   saving: boolean;
   dirtyPersonIds: Set<string>;
@@ -9,14 +9,14 @@ type Props = {
   onSave: () => void;
 };
 
-const labels: Record<AttendanceStatus, string> = {
+const labels: Record<OperationAttendanceStatus, string> = {
   Present: "Megjelent",
   Excused: "Igazolt",
   Absent: "Hiányzott",
   Pending: "Függőben",
 };
 
-const badgeClass: Record<AttendanceStatus, string> = {
+const badgeClass: Record<OperationAttendanceStatus, string> = {
   Present: "bg-green-500/15 text-green-300 border-green-500/30",
   Excused: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30",
   Absent: "bg-red-500/15 text-red-300 border-red-500/30",

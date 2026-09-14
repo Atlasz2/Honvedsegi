@@ -1,13 +1,16 @@
-import React from 'react';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
   message?: string;
+  /** A megerősítő gomb felirata (alapból „Törlés"); pl. „Kijelentkezés", „Kiadás". */
+  confirmLabel?: string;
+  /** Piros (veszélyes) vagy zöld (elsődleges) gomb. */
+  tone?: 'danger' | 'primary';
 }
 
-export default function ConfirmDialog({ open, onClose, onConfirm, message }: Props) {
+export default function ConfirmDialog({ open, onClose, onConfirm, message, confirmLabel = 'Törlés', tone = 'danger' }: Props) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 mil-modal-overlay flex items-center justify-center z-[100]">
@@ -15,7 +18,7 @@ export default function ConfirmDialog({ open, onClose, onConfirm, message }: Pro
         <p className="text-foreground mb-6">{message || 'Biztosan törlöd?'}</p>
         <div className="flex gap-3 justify-end">
           <button onClick={onClose} className="btn-mil-secondary text-xs">Mégsem</button>
-          <button onClick={() => { onConfirm(); onClose(); }} className="btn-mil-danger text-xs">Törlés</button>
+          <button onClick={() => { onConfirm(); onClose(); }} className={`${tone === 'danger' ? 'btn-mil-danger' : 'btn-mil-primary'} text-xs`}>{confirmLabel}</button>
         </div>
       </div>
     </div>

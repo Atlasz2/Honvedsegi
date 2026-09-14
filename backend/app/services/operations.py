@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import secrets
+from urllib.parse import quote
 from datetime import timedelta
 from pathlib import Path
 
@@ -11,15 +12,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..deps import _apply_event, _parse_iso_date, _serialize_event, _utc_now
+from ..appliers import apply_event
+from ..constants import DUTY_EXERCISE_TYPES, SHADOW_EVENT_TYPE
+from ..core.time import parse_iso_date, utc_now
+from ..participants import load_participants_by_event
+from ..serializers import serialize_event, serialize_exercise
 from ..models import (
-    AttendanceModel,
-    DutyModel,
+    visible_events,
     EventModel,
     ExerciseModel,
     MaterialRequirementModel,
+    OperationAttendanceModel,
     OperationDocumentModel,
-    TrainingModel,
     UserModel,
 )
 from ..schemas import (
@@ -43,13 +47,23 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".docx", ".doc", ".txt"}
 ALLOWED_ATTENDANCE = {"Present", "Excused", "Absent", "Pending"}
 ALLOWED_REQUIREMENT = {"Requested", "Approved", "Fulfilled"}
+INLINE_MEDIA_TYPES = {"application/pdf"}
+_UPLOAD_CHUNK_SIZE = 1 << 20  # 1 MB
 
 
-def _build_shadow_event(operation_id: str, source: ExerciseModel | TrainingModel, source_kind: str) -> EventModel:
-    organizer = "" if source_kind == "exercise" else (source.organizer or "")
+def _content_disposition_filename(original_name: str) -> str:
+    """RFC 5987 szerinti, escapelt fájlnév.
+
+    A nyers interpoláció fejléc-injektálásra adna módot egy idézőjelet vagy
+    sortörést tartalmazó fájlnévvel."""
+    return f"filename*=UTF-8''{quote(original_name)}"
+
+
+def _build_shadow_event(operation_id: str, source: ExerciseModel, source_kind: str) -> EventModel:
+    organizer = source.organizer or ""
     return EventModel(
         id=operation_id,
-        event_type="esemeny",
+        event_type=SHADOW_EVENT_TYPE,
         name=source.name,
         type=source.type,
         start_date=source.start_date,
@@ -73,11 +87,6 @@ def require_event(db: Session, operation_id: str) -> EventModel:
     exercise = db.get(ExerciseModel, operation_id)
     if exercise:
         shadow = _build_shadow_event(operation_id, exercise, "exercise")
-
-    if shadow is None:
-        training = db.get(TrainingModel, operation_id)
-        if training:
-            shadow = _build_shadow_event(operation_id, training, "training")
 
     if shadow is None:
         raise HTTPException(status_code=404, detail="A művelet nem található")
@@ -114,8 +123,8 @@ def _event_to_tree_node(item: EventModel) -> OperationTreeNode:
     )
 
 
-def _attendance_to_read(item: AttendanceModel) -> AttendanceEntryRead:
-    updated_at = item.updated_at.isoformat() if item.updated_at else _utc_now().isoformat()
+def _attendance_to_read(item: OperationAttendanceModel) -> AttendanceEntryRead:
+    updated_at = item.updated_at.isoformat() if item.updated_at else utc_now().isoformat()
     return AttendanceEntryRead(
         personId=item.person_id,
         personName=item.person_name,
@@ -139,7 +148,7 @@ def _requirement_to_read(item: MaterialRequirementModel) -> MaterialRequirementR
 
 
 def _document_to_read(item: OperationDocumentModel) -> OperationDocumentRead:
-    uploaded_at = item.uploaded_at.isoformat() if item.uploaded_at else _utc_now().isoformat()
+    uploaded_at = item.uploaded_at.isoformat() if item.uploaded_at else utc_now().isoformat()
     return OperationDocumentRead(
         id=item.id,
         operationId=item.operation_id,
@@ -175,30 +184,136 @@ def _safe_document_name(original_name: str) -> str:
     return f"{token}{ext}"
 
 
+async def _read_within_limit(file: UploadFile) -> bytes:
+    """Chunkonként olvas, és a limit átlépésekor azonnal megszakít.
+
+    A teljes fájl memóriába olvasása a méret ellenőrzése előtt azt jelentené,
+    hogy egy 2 GB-os feltöltés is bekerül a memóriába, mielőtt elutasítjuk."""
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
+        total += len(chunk)
+        if total > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="A fájl túl nagy (max 20 MB)")
+        chunks.append(chunk)
+    if not total:
+        raise HTTPException(status_code=400, detail="Üres fájl")
+    return b"".join(chunks)
+
+
 def _operation_upload_dir(operation_id: str) -> Path:
     target = UPLOAD_ROOT / operation_id
     target.mkdir(parents=True, exist_ok=True)
     return target
 
 
-def list_operations_data(db: Session) -> list[OperationRead]:
+def operations_now_data(db: Session, user=None) -> dict[str, Any]:
+    """Futó (ma zajló, nem lemondott) műveletek a beosztottakkal, a mai események,
+    és a következő 7 napban INDULÓ műveletek (a sorozat-elemek is)."""
+    from datetime import timedelta
+
+    from ..constants import DUTY_EXERCISE_TYPES
+    from ..models import ParticipantModel, PersonModel
+
+    from ..core.scope import scoped_owned
+
+    def scoped(query, model):
+        return scoped_owned(query, model, user) if user is not None else query
+
+    today_date = utc_now().date()
+    today = today_date.isoformat()
+    week_end = (today_date + timedelta(days=7)).isoformat()
+    running: list[dict[str, Any]] = []
+    for source, model in (("exercise", ExerciseModel),):
+        for item in db.scalars(
+            scoped(select(model).where(model.status != "Lemondva", model.start_date <= today + "T23:59", model.end_date >= today), model)
+            .order_by(model.start_date)
+        ).all():
+            running.append({
+                "id": item.id, "source": source, "name": item.name, "type": item.type, "unit": item.unit or "",
+                "isDuty": item.type in DUTY_EXERCISE_TYPES,
+                "startDate": item.start_date, "endDate": item.end_date, "location": item.location or "",
+                "assignedCount": 0,
+            })
+    by_id = {r["id"]: r for r in running}
+
+    on_task: list[dict[str, Any]] = []
+    if by_id:
+        parts = db.scalars(
+            select(ParticipantModel).where(
+                ParticipantModel.event_id.in_(list(by_id)),
+                ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+            )
+        ).all()
+        persons = {
+            p.id: p for p in db.scalars(select(PersonModel).where(PersonModel.id.in_(list({x.personnel_id for x in parts})))).all()
+        } if parts else {}
+        for part in parts:
+            op = by_id.get(part.event_id)
+            if not op:
+                continue
+            op["assignedCount"] += 1
+            person = persons.get(part.personnel_id)
+            on_task.append({
+                "personnelId": part.personnel_id, "name": part.person_name or (person.name if person else "?"),
+                "rank": person.rank if person else part.rank, "unit": person.unit if person else "",
+                "personStatus": person.status if person else "",
+                "operationId": op["id"], "source": op["source"], "operationName": op["name"], "isDuty": op["isDuty"], "operationUnit": op["unit"],
+                "startDate": op["startDate"], "endDate": op["endDate"], "participantStatus": part.status,
+            })
+    on_task.sort(key=lambda x: (x["unit"], x["name"].lower()))
+
+    today_events = [
+        {"id": e.id, "name": e.name, "type": e.type, "startDate": e.start_date, "endDate": e.end_date,
+         "location": e.location or "", "status": e.status}
+        for e in db.scalars(
+            scoped(visible_events().where(EventModel.status.notin_(("Törölve", "Lemondva")), EventModel.start_date <= today + "T23:59", EventModel.end_date >= today), EventModel)
+            .order_by(EventModel.start_date)
+        ).all()
+    ]
+    upcoming = [
+        {"id": item.id, "source": "exercise", "name": item.name, "type": item.type, "unit": item.unit or "",
+         "isDuty": item.type in DUTY_EXERCISE_TYPES, "seriesId": item.series_id or "",
+         "startDate": item.start_date, "endDate": item.end_date, "location": item.location or ""}
+        for item in db.scalars(
+            scoped(select(ExerciseModel).where(
+                ExerciseModel.status != "Lemondva",
+                ExerciseModel.start_date > today + "T23:59",
+                ExerciseModel.start_date <= week_end + "T23:59",
+            ), ExerciseModel).order_by(ExerciseModel.start_date, ExerciseModel.name)
+        ).all()
+    ]
+    return {
+        "date": today, "running": running, "onTask": on_task,
+        "onTaskPeople": len({x["personnelId"] for x in on_task}),
+        "todayEvents": today_events, "upcoming": upcoming,
+    }
+
+
+def list_operations_data(db: Session, user=None) -> list[OperationRead]:
+    """Gyakorlatok és kiképzések egy listában, művelet-nézethez.
+
+    A beosztás a participants táblából jön (a migráció óta az az igazságforrás,
+    nem a régi JSON-oszlop), eseménytípusonként EGY lekérdezéssel — így a lista
+    nem indít résztvevő-lekérdezést elemenként."""
+    from ..core.scope import scoped_owned
+
     sync_temporal_statuses(db)
-    exercises = db.scalars(select(ExerciseModel).order_by(ExerciseModel.start_date)).all()
-    trainings = db.scalars(select(TrainingModel).order_by(TrainingModel.start_date)).all()
+
+    query = select(ExerciseModel)
+    if user is not None:
+        query = scoped_owned(query, ExerciseModel, user)
+    exercises = db.scalars(query.order_by(ExerciseModel.start_date)).all()
+    participants_by_exercise = load_participants_by_event(db, "exercise")
+
     ops: list[OperationRead] = []
     for ex in exercises:
+        serialized = serialize_exercise(db, ex, participants_by_exercise.get(ex.id, []))
         ops.append(OperationRead(
             id=ex.id, name=ex.name, type=ex.type, operationType="exercise",
             startDate=ex.start_date, endDate=ex.end_date, location=ex.location,
-            organizer=None, maxPersonnel=ex.max_personnel, description=ex.description,
-            status=ex.status, assigned=ex.assigned or [],
-        ))
-    for tr in trainings:
-        ops.append(OperationRead(
-            id=tr.id, name=tr.name, type=tr.type, operationType="training",
-            startDate=tr.start_date, endDate=tr.end_date, location=tr.location,
-            organizer=tr.organizer or "", maxPersonnel=tr.max_personnel,
-            description=tr.description, status=tr.status, assigned=tr.assigned or [],
+            organizer=ex.organizer or "", maxPersonnel=ex.max_personnel, description=ex.description,
+            status=ex.status, assigned=[a.model_dump() for a in serialized.assigned],
         ))
     ops.sort(key=lambda x: x.startDate)
     return ops
@@ -206,24 +321,25 @@ def list_operations_data(db: Session) -> list[OperationRead]:
 
 def operations_summary_data(base_date: str | None, db: Session) -> dict:
     if base_date:
-        parsed = _parse_iso_date(base_date)
+        parsed = parse_iso_date(base_date)
         if not parsed:
             raise HTTPException(status_code=400, detail="Ervenytelen base_date formatum")
         base = parsed
     else:
-        base = _utc_now().date()
+        base = utc_now().date()
 
     next_week_end = base + timedelta(days=7)
     plus14_day = base + timedelta(days=14)
 
     exercises = db.scalars(select(ExerciseModel).where(ExerciseModel.status.in_(["Tervezett", "Folyamatban"]))).all()
-    duties = db.scalars(select(DutyModel).where(DutyModel.status.in_(["Tervezett", "Teljesített"]))).all()
+    # A szolgálat is gyakorlat (DUTY_EXERCISE_TYPES), csak a típusa mondja meg.
+    duties = [item for item in exercises if item.type in DUTY_EXERCISE_TYPES]
 
     shooting_kw = ["lőtér", "loter"]
     next_week_shooting = []
     for item in exercises:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end or end < base or start > next_week_end:
             continue
         if not any(kw in (item.location or "").lower() for kw in shooting_kw):
@@ -236,15 +352,15 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
 
     plus14_duties = []
     for item in duties:
-        start = _parse_iso_date(item.start_date)
-        end = _parse_iso_date(item.end_date)
+        start = parse_iso_date(item.start_date)
+        end = parse_iso_date(item.end_date)
         if not start or not end:
             continue
         if start <= plus14_day <= end:
             plus14_duties.append({
-                "id": item.id, "type": item.type, "startDate": item.start_date,
-                "endDate": item.end_date, "location": item.location,
-                "personId": item.person_id, "personName": item.person_name, "status": item.status,
+                "id": item.id, "name": item.name, "type": item.type, "startDate": item.start_date,
+                "endDate": item.end_date, "location": item.location, "status": item.status,
+                "assignedCount": len(item.assigned or []),
             })
 
     return {
@@ -256,8 +372,13 @@ def operations_summary_data(base_date: str | None, db: Session) -> dict:
     }
 
 
-def get_operations_tree_data(db: Session) -> list[OperationTreeNode]:
-    events = db.scalars(select(EventModel).order_by(EventModel.start_date, EventModel.name)).all()
+def get_operations_tree_data(db: Session, user=None) -> list[OperationTreeNode]:
+    from ..core.scope import scoped_owned
+
+    query = visible_events()
+    if user is not None:
+        query = scoped_owned(query, EventModel, user)
+    events = db.scalars(query.order_by(EventModel.start_date, EventModel.name)).all()
     node_map = {item.id: _event_to_tree_node(item) for item in events}
 
     roots: list[OperationTreeNode] = []
@@ -276,25 +397,25 @@ def get_operations_tree_data(db: Session) -> list[OperationTreeNode]:
 
 def create_operation_node_data(payload: EventCreate, db: Session) -> EventRead:
     item = EventModel()
-    _apply_event(item, payload)
+    apply_event(item, payload)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return _serialize_event(item)
+    return serialize_event(db, item)
 
 
 def update_operation_node_data(node_id: str, payload: EventUpdate, db: Session) -> EventRead:
     item = require_event(db, node_id)
-    _apply_event(item, payload)
+    apply_event(item, payload)
     db.commit()
     db.refresh(item)
-    return _serialize_event(item)
+    return serialize_event(db, item)
 
 
 def delete_operation_node_data(node_id: str, db: Session) -> None:
     item = require_event(db, node_id)
 
-    for att in db.scalars(select(AttendanceModel).where(AttendanceModel.sub_operation_id == node_id)).all():
+    for att in db.scalars(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == node_id)).all():
         db.delete(att)
     for req in db.scalars(select(MaterialRequirementModel).where(MaterialRequirementModel.operation_id == node_id)).all():
         db.delete(req)
@@ -314,9 +435,9 @@ def delete_operation_node_data(node_id: str, db: Session) -> None:
 def get_attendance_data(operation_id: str, db: Session) -> list[AttendanceEntryRead]:
     require_event(db, operation_id)
     items = db.scalars(
-        select(AttendanceModel)
-        .where(AttendanceModel.sub_operation_id == operation_id)
-        .order_by(AttendanceModel.person_name, AttendanceModel.person_id)
+        select(OperationAttendanceModel)
+        .where(OperationAttendanceModel.sub_operation_id == operation_id)
+        .order_by(OperationAttendanceModel.person_name, OperationAttendanceModel.person_id)
     ).all()
     return [_attendance_to_read(item) for item in items]
 
@@ -324,7 +445,7 @@ def get_attendance_data(operation_id: str, db: Session) -> list[AttendanceEntryR
 def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpdateRequest, db: Session, current_user: UserModel) -> list[AttendanceEntryRead]:
     require_event(db, operation_id)
 
-    existing = db.scalars(select(AttendanceModel).where(AttendanceModel.sub_operation_id == operation_id)).all()
+    existing = db.scalars(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == operation_id)).all()
     existing_map = {item.person_id: item for item in existing}
 
     for entry in payload.entries:
@@ -334,7 +455,7 @@ def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpda
         status = _validate_attendance_status(entry.status)
         item = existing_map.get(person_id)
         if not item:
-            item = AttendanceModel(sub_operation_id=operation_id, person_id=person_id)
+            item = OperationAttendanceModel(sub_operation_id=operation_id, person_id=person_id)
             db.add(item)
             existing_map[person_id] = item
 
@@ -342,20 +463,20 @@ def upsert_attendance_batch_data(operation_id: str, payload: AttendanceBatchUpda
         item.status = status
         item.note = (entry.note or "").strip()
         item.updated_by = current_user.username
-        item.updated_at = _utc_now()
+        item.updated_at = utc_now()
 
     db.commit()
     refreshed = db.scalars(
-        select(AttendanceModel)
-        .where(AttendanceModel.sub_operation_id == operation_id)
-        .order_by(AttendanceModel.person_name, AttendanceModel.person_id)
+        select(OperationAttendanceModel)
+        .where(OperationAttendanceModel.sub_operation_id == operation_id)
+        .order_by(OperationAttendanceModel.person_name, OperationAttendanceModel.person_id)
     ).all()
     return [_attendance_to_read(item) for item in refreshed]
 
 
 def patch_attendance_data(operation_id: str, person_id: str, payload: AttendanceEntryUpdate, db: Session, current_user: UserModel) -> AttendanceEntryRead:
     require_event(db, operation_id)
-    item = db.scalar(select(AttendanceModel).where(AttendanceModel.sub_operation_id == operation_id, AttendanceModel.person_id == person_id))
+    item = db.scalar(select(OperationAttendanceModel).where(OperationAttendanceModel.sub_operation_id == operation_id, OperationAttendanceModel.person_id == person_id))
     if not item:
         raise HTTPException(status_code=404, detail="Jelenléti rekord nem található")
 
@@ -367,7 +488,7 @@ def patch_attendance_data(operation_id: str, person_id: str, payload: Attendance
         item.note = payload.note.strip()
 
     item.updated_by = current_user.username
-    item.updated_at = _utc_now()
+    item.updated_at = utc_now()
     db.commit()
     db.refresh(item)
     return _attendance_to_read(item)
@@ -445,14 +566,13 @@ async def upload_document_data(operation_id: str, file: UploadFile, title: str, 
     target_dir = _operation_upload_dir(operation_id)
     target_path = target_dir / safe_name
 
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Üres fájl")
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="A fájl túl nagy (max 20MB)")
-
+    content = await _read_within_limit(file)
     target_path.write_bytes(content)
-    mime_type = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+    # A MIME a MÁR allowlist-elt kiterjesztésből származik, nem a kliens
+    # content_type fejlécéből: egy .txt "text/html"-ként, inline kiszolgálva
+    # tárolt XSS lenne — azonos originről, ahol a munkamenet-token él.
+    mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
 
     item = OperationDocumentModel(
         operation_id=operation_id,
@@ -462,7 +582,7 @@ async def upload_document_data(operation_id: str, file: UploadFile, title: str, 
         file_size=len(content),
         storage_path=str(target_path),
         uploaded_by=(uploaded_by or current_user.username).strip() or current_user.username,
-        uploaded_at=_utc_now(),
+        uploaded_at=utc_now(),
         title=title.strip() or None,
     )
     db.add(item)
@@ -516,8 +636,13 @@ def view_document_response(operation_id: str, doc_id: str, db: Session) -> FileR
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="A dokumentumfájl nem található a tárhelyen")
 
+    # Inline megjelenítést csak PDF-re engedünk, fix típussal. Minden más
+    # letöltésként megy, hogy a böngésző semmiképp ne rendereljen felhasználói
+    # tartalmat ezen az originen.
+    media_type = item.mime_type or "application/octet-stream"
+    disposition = "inline" if media_type in INLINE_MEDIA_TYPES else "attachment"
     return FileResponse(
         path=str(path),
-        media_type=item.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename=\"{item.original_name}\""},
+        media_type=media_type,
+        headers={"Content-Disposition": f"{disposition}; {_content_disposition_filename(item.original_name)}"},
     )

@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
@@ -5,56 +6,70 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import LoginPage from "@/components/LoginPage";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import CalendarPage from "@/pages/CalendarPage";
-import Personnel from "@/pages/Personnel";
-import Operations from "@/pages/Operations";
-import Events from "@/pages/Events";
-import Equipment from "@/pages/Equipment";
-import Inventory from "@/pages/Inventory";
-import Vehicles from "@/pages/Vehicles";
-import Duties from "@/pages/Duties";
-import Announcements from "@/pages/Announcements";
-import SettingsPage from "@/pages/SettingsPage";
-import ActivityLogPage from "@/pages/ActivityLogPage";
-import Alerts from "@/pages/Alerts";
-import Attendance from "@/pages/Attendance";
-import Leave from "@/pages/Leave";
-import Helyzetkep from "@/pages/Helyzetkep";
-import Availability from "@/pages/Availability";
-import Kovetelmenyek from "@/pages/Kovetelmenyek";
 
-const queryClient = new QueryClient();
+// Útvonalanként külön csomag: az első betöltés csak a bejelentkezést és az
+// áttekintőt hozza le. A Dashboard szándékosan NEM lazy — az a kezdőoldal.
+const CalendarPage = lazy(() => import("@/pages/CalendarPage"));
+const Personnel = lazy(() => import("@/pages/Personnel"));
+const Operations = lazy(() => import("@/pages/Operations"));
+const Events = lazy(() => import("@/pages/Events"));
+const Equipment = lazy(() => import("@/pages/Equipment"));
+const Inventory = lazy(() => import("@/pages/Inventory"));
+const Vehicles = lazy(() => import("@/pages/Vehicles"));
+const Announcements = lazy(() => import("@/pages/Announcements"));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const ActivityLogPage = lazy(() => import("@/pages/ActivityLogPage"));
+const Alerts = lazy(() => import("@/pages/Alerts"));
+const Attendance = lazy(() => import("@/pages/Attendance"));
+const Leave = lazy(() => import("@/pages/Leave"));
+const Parancsok = lazy(() => import("@/pages/Parancsok"));
+const Teendoim = lazy(() => import("@/pages/Teendoim"));
+const Attekintes = lazy(() => import("@/pages/Attekintes"));
+const Riportok = lazy(() => import("@/pages/Riportok"));
+const Kovetelmenyek = lazy(() => import("@/pages/Kovetelmenyek"));
+const NotFound = lazy(() => import("@/pages/NotFound"));
+
+// Intranetes, egygépes üzem: az ablakváltásra való automatikus újratöltés csak
+// fölösleges kéréseket generálna. A frissítést az oldalak maguk kérik.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { refetchOnWindowFocus: false, retry: 1 },
+  },
+});
 
 function AppRoutes() {
-  const { user, isAdmin, canEdit } = useAuth();
+  const { user, canEdit } = useAuth();
   if (!user) return <LoginPage />;
   return (
     <Layout>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/kozos-naptar" element={<CalendarPage />} />
-        <Route path="/kozos-naptar/*" element={<CalendarPage />} />
-        <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />
-        <Route path="/calendar/*" element={<Navigate to="/kozos-naptar" replace />} />
-        <Route path="/personnel" element={<Personnel />} />
-        <Route path="/letszam" element={<Attendance />} />
-        <Route path="/szabadsag" element={<Leave />} />
-        <Route path="/helyzetkep" element={<Helyzetkep />} />
-        <Route path="/foglaltsag" element={<Availability />} />
-        <Route path="/kovetelmenyek" element={<Kovetelmenyek />} />
-        <Route path="/operations" element={<Operations />} />
-        <Route path="/events" element={<Events />} />
-        <Route path="/equipment" element={<Equipment />} />
-        <Route path="/inventory" element={<Inventory />} />
-        <Route path="/vehicles" element={<Vehicles />} />
-        <Route path="/duties" element={<Duties />} />
-        <Route path="/announcements" element={<Announcements />} />
-        <Route path="/figyelmeztetesek" element={<Alerts />} />
-        {canEdit && <Route path="/settings" element={<SettingsPage />} />}
-        <Route path="/activity-log" element={<ActivityLogPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<p className="text-xs text-muted-foreground font-mono p-6">Betöltés…</p>}>
+        <Routes>
+          <Route path="/" element={<Teendoim />} />
+          <Route path="/attekintes" element={<Attekintes />} />
+          <Route path="/riportok" element={<Riportok />} />
+          <Route path="/kozos-naptar" element={<CalendarPage />} />
+          <Route path="/kozos-naptar/*" element={<CalendarPage />} />
+          <Route path="/calendar" element={<Navigate to="/kozos-naptar" replace />} />
+          <Route path="/calendar/*" element={<Navigate to="/kozos-naptar" replace />} />
+          <Route path="/personnel" element={<Personnel />} />
+          <Route path="/letszam" element={<Attendance />} />
+          <Route path="/szabadsag" element={<Leave />} />
+          <Route path="/parancsok" element={<Parancsok />} />
+          <Route path="/helyzetkep" element={<Navigate to="/attekintes" replace />} />
+          <Route path="/foglaltsag" element={<Navigate to="/kozos-naptar" replace />} />
+          <Route path="/kovetelmenyek" element={<Kovetelmenyek />} />
+          <Route path="/operations" element={<Operations />} />
+          <Route path="/events" element={<Events />} />
+          <Route path="/equipment" element={<Equipment />} />
+          <Route path="/inventory" element={<Inventory />} />
+          <Route path="/vehicles" element={<Vehicles />} />
+          <Route path="/announcements" element={<Announcements />} />
+          <Route path="/figyelmeztetesek" element={<Alerts />} />
+          {canEdit && <Route path="/settings" element={<SettingsPage />} />}
+          <Route path="/activity-log" element={<ActivityLogPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
     </Layout>
   );
 }

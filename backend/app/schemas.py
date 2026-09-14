@@ -4,25 +4,29 @@ from datetime import datetime
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 Role = Literal["reader", "editor", "admin", "fejleszto"]
-PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
-ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Törölve"]
-TrainingStatus = Literal["Tervezett", "Folyamatban", "Befejezett"]
-TrainingAttendance = Literal["Tervezett", "Megjelent", "Hiányzott", "Beteg"]
+# Két jogviszony van (döntés 2026-09-13): Aktív (szerződéses/hivatásos) és Tartalékos
+# (önkéntes / állandó behívásos); a Leszerelt csak a rekord megőrzésére. A régi
+# „Szabadságon" státusz nem létezik — a szabadság a Szabadság modulban él.
+PersonStatus = Literal["Aktív", "Tartalékos", "Leszerelt"]
+# Az időbeli állapotot (Tervezett/Folyamatban/Befejezett) a dátumokból a rendszer
+# számolja; a felhasználó csak lemondani tud. (A régi "Törölve" → "Lemondva".)
+ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
+TrainingAttendance = Literal["Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Visszamondta"]
 EquipmentCondition = Literal["Jó", "Javítandó", "Selejtezendő"]
 VehicleStatus = Literal["Elérhető", "Használatban", "Szervizben", "Meghibásodott", "Selejtezett"]
 DutyStatus = Literal["Tervezett", "Teljesített", "Lemondva"]
-AnnouncementCategory = Literal["Általános", "Fontos", "Sürgős", "Gyakorlat", "Adminisztráció"]
+AnnouncementCategory = Literal["Általános", "Fontos", "Sürgős", "Gyakorlat", "Adminisztráció", "Változás"]
 ActivityAction = Literal["létrehozva", "módosítva", "törölve"]
 SupplyMoveType = Literal["Bevételezés", "Kiadás", "Visszavétel", "Selejtezés", "Korrekció"]
 AttendanceStatus = Literal[
     "Jelen", "Szabadság", "Betegállomány", "Vezényelve",
     "Szolgálatban", "Kiküldetés", "Igazolt távollét", "Igazolatlan távollét",
 ]
-LeaveType = Literal["Szabadság", "Betegszabadság", "Kiküldetés", "Egyéb"]
+LeaveType = Literal["Szabadság", "Szolgálatmentesség", "Betegszabadság", "Kiküldetés", "Egyéb"]
 LeaveStatus = Literal["Beadva", "Jóváhagyva", "Elutasítva"]
 
 
@@ -35,6 +39,8 @@ class UserRead(ORMModel):
     display_name: str
     role: Role
     active: bool
+    department: str = ""
+    region: str = ""
     last_login: datetime | None = None
 
 
@@ -44,6 +50,8 @@ class UserCreate(BaseModel):
     display_name: str
     role: Role
     active: bool = True
+    department: str = ""
+    region: str = ""
 
 
 class UserUpdate(BaseModel):
@@ -51,6 +59,8 @@ class UserUpdate(BaseModel):
     role: Role
     active: bool
     password: str | None = None
+    department: str = ""
+    region: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -62,6 +72,10 @@ class AuthUser(BaseModel):
     username: str
     displayName: str
     role: Role
+    department: str = ""
+    region: str = ""
+    regionLabel: str = ""   # „31. TVZ – Veszprém" / „Ezredtörzs (Győr)"
+    unit: str = ""          # a saját zászlóalj (üres = ezredtörzs, minden)
     expiry: int
 
 
@@ -81,11 +95,30 @@ class AttendanceEntry(BaseModel):
     note: str = ""
 
 
+class AttendanceClosure(BaseModel):
+    unit: str
+    unitLabel: str
+    closedBy: str
+    closedByName: str
+    closedAt: datetime
+    note: str = ""
+
+
 class AttendanceDayRead(BaseModel):
     date: str
     total: int
     summary: dict[str, int]
     items: list[AttendanceEntry]
+    # Mely zászlóaljak zárták már le a napot (a hatókörön belül).
+    closures: list[AttendanceClosure] = []
+    # A kérő saját zászlóalja (vagy ezredszint) le van-e zárva erre a napra.
+    closedForMe: bool = False
+
+
+class AttendanceCloseRequest(BaseModel):
+    date: str
+    unit: str = ""   # ezredtörzs adhat meg zászlóaljat; a zászlóalj ügyintézője a sajátját zárja
+    note: str = ""
 
 
 class AttendanceMark(BaseModel):
@@ -97,6 +130,8 @@ class AttendanceMark(BaseModel):
 class AttendanceUpdate(BaseModel):
     date: str
     items: list[AttendanceMark]
+    # Lezárt nap módosításához kötelező az indoklás (naplózódik).
+    overrideReason: str = ""
 
 
 class AttendanceFill(BaseModel):
@@ -129,6 +164,84 @@ class EligibilityPerson(BaseModel):
     unit: str
     eligible: bool
     missing: list[str]
+
+
+# ── Kampányterv (jelentkezők → jogosultság → behívandók) ───────────────────
+
+class ApplicantPasteRequest(BaseModel):
+    """Beillesztett jelentkező-lista: soronként SZTSZ vagy név (vagy „név; SZTSZ")."""
+    text: str
+
+
+class ApplicantMatch(BaseModel):
+    line: str
+    personnelId: str
+    name: str
+    sztsz: str
+
+
+class ApplicantAmbiguous(BaseModel):
+    line: str
+    candidates: list[ApplicantMatch]
+
+
+class ApplicantPasteResult(BaseModel):
+    added: list[ApplicantMatch] = []
+    alreadyPresent: list[ApplicantMatch] = []
+    unmatched: list[str] = []
+    ambiguous: list[ApplicantAmbiguous] = []
+
+
+class CampaignRow(BaseModel):
+    participantId: str
+    personnelId: str
+    name: str
+    rank: str
+    unit: str
+    sztsz: str
+    personStatus: str
+    status: str
+    role: str
+    eligible: bool
+    missing: list[str]
+
+
+class CampaignPlan(BaseModel):
+    eventType: str
+    eventId: str
+    eventName: str
+    startDate: str
+    endDate: str
+    location: str
+    requirements: list[str]
+    rows: list[CampaignRow]
+
+
+# ── Személyi okmányok / alkalmasság ─────────────────────────────────────────
+
+DocumentCategory = Literal["Okmány", "Alkalmasság", "Szerződés", "Egyéb"]
+
+
+class PersonDocumentCreate(BaseModel):
+    category: DocumentCategory = "Okmány"
+    name: str
+    identifier: str = ""
+    issuedDate: str = ""
+    expiryDate: str | None = None
+    notes: str = ""
+
+
+class PersonDocumentRead(BaseModel):
+    id: str
+    personnelId: str
+    category: str
+    name: str
+    identifier: str
+    issuedDate: str
+    expiryDate: str | None
+    notes: str
+    isExpired: bool
+    daysUntilExpiry: int | None
 
 
 # ── Szabadság / távollét ────────────────────────────────────────────────────
@@ -168,6 +281,8 @@ class PersonBase(BaseModel):
     unit: str
     beosztas: str = ""
     status: PersonStatus
+    # Jogviszony altípusa: Aktív → Szerződéses/Hivatásos, Tartalékos → Önkéntes/Állandó behívásos.
+    serviceType: str = ""
     email: str = ""
     phone: str = ""
     birthDate: str = ""
@@ -175,6 +290,23 @@ class PersonBase(BaseModel):
     joinDate: str = ""
     notes: str = ""
     qualifications: list[str] = Field(default_factory=list)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _legacy_status(cls, value):
+        # Régi export / régi rekord: „Szabadságon" → Aktív (a szabadság külön modul).
+        return "Aktív" if value == "Szabadságon" else value
+
+    @model_validator(mode="after")
+    def _service_type_matches_status(self):
+        from .constants import SERVICE_TYPES
+        value = (self.serviceType or "").strip()
+        self.serviceType = value
+        allowed = SERVICE_TYPES.get(self.status, ())
+        if value and value not in allowed:
+            options = ", ".join(allowed) if allowed else "nincs"
+            raise ValueError(f"„{value}” jogviszony nem illik a(z) {self.status} státuszhoz (választható: {options})")
+        return self
 
 
 class PersonCreate(PersonBase):
@@ -201,18 +333,32 @@ class PersonUpdate(PersonBase):
         return PersonCreate.normalize_phone(value)
 
 
+class PersonLite(BaseModel):
+    """A választókhoz (beosztás, kiadás) elég ennyi — a teljes akta ötödét sem nyomja."""
+    id: str
+    name: str
+    sztsz: str
+    rank: str
+    unit: str
+    status: PersonStatus
+
+
 class PersonRead(PersonBase):
     id: str
+    # Importból átemelt, nem modellezett oszlopok (KGIR-export); csak olvasható.
+    extra: dict[str, str] = Field(default_factory=dict)
 
 
 class ExerciseAssignment(BaseModel):
     personId: str
     personName: str
-    role: str
+    role: str = "résztvevő"
     attendance: TrainingAttendance | None = None
     rank: str | None = None
     rankShort: str | None = None
     sztsz: str | None = None
+    # Pl. „Parancsnoki engedéllyel átfedésben: X gyakorlat" — a beosztás indoklása.
+    notes: str = ""
 
 
 class ExerciseBase(BaseModel):
@@ -221,6 +367,8 @@ class ExerciseBase(BaseModel):
     startDate: str
     endDate: str
     location: str = ""
+    organizer: str = ""
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
     maxPersonnel: int = 0
     description: str = ""
     status: ExerciseStatus
@@ -238,44 +386,33 @@ class ExerciseUpdate(ExerciseBase):
     pass
 
 
+class DutyHandover(BaseModel):
+    handedOverBy: str = ""
+    handedOverAt: str = ""
+    takenOverBy: str = ""
+    takenOverAt: str = ""
+    note: str = ""
+
+
+class DutyHandoverUpdate(BaseModel):
+    action: Literal["handover", "takeover", "clear"]
+    personName: str = ""
+    note: str = ""
+
+
 class ExerciseRead(ExerciseBase):
     id: str
-
-
-class TrainingAssignment(BaseModel):
-    personId: str
-    personName: str
-    attendance: TrainingAttendance
-    qualificationApproved: bool = False
-
-
-class TrainingBase(BaseModel):
-    name: str
-    type: str
-    startDate: str
-    endDate: str
-    location: str = ""
-    organizer: str = ""
-    qualificationId: str = ""
-    maxPersonnel: int = 0
-    description: str = ""
-    status: TrainingStatus
-    seriesId: str = ""
-    level: str = ""
-    assigned: list[TrainingAssignment] = []
-
-
-class TrainingCreate(TrainingBase):
-    pass
-
-
-class TrainingUpdate(TrainingBase):
-    pass
+    handover: DutyHandover | None = None
+    # Karcsú listánál: a résztvevők száma és az első nevek (a teljes lista a /{id}-n).
+    assignedCount: int = 0
+    assignedNames: list[str] = []
 
 
 class SeriesBase(BaseModel):
     name: str
     description: str = ""
+    unit: str = ""        # melyik zászlóaljé; üres = ezredszintű
+    parentId: str = ""    # alsorozat szülője
 
 
 class SeriesCreate(SeriesBase):
@@ -289,17 +426,14 @@ class SeriesUpdate(SeriesBase):
 class SeriesRead(SeriesBase):
     id: str
     itemCount: int = 0
-
-
-class TrainingRead(TrainingBase):
-    id: str
+    childCount: int = 0
 
 
 class OperationRead(BaseModel):
     id: str
     name: str
     type: str
-    operationType: Literal["exercise", "training"]
+    operationType: Literal["exercise"]
     startDate: str
     endDate: str
     location: str
@@ -309,8 +443,18 @@ class OperationRead(BaseModel):
     status: str
     assigned: list[dict] = []
 
-class EventBase(BaseModel):
+
+# ── Műveletek: fa, jelenlét, anyagigény, dokumentumok ─────────────────────
+
+AttendanceState = Literal["Present", "Excused", "Absent", "Pending"]
+RequirementStatus = Literal["Requested", "Approved", "Fulfilled"]
+
+
+class OperationTreeNode(BaseModel):
+    """Egy csomópont a művelet-fában, a gyerekeivel együtt."""
+    id: str
     eventType: Literal["esemeny"] = "esemeny"
+    parentId: str | None = None
     name: str
     type: str
     startDate: str
@@ -319,8 +463,84 @@ class EventBase(BaseModel):
     organizer: str = ""
     maxPersonnel: int = 0
     description: str = ""
+    status: str
+    assigned: list[dict] = []
+    children: list["OperationTreeNode"] = []
+
+
+class AttendanceEntryRead(BaseModel):
+    personId: str
+    personName: str
+    status: AttendanceState
+    note: str = ""
+    updatedAt: str
+    updatedBy: str = ""
+
+
+class AttendanceEntryUpdate(BaseModel):
+    personName: str | None = None
+    status: AttendanceState | None = None
+    note: str | None = None
+
+
+class AttendanceBatchEntry(BaseModel):
+    personId: str
+    personName: str = ""
+    status: AttendanceState = "Pending"
+    note: str = ""
+
+
+class AttendanceBatchUpdateRequest(BaseModel):
+    entries: list[AttendanceBatchEntry] = []
+
+
+class MaterialRequirementBase(BaseModel):
+    itemName: str
+    quantity: int = 0
+    unit: str = ""
+    note: str = ""
+    status: RequirementStatus = "Requested"
+
+
+class MaterialRequirementUpdate(BaseModel):
+    itemName: str | None = None
+    quantity: int | None = None
+    unit: str | None = None
+    note: str | None = None
+    status: RequirementStatus | None = None
+
+
+class MaterialRequirementRead(MaterialRequirementBase):
+    id: str
+    operationId: str
+
+
+class OperationDocumentRead(BaseModel):
+    id: str
+    operationId: str
+    filename: str
+    originalName: str
+    mimeType: str
+    fileSize: int
+    uploadedBy: str = ""
+    uploadedAt: str
+    title: str = ""
+
+
+class EventBase(BaseModel):
+    eventType: Literal["esemeny"] = "esemeny"
+    name: str
+    type: str
+    startDate: str
+    endDate: str
+    location: str = ""
+    organizer: str = ""
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
+    maxPersonnel: int = 0
+    description: str = ""
     status: ExerciseStatus
     assigned: list[dict] = []
+    parentId: str | None = None   # szülő a művelet-fában
 
 
 class EventCreate(EventBase):
@@ -491,6 +711,7 @@ class AnnouncementBase(BaseModel):
     author: str
     date: str
     pinned: bool = False
+    unit: str = ""   # üres = ezredszintű
 
 
 class AnnouncementCreate(BaseModel):
@@ -498,6 +719,7 @@ class AnnouncementCreate(BaseModel):
     category: AnnouncementCategory
     content: str
     pinned: bool = False
+    unit: str = ""
 
 
 class AnnouncementUpdate(AnnouncementCreate):
@@ -595,7 +817,7 @@ class PersonnelQualificationRead(ORMModel):
 # ── Résztvevők ─────────────────────────────────────────────────────────────────
 
 ParticipantStatus = Literal[
-    "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva"
+    "Jelentkezett", "Tervezett", "Megjelent", "Hiányzott", "Beteg", "Teljesített", "Lemondva", "Visszamondta"
 ]
 
 
@@ -666,6 +888,30 @@ class ImportPreviewItem(BaseModel):
     rawData: dict[str, str] = {}
     unknownData: dict[str, str] = {}
     issues: list[str] = []
+    # Mi változik a meglévő rekordhoz képest: mező → (régi, új). Új rekordnál üres.
+    changes: dict[str, list[str]] = {}
+
+
+class ImportDiffSummary(BaseModel):
+    """„12 új, 3 leszerelt, 5 alegység-váltás" — mielőtt elfogadod."""
+    new: int = 0
+    unchanged: int = 0
+    changed: int = 0
+    discharged: int = 0        # státusz → Leszerelt
+    unitChanges: int = 0
+    statusChanges: int = 0
+    rankChanges: int = 0
+    outOfScope: int = 0        # a fájlban van, de nem az én zászlóaljam
+    byUnit: dict[str, dict[str, int]] = {}   # alegység → {new, changed, discharged}
+
+
+class ImportMissingPerson(BaseModel):
+    """A nyilvántartásban szereplő, de a feltöltött fájlból hiányzó személy."""
+    id: str
+    name: str
+    sztsz: str
+    unit: str
+    status: str
 
 
 class ImportPreviewResult(BaseModel):
@@ -677,6 +923,13 @@ class ImportPreviewResult(BaseModel):
     skipped: int
     issues: list[ImportIssue] = []
     items: list[ImportPreviewItem] = []
+    # Fejlécek, amiket a rendszer nem tudott mezőhöz rendelni — a személy `extra` mezőjébe kerülnek.
+    unknownColumns: list[str] = []
+    # Csak személyzetnél: akik a nyilvántartásban vannak, de a fájlban nem
+    # (napi KGIR-exportnál ez a leszereltek / hibás export jelzője).
+    missingCount: int = 0
+    missing: list[ImportMissingPerson] = []
+    diff: ImportDiffSummary = ImportDiffSummary()
 
 
 class ImportDraftItemUpdate(BaseModel):
@@ -698,3 +951,147 @@ class ImportConfirmResult(BaseModel):
     skipped: int
 
 
+
+
+# ── Parancs-műhely (I5) ─────────────────────────────────────────────────────
+
+OrderStatus = Literal["Előkészítés", "Aláírásra vár", "Kiadva", "Visszavonva"]
+OrderChapterStatus = Literal["Nincs elkezdve", "Folyamatban", "Kész", "Nem szükséges"]
+
+
+class OrderChapterTemplate(BaseModel):
+    """Egy fejezet a parancstípus sablonjában; a `template` a kiinduló szöveg
+    {{név}}, {{rendfokozat}}, {{sztsz}}, {{alegység}}, {{tárgy}}, {{dátum}}, {{parancsszám}} helyőrzőkkel."""
+    name: str
+    responsible: str
+    required: bool = True
+    template: str = ""
+
+
+class OrderTypeBase(BaseModel):
+    name: str
+    description: str = ""
+    chapters: list[OrderChapterTemplate] = []
+    # A záró aláírók szerepei (pl. „Parancsnok", „Törzsfőnök").
+    signers: list[str] = []
+
+
+class OrderTypeCreate(OrderTypeBase):
+    pass
+
+
+class OrderTypeUpdate(OrderTypeBase):
+    pass
+
+
+class OrderTypeRead(OrderTypeBase):
+    id: str
+    orderCount: int = 0
+
+
+class OrderChapterRead(BaseModel):
+    id: str
+    position: int
+    name: str
+    responsible: str
+    required: bool
+    content: str
+    status: OrderChapterStatus
+    assignee: str
+    dueDate: str
+    note: str
+    updatedBy: str
+    updatedAt: datetime | None = None
+
+
+class OrderChapterUpdate(BaseModel):
+    status: OrderChapterStatus
+    content: str = ""
+    assignee: str = ""
+    dueDate: str = ""
+    note: str = ""
+
+
+class OrderSignature(BaseModel):
+    role: str
+    name: str = ""
+    signed: bool = False
+    signedAt: str = ""
+    signedBy: str = ""
+
+
+class OrderSignaturesUpdate(BaseModel):
+    signatures: list[OrderSignature]
+
+
+class OrderCreate(BaseModel):
+    orderTypeId: str
+    subject: str
+    unit: str = ""   # melyik zászlóaljé; üres = ezredszintű
+    number: str = ""
+    issuer: str = ""
+    personnelId: str = ""
+    dueDate: str = ""
+    notes: str = ""
+
+
+class OrderCopy(BaseModel):
+    """„Ugyanezt a parancsot más személyre": a fejezetek szövege megy, a nevek
+    cserélődnek, az állapotok és aláírások nulláról indulnak."""
+    subject: str
+    personnelId: str = ""
+    number: str = ""
+    dueDate: str = ""
+
+
+class OrderUpdate(BaseModel):
+    subject: str
+    status: OrderStatus
+    number: str = ""
+    issuer: str = ""
+    dueDate: str = ""
+    issuedDate: str = ""
+    notes: str = ""
+
+
+class OrderRead(BaseModel):
+    id: str
+    orderTypeId: str
+    typeName: str
+    unit: str = ""
+    amendsOrderId: str = ""     # ha módosító parancs: az eredeti
+    amendedByIds: list[str] = []  # ha kiadott: a rá hivatkozó módosító parancsok
+    locked: bool = False        # Kiadva/Visszavonva: a tartalom befagyott
+    number: str
+    issuer: str
+    subject: str
+    personnelId: str
+    personName: str
+    status: OrderStatus
+    dueDate: str
+    issuedDate: str
+    notes: str
+    createdBy: str
+    createdAt: datetime
+    doneChapters: int
+    totalChapters: int
+    # Részlegek, amelyeknek még van el nem készült kötelező fejezete — ők tartják fel.
+    pendingResponsibles: list[str]
+    readyToSign: bool
+    signedCount: int
+    isOverdue: bool
+    signatures: list[OrderSignature] = []
+    chapters: list[OrderChapterRead] = []
+
+
+class OrderResponsibleSummary(BaseModel):
+    responsible: str
+    openChapters: int
+    overdueChapters: int
+    blockingOrders: int
+
+
+class OrderOverview(BaseModel):
+    openOrders: int
+    overdueOrders: int
+    byResponsible: list[OrderResponsibleSummary]

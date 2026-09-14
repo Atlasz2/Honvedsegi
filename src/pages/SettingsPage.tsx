@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   users as uStore,
   getErrorMessage,
@@ -6,6 +6,7 @@ import {
   previewImport,
   updateImportDraft,
   confirmImport,
+  exportImportDryRunPdf,
   type ImportPreviewResult,
   type ImportEntity,
   type ImportPreviewItem,
@@ -13,10 +14,16 @@ import {
 import { User, Role } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
-import { Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
+import { useReferenceData } from '@/lib/queries';
+import { Eye, EyeOff, Plus, Pencil, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import { useNavigate } from 'react-router-dom';
+import SystemStatusPanel from '@/components/SystemStatusPanel';
+import DevelopersFooter from '@/components/DevelopersFooter';
+import AlertThresholdsPanel from '@/components/AlertThresholdsPanel';
+import OpsHealthPanel from '@/components/OpsHealthPanel';
+import { applyTheme, getTheme, type Theme } from '@/lib/theme';
+import BasicTrainingImportPanel from '@/components/BasicTrainingImportPanel';
 
 type ImportFieldConfig = {
   key: string;
@@ -33,7 +40,7 @@ const IMPORT_FIELDS: Record<ImportEntity, ImportFieldConfig[]> = {
     { key: 'sztsz', label: 'SZTSZ', required: true, placeholder: 'pl. HU123456' },
     { key: 'rank', label: 'Rendfokozat', required: true, placeholder: 'pl. főhadnagy' },
     { key: 'unit', label: 'Alegység', required: true, placeholder: 'pl. 2. lövészszázad' },
-    { key: 'status', label: 'Státusz', required: true, options: ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'] },
+    { key: 'status', label: 'Státusz', required: true, options: ['Aktív', 'Tartalékos', 'Leszerelt'] },
     { key: 'email', label: 'E-mail', placeholder: 'pl. nev@honved.hu' },
     { key: 'phone', label: 'Telefon', placeholder: 'pl. +36 30 123 4567' },
     { key: 'birthDate', label: 'Születési dátum', placeholder: 'YYYY-MM-DD' },
@@ -46,7 +53,7 @@ const IMPORT_FIELDS: Record<ImportEntity, ImportFieldConfig[]> = {
     { key: 'type', label: 'Típus', required: true, placeholder: 'pl. lövészeti' },
     { key: 'startDate', label: 'Kezdés', required: true, placeholder: 'YYYY-MM-DD' },
     { key: 'endDate', label: 'Befejezés', required: true, placeholder: 'YYYY-MM-DD' },
-    { key: 'status', label: 'Státusz', required: true, options: ['Tervezett', 'Folyamatban', 'Befejezett', 'Törölve'] },
+    { key: 'status', label: 'Státusz', required: true, options: ['Tervezett', 'Folyamatban', 'Befejezett', 'Lemondva'] },
     { key: 'location', label: 'Helyszín', placeholder: 'pl. Hajmáskér' },
     { key: 'maxPersonnel', label: 'Max. létszám', placeholder: 'pl. 120' },
     { key: 'description', label: 'Leírás', multiline: true, placeholder: 'Részletek, célok, megjegyzések' },
@@ -90,11 +97,17 @@ function countOriginalValues(item: ImportPreviewItem) {
 
 export default function SettingsPage() {
   const { user: authUser, isDev, isAdmin } = useAuth();
+  const [theme, setTheme] = useState<Theme>(getTheme);
+  const [importTab, setImportTab] = useState<'personnel' | 'basic'>('personnel');
   const [data, setData] = useState<User[]>([]);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true });
+  const [form, setForm] = useState({ username: '', password: '', displayName: '', role: 'reader' as Role, active: true, department: '', region: '' });
+  const DEPARTMENTS = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy', 'Hadművelet'];
+  const { data: referenceData } = useReferenceData();
+  const REGION_LABELS = referenceData.regionLabels ?? {};
   const [importEntity, setImportEntity] = useState<ImportEntity>('personnel');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
@@ -106,7 +119,6 @@ export default function SettingsPage() {
   const [selectedDraftLine, setSelectedDraftLine] = useState<number | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftDirty, setDraftDirty] = useState(false);
-  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     if (!isAdmin) return;  // a felhasználólistát csak admin töltheti/láthatja
@@ -164,6 +176,8 @@ export default function SettingsPage() {
           role: form.role,
           active: form.active,
           password: form.password || undefined,
+          department: form.department,
+          region: form.region,
         });
         await logAction(authUser!.displayName, authUser!.username, 'módosítva', 'Felhasználók', form.username);
         toast.success('Sikeresen mentve');
@@ -178,12 +192,15 @@ export default function SettingsPage() {
           displayName: form.displayName,
           role: form.role,
           active: form.active,
+          department: form.department,
+          region: form.region,
         });
         await logAction(authUser!.displayName, authUser!.username, 'létrehozva', 'Felhasználók', form.username);
         toast.success('Felhasználó létrehozva');
       }
       setEditing(null);
       setCreating(false);
+      setShowPassword(false);
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -300,22 +317,25 @@ export default function SettingsPage() {
   const canEditUser = (u: User) => {
     if (u.username === authUser?.username) return false;
     if (u.role === 'fejleszto' && !isDev) return false;
+    // Másik admint csak a god kezelhet — igazodik a backend szabályához.
+    if (u.role === 'admin' && !isDev) return false;
     return true;
   };
 
-  const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin', 'fejleszto'] : ['reader', 'editor', 'admin'];
-  const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'FEJLESZTŐ' };
+  // A god-szerep (fejleszto) API-n át sosem osztható ki; admin szintet csak a god
+  // adhat. Ezért az admin legfeljebb szerkesztőt hozhat létre, a god admint is.
+  const availableRoles: Role[] = isDev ? ['reader', 'editor', 'admin'] : ['reader', 'editor'];
+  const roleBadge: Record<string, string> = { admin: 'ADMIN', editor: 'SZERKESZTŐ', reader: 'OLVASÓ', fejleszto: 'ALKOTÓ' };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Beállítások</h1>
         <div className="flex gap-2">
-          <button onClick={() => navigate('/activity-log')} className="btn-mil-secondary text-xs">Tevékenységnapló</button>
           {isAdmin && (
             <button
               onClick={() => {
-                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true });
+                setForm({ username: '', password: '', displayName: '', role: 'reader', active: true, department: '', region: '' });
                 setCreating(true);
               }}
               className="btn-mil-primary flex items-center gap-2 text-xs"
@@ -325,6 +345,8 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {isDev && <SystemStatusPanel />}
 
       {isAdmin && (<>
       <div className="flex items-center gap-3 mb-4">
@@ -349,7 +371,7 @@ export default function SettingsPage() {
             {data.map(u => (
               <tr key={u.username}>
                 <td className="font-mono text-primary">{u.username}</td>
-                <td className="text-brass">{u.displayName}</td>
+                <td className="text-brass">{u.displayName}{(u.department || u.region) && <span className="block text-[10px] font-mono text-muted-foreground">{[u.department, u.region ? (REGION_LABELS[u.region] ?? u.region) : 'ezredtörzs (minden)'].filter(Boolean).join(' · ')}</span>}</td>
                 <td>
                   <span className="px-2 py-0.5 text-xs uppercase tracking-military font-mono border border-border" style={{ borderRadius: '2px' }}>
                     {roleBadge[u.role]}
@@ -368,7 +390,7 @@ export default function SettingsPage() {
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
-                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active });
+                          setForm({ username: u.username, password: '', displayName: u.displayName, role: u.role, active: u.active, department: u.department ?? '', region: u.region ?? '' });
                           setEditing(u);
                         }}
                         className="p-1.5 text-primary hover:bg-primary/10"
@@ -410,10 +432,41 @@ export default function SettingsPage() {
       </div>
       </>)}
 
+      {/* Megjelenés — mindenkinek, a saját böngészőjére */}
       <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
+        <h2 className="text-sm uppercase tracking-military text-primary font-mono">Megjelenés</h2>
+        <p className="text-xs text-muted-foreground mt-1">Sötét vagy világos felület — ezen a gépen, ebben a böngészőben marad meg.</p>
+        <div className="flex gap-2 mt-3">
+          {([['dark', 'Sötét'], ['light', 'Világos']] as const).map(([value, label]) => (
+            <button key={value} onClick={() => { applyTheme(value); setTheme(value); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${theme === value ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isAdmin && <OpsHealthPanel isDev={isDev} />}
+      {isAdmin && <AlertThresholdsPanel canEdit={isAdmin} />}
+
+      {/* Import — egy helyen: állomány (KGIR-export) és alapkiképzés-tábla */}
+      <div className="mt-8 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
+        <h2 className="text-sm uppercase tracking-military text-primary font-mono">Import</h2>
+        <div className="flex gap-4 border-b border-border mt-3">
+          {([['personnel', 'Állomány / KGIR-export'], ['basic', 'Alapkiképzés-tábla']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setImportTab(key)} className={`pb-2 text-xs uppercase tracking-military font-mono transition-colors ${importTab === key ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {importTab === 'basic' && <BasicTrainingImportPanel />}
+
+      {importTab === 'personnel' && (
+      <div className="mt-4 bg-card border border-border p-4" style={{ borderRadius: '2px' }}>
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-sm uppercase tracking-military text-primary font-mono">Importtervezet</h2>
+            <h2 className="text-sm uppercase tracking-military text-primary font-mono">Állomány importja (KGIR-export vagy gyakorlat-lista)</h2>
             <p className="text-xs text-muted-foreground mt-1">
               A rendszer megpróbálja felismerni a mezőket, megmutatja mit tudott kinyerni, és a problémás sorokat is szerkeszthetővé teszi.
             </p>
@@ -496,6 +549,64 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {importPreview.entity === 'personnel' && importPreview.diff && (
+              <div className="border border-border bg-background/60 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-primary">Mi változik a hatókörödben, ha elfogadod</p>
+                <p className="mt-1 text-sm">
+                  <span className="font-semibold">{importPreview.diff.new} új</span>
+                  {' · '}<span className="font-semibold">{importPreview.diff.changed} változik</span>
+                  {importPreview.diff.discharged > 0 && <> · <span className="font-semibold text-destructive">{importPreview.diff.discharged} leszerelt</span></>}
+                  {importPreview.diff.unitChanges > 0 && <> · <span className="font-semibold text-brass">{importPreview.diff.unitChanges} alegység-váltás</span></>}
+                  {importPreview.diff.rankChanges > 0 && <> · {importPreview.diff.rankChanges} rendfokozat-váltás</>}
+                  {importPreview.diff.statusChanges > 0 && <> · {importPreview.diff.statusChanges} státusz-váltás</>}
+                  {' · '}{importPreview.diff.unchanged} változatlan
+                  {importPreview.diff.outOfScope > 0 && <span className="text-muted-foreground"> · {importPreview.diff.outOfScope} sor nem a te zászlóaljad (kihagyva a számolásból)</span>}
+                </p>
+                {Object.keys(importPreview.diff.byUnit).length > 1 && (
+                  <p className="mt-1 font-mono text-muted-foreground">
+                    {Object.entries(importPreview.diff.byUnit).map(([u, c]) => `${u}: ${c.new} új, ${c.changed} változik${c.discharged ? `, ${c.discharged} leszerelt` : ''}`).join(' | ')}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {importPreview.unknownColumns.length > 0 && (
+              <div className="border border-warning/40 bg-warning/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-warning">Nem felismert oszlopok — a személy „Importált adatok" részébe kerülnek</p>
+                <p className="mt-1 text-muted-foreground">
+                  {importPreview.unknownColumns.join(', ')}. Ezekre nem lehet szűrni; ha saját mező kell belőlük, szólj a fejlesztőnek.
+                </p>
+              </div>
+            )}
+
+            {importPreview.entity === 'personnel' && importPreview.missingCount > 0 && (
+              <div className="border border-brass/40 bg-brass/5 p-3 text-xs" style={{ borderRadius: '2px' }}>
+                <p className="font-mono uppercase tracking-military text-brass">
+                  A nyilvántartásban van, de a fájlban nincs: {importPreview.missingCount} fő
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Napi teljes exportnál ez a leszereltek vagy a hibás export jele. Az import nem törli és nem módosítja őket.
+                </p>
+                <div className="mt-2 max-h-48 overflow-y-auto">
+                  <table className="w-full font-mono">
+                    <tbody>
+                      {importPreview.missing.map(person => (
+                        <tr key={person.id} className="border-t border-border/50">
+                          <td className="py-1 pr-3 text-foreground">{person.name}</td>
+                          <td className="py-1 pr-3 text-muted-foreground">{person.sztsz}</td>
+                          <td className="py-1 pr-3 text-muted-foreground">{person.unit}</td>
+                          <td className="py-1 text-muted-foreground">{person.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {importPreview.missingCount > importPreview.missing.length && (
+                    <p className="mt-1 text-muted-foreground">… és még {importPreview.missingCount - importPreview.missing.length} fő.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="border border-border p-4" style={{ borderRadius: '2px' }}>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -508,6 +619,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => setImportEditorOpen(true)} className="btn-mil-secondary text-xs">Tervezet megnyitása</button>
+                  <button onClick={() => { exportImportDryRunPdf(importPreview.entity, importPreview.draftId, importFile?.name ?? '').catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-secondary text-xs" title="Aláírható változáslista — mit engedsz be az elfogadással">Próbaüzem-PDF</button>
                   <button onClick={() => { void handleSaveDraft(); }} disabled={!draftDirty || savingDraft} className="btn-mil-primary text-xs">
                     {savingDraft ? 'Mentés...' : draftDirty ? 'Tervezet mentése' : 'Tervezet naprakész'}
                   </button>
@@ -540,6 +652,11 @@ export default function SettingsPage() {
                           </div>
                           <p className="mt-2 text-sm font-semibold text-foreground">{item.name || 'Névtelen sor'}</p>
                           <p className="text-xs font-mono text-muted-foreground">Sor {item.line} • {item.key}</p>
+                          {item.changes && Object.keys(item.changes).length > 0 && (
+                            <p className="mt-1 text-[11px] font-mono text-brass">
+                              {Object.entries(item.changes).map(([f, [a, b]]) => `${f}: ${a || '—'} → ${b}`).join(' · ')}
+                            </p>
+                          )}
                         </div>
                         <div className="text-xs font-mono text-muted-foreground">
                           <div>Felismert mezők: {countMappedValues(item)}</div>
@@ -584,6 +701,7 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+      )}
 
       <Modal open={importEditorOpen} onClose={() => setImportEditorOpen(false)} title="Import tervezet szerkesztése" wide>
         {!importPreview ? (
@@ -782,7 +900,7 @@ export default function SettingsPage() {
         onClose={() => setDeleteTarget(null)}
       />
 
-      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Felhasználó szerkesztése' : 'Új felhasználó'}>
+      <Modal open={creating || !!editing} onClose={() => { setCreating(false); setEditing(null); setShowPassword(false); }} title={editing ? 'Felhasználó szerkesztése' : 'Új felhasználó'}>
         <div className="space-y-3">
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Felhasználónév{!editing && ' *'}</label>
@@ -796,13 +914,26 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">{editing ? 'Új jelszó (üres = nem változik)' : 'Jelszó *'}</label>
-            <input
-              type="password"
-              value={form.password}
-              onChange={e => setForm({ ...form, password: e.target.value })}
-              className="w-full bg-input border border-border px-3 py-2 text-sm"
-              style={{ borderRadius: '2px' }}
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={form.password}
+                onChange={e => setForm({ ...form, password: e.target.value })}
+                autoComplete="new-password"
+                className="w-full bg-input border border-border pl-3 pr-10 py-2 text-sm"
+                style={{ borderRadius: '2px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                title={showPassword ? 'Jelszó elrejtése' : 'Jelszó megjelenítése'}
+                aria-label={showPassword ? 'Jelszó elrejtése' : 'Jelszó megjelenítése'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Mutasd meg, hogy le tudd diktálni vagy leírni a felhasználónak.</p>
           </div>
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Megjelenítési név</label>
@@ -824,6 +955,32 @@ export default function SettingsPage() {
               {availableRoles.map(r => <option key={r} value={r}>{roleBadge[r]}</option>)}
             </select>
           </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Részleg (a Teendőimhez)</label>
+            <select
+              value={form.department}
+              onChange={e => setForm({ ...form, department: e.target.value })}
+              className="w-full bg-input border border-border px-3 py-2 text-sm"
+              style={{ borderRadius: '2px' }}
+            >
+              <option value="">— nincs részleg —</option>
+              {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">Ebből tudja a Teendőim, mi az övé: Ügyvitel/Jog/Kiképzés/Személyügy/Pénzügy a saját parancs-fejezeteit; Személyügy a szabadságokat; Kiképzés és Hadművelet az alapkiképzés-határidőket. Admin mindent lát.</p>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Terület (hol szolgál)</label>
+            <select
+              value={form.region}
+              onChange={e => setForm({ ...form, region: e.target.value })}
+              className="w-full bg-input border border-border px-3 py-2 text-sm"
+              style={{ borderRadius: '2px' }}
+            >
+              <option value="">{REGION_LABELS[''] ?? 'Ezredtörzs (Győr)'} — minden terület</option>
+              {Object.entries(REGION_LABELS).filter(([k]) => k).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">A Személyek, Létszám, Szabadság és a kereső csak a saját zászlóalj állományát mutatja — Vas nem nyúl Veszprém adatához. A műveletek és események közösek. Admin mindig mindent lát.</p>
+          </div>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -834,11 +991,12 @@ export default function SettingsPage() {
             Aktív
           </label>
           <div className="flex gap-3 justify-end pt-4">
-            <button onClick={() => { setCreating(false); setEditing(null); }} className="btn-mil-secondary text-xs">Mégsem</button>
+            <button onClick={() => { setCreating(false); setEditing(null); setShowPassword(false); }} className="btn-mil-secondary text-xs">Mégsem</button>
             <button onClick={() => { void handleSave(); }} className="btn-mil-primary text-xs">Mentés</button>
           </div>
         </div>
       </Modal>
+      <DevelopersFooter />
     </div>
   );
 }

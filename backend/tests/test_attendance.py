@@ -15,7 +15,7 @@ def _create_person(client, headers, *, name, sztsz, unit="1. század"):
 def _reader_headers(client):
     response = client.post(
         "/api/auth/login",
-        json={"username": "olvaso", "password": "OlvasoTeszt_2026!"},
+        json={"username": "olvaso", "password": "olvaso123"},
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
@@ -155,3 +155,24 @@ def test_fill_requires_editor_role(client):
         headers=_reader_headers(client),
     )
     assert response.status_code == 403
+
+
+def test_events_on_day_show_how_many_are_already_recorded(client, admin_headers):
+    """Gyors kitöltés: látszik, ha egy másik ügyintéző már rögzítette a művelet résztvevőit."""
+    a = _create_person(client, admin_headers, name="Rögzített Réka", sztsz="17000031")
+    b = _create_person(client, admin_headers, name="Rögzítetlen Rudolf", sztsz="17000032")
+    ex = client.post("/api/exercises", json={
+        "name": "Mai őrség", "type": "Őrszolgálat", "startDate": "2099-08-10", "endDate": "2099-08-10", "location": "Kapu",
+        "maxPersonnel": 2, "description": "", "status": "Tervezett", "qualificationId": "",
+        "assigned": [{"personId": a, "personName": "Rögzített Réka", "role": "őr"}, {"personId": b, "personName": "Rögzítetlen Rudolf", "role": "őr"}],
+    }, headers=admin_headers)
+    assert ex.status_code == 201, ex.text
+
+    before = next(e for e in client.get("/api/attendance/events?date=2099-08-10", headers=admin_headers).json() if e["eventId"] == ex.json()["id"])
+    assert before["participantCount"] == 2 and before["recordedCount"] == 0
+
+    client.put("/api/attendance", json={"date": "2099-08-10", "items": [{"personnelId": a, "status": "Szolgálatban", "note": ""}]}, headers=admin_headers)
+    after = next(e for e in client.get("/api/attendance/events?date=2099-08-10", headers=admin_headers).json() if e["eventId"] == ex.json()["id"])
+    assert after["recordedCount"] == 1 and after["recordedStatuses"] == {"Szolgálatban": 1}
+    # más napon nincs rögzítés
+    assert client.get("/api/attendance/events?date=2099-08-11", headers=admin_headers).json() == [] or all(e["eventId"] != ex.json()["id"] for e in client.get("/api/attendance/events?date=2099-08-11", headers=admin_headers).json())

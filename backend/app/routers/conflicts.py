@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import unicodedata
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func, select
 
-from ..db import get_db
-from ..deps import _get_current_user
-from ..models import DutyModel, EventModel, ExerciseModel, TrainingModel, UserModel
+from ..audit import record_activity
+from ..constants import unit_label
+from ..core.scope import owned_in_scope, scoped_persons
+from ..core.dependencies import DB, Editor, Reader
+from ..models import EventModel, ExerciseModel, PersonModel, visible_events
 
 router = APIRouter(prefix="/api/conflicts", tags=["conflicts"])
 
@@ -26,13 +28,13 @@ def _dates_overlap(s1: str, e1: str, s2: str, e2: str) -> bool:
 
 @router.get("")
 def check_conflicts(
+    db: DB,
+    user: Reader,
     location: str = "",
     start_date: str = "",
     end_date: str = "",
     exclude_type: str = "",
     exclude_id: str = "",
-    db: Session = Depends(get_db),
-    _: UserModel = Depends(_get_current_user),
 ):
     """
     Return all events at the given location whose date range overlaps [start_date, end_date].
@@ -56,21 +58,159 @@ def check_conflicts(
             if exclude_type == event_type and exclude_id == item.id:
                 continue
             status = getattr(item, "status", "")
-            if status in ("Törölve", "Befejezett"):
+            if status in ("Törölve", "Lemondva", "Befejezett"):
                 continue
             name = getattr(item, "name", None) or f"{item.type} - {getattr(item, 'person_name', item.id)}"
+            foreign = not owned_in_scope(user, getattr(item, "unit", ""))
             conflicts.append({
                 "eventType": event_type,
-                "eventId": item.id,
-                "eventName": name,
+                "eventId": "" if foreign else item.id,
+                "eventName": f"foglalt — {unit_label(item.unit or '')}" if foreign else name,
+                "foreign": foreign,
                 "startDate": item.start_date,
                 "endDate": item.end_date,
                 "status": status,
             })
 
     _add("exercise", db.scalars(select(ExerciseModel)).all())
-    _add("training", db.scalars(select(TrainingModel)).all())
-    _add("event", db.scalars(select(EventModel)).all())
-    _add("duty", db.scalars(select(DutyModel)).all())
+    _add("event", db.scalars(visible_events()).all())
 
     return conflicts
+
+
+@router.get("/person")
+def person_conflicts(
+    db: DB,
+    _: Reader,
+    personnel_id: str,
+    start_date: str,
+    end_date: str,
+    exclude_type: str = "",
+    exclude_id: str = "",
+):
+    """Ugyanaz a személy egy másik, időben átfedő (nem lemondott) műveletbe is
+    be van-e osztva? A beosztás ilyenkor megáll, és az ügyintéző dönt: marad az
+    eredetiben / átkerül ide / parancsnoki engedéllyel mindkettő."""
+    from ..models import ParticipantModel
+
+    if not personnel_id or not start_date or not end_date:
+        return []
+    models = {"exercise": ExerciseModel, "event": EventModel}
+    parts = db.scalars(
+        select(ParticipantModel).where(
+            ParticipantModel.personnel_id == personnel_id,
+            ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+        )
+    ).all()
+    result = []
+    for part in parts:
+        if part.event_type == exclude_type and part.event_id == exclude_id:
+            continue
+        model = models.get(part.event_type)
+        item = db.get(model, part.event_id) if model else None
+        if not item or item.status in ("Lemondva", "Törölve"):
+            continue
+        if _dates_overlap(item.start_date, item.end_date, start_date, end_date):
+            result.append({
+                "eventType": part.event_type, "eventId": item.id, "eventName": item.name,
+                "startDate": item.start_date, "endDate": item.end_date, "status": item.status,
+                "participantStatus": part.status,
+            })
+    result.sort(key=lambda x: x["startDate"])
+    return result
+
+
+class MoveRequest(BaseModel):
+    personnelId: str
+    fromEvents: list[dict]     # [{eventType, eventId}] — ahonnan elkerül
+    targetName: str = ""       # ahová átkerül (csak a megjegyzésbe)
+
+
+@router.post("/person/move")
+def move_person(payload: MoveRequest, db: DB, user: Editor):
+    """„Átkerül ide": az ütköző műveletekben a részvétel „Visszamondta" lesz egy
+    megjegyzéssel — a régi beosztás nyoma megmarad, de az ütközésből kiesik.
+    A célműveletbe a hívó ezután a szokásos módon veszi fel a személyt."""
+    from ..models import ParticipantModel
+
+    if not payload.personnelId.strip():
+        raise HTTPException(status_code=400, detail="Hiányzó személy")
+    models = {"exercise": ExerciseModel, "event": EventModel}
+    changed: list[dict] = []
+    for ref in payload.fromEvents:
+        event_type = str(ref.get("eventType") or "")
+        event_id = str(ref.get("eventId") or "")
+        model = models.get(event_type)
+        if model is None or not event_id:
+            raise HTTPException(status_code=400, detail=f"Ismeretlen eseménytípus: {event_type or '(üres)'}")
+        item = db.get(model, event_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Az ütköző művelet nem található")
+        part = db.scalar(select(ParticipantModel).where(
+            ParticipantModel.event_type == event_type, ParticipantModel.event_id == event_id,
+            ParticipantModel.personnel_id == payload.personnelId,
+        ))
+        if part is None or part.status in ("Visszamondta", "Lemondva"):
+            continue
+        before = {"status": part.status, "notes": part.notes or ""}
+        part.status = "Visszamondta"
+        note = f"Átkerült ide: {payload.targetName}".strip(": ") if payload.targetName else "Átosztva másik műveletbe"
+        part.notes = f"{part.notes}; {note}".strip("; ") if part.notes else note
+        record_activity(
+            db, user, mode="update", module="Műveletek", record_name=f"{item.name} — {part.person_name}",
+            entity=f"participant:{part.id}", before=before, after={"status": part.status, "notes": part.notes},
+        )
+        changed.append({"eventType": event_type, "eventId": event_id, "eventName": item.name})
+    db.commit()
+    return {"moved": changed}
+
+
+@router.get("/forecast")
+def assignment_forecast(db: DB, user: Reader, start_date: str, end_date: str, exclude_type: str = "", exclude_id: str = ""):
+    """Már a dátum megadásakor: a hatókörömben hány beosztható ember lesz
+    foglalt (más, nem lemondott műveletben) az időszak alatt — mielőtt
+    egyesével kiderülne a beosztásnál.
+
+    Három SQL, nincs eseményenkénti lekérdezés: az átfedő műveleteket/eseményeket
+    egy-egy dátum-szűrt lekérdezés adja (terhelés alatt ez volt a leglassabb végpont)."""
+    from ..models import ParticipantModel
+
+    if not start_date or not end_date:
+        raise HTTPException(status_code=400, detail="Kezdő és záró dátum kell")
+    s, e = start_date[:10], end_date[:10]
+    persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status != "Leszerelt"), user)).all()
+    by_id = {p.id: p for p in persons}
+    if not by_id:
+        return {"assignable": 0, "busy": 0, "busyPeople": []}
+    # Átfedő, nem lemondott műveletek/események — dátum szerint SQL-ben szűrve.
+    overlapping: dict[tuple[str, str], str] = {}
+    for event_type, model in (("exercise", ExerciseModel), ("event", EventModel)):
+        rows = db.execute(
+            select(model.id, model.name).where(
+                model.status.notin_(("Lemondva", "Törölve")),
+                func.substr(model.start_date, 1, 10) <= e,
+                func.substr(model.end_date, 1, 10) >= s,
+            )
+        ).all()
+        for item_id, name in rows:
+            if not (event_type == exclude_type and item_id == exclude_id):
+                overlapping[(event_type, item_id)] = name
+    if not overlapping:
+        return {"assignable": len(by_id), "busy": 0, "busyPeople": []}
+    parts = db.execute(
+        select(ParticipantModel.personnel_id, ParticipantModel.event_type, ParticipantModel.event_id).where(
+            ParticipantModel.event_id.in_([eid for _, eid in overlapping]),
+            ParticipantModel.personnel_id.in_(list(by_id)),
+            ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+        )
+    ).all()
+    busy: dict[str, list[str]] = {}
+    for pid, event_type, event_id in parts:
+        name = overlapping.get((event_type, event_id))
+        if name:
+            busy.setdefault(pid, []).append(name)
+    people = sorted(
+        ({"personnelId": pid, "name": by_id[pid].name, "unit": by_id[pid].unit, "events": names} for pid, names in busy.items()),
+        key=lambda x: x["name"].lower(),
+    )
+    return {"assignable": len(by_id), "busy": len(busy), "busyPeople": people[:50]}

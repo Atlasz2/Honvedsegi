@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAutoRefresh } from '@/lib/useAutoRefresh';
 import { equipment as store, personnel as pStore, logAction, getErrorMessage } from '@/lib/store';
-import { Equipment as Eq, Person } from '@/lib/types';
+import { Equipment as Eq, PersonLite } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { rankWeight } from '@/lib/rank';
 import Modal from '@/components/Modal';
@@ -15,7 +16,7 @@ const condClass: Record<string, string> = { 'Jó': 'badge-active', 'Javítandó'
 export default function EquipmentPage() {
   const { canEdit, user } = useAuth();
   const [data, setData] = useState<Eq[]>([]);
-  const [personnelData, setPersonnelData] = useState<Person[]>([]);
+  const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [filter, setFilter] = useState('Összes');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Eq | null>(null);
@@ -30,9 +31,8 @@ export default function EquipmentPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextData, nextPersonnel] = await Promise.all([store.getAll(), pStore.getAll()]);
+      const nextData = await store.getAll();
       setData(nextData);
-      setPersonnelData(nextPersonnel);
       if (historyTarget) {
         setHistoryTarget(nextData.find(item => item.id === historyTarget.id) || null);
       }
@@ -41,11 +41,13 @@ export default function EquipmentPage() {
     }
   }, [historyTarget]);
 
+  useEffect(() => { void refresh(); }, [refresh]);
+  useAutoRefresh(refresh);
+
+  // Az állomány egyszer, könnyű formában (nem a 30 mp-es frissítéssel együtt).
   useEffect(() => {
-    void refresh();
-    const iv = setInterval(() => { void refresh(); }, 30000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+    pStore.getLite().then(setPersonnelData).catch((error) => toast.error(getErrorMessage(error)));
+  }, []);
 
   const filtered = data.filter(e => {
     if (filter === 'Szabad' && e.checkedOutTo) return false;

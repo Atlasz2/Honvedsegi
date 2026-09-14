@@ -28,6 +28,12 @@ class UserModel(Base):
     display_name: Mapped[str] = mapped_column(String)
     role: Mapped[str] = mapped_column(String)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Részleg (Jog, Személyügy, …): a Teendőim oldal ebből tudja, mely
+    # parancs-fejezetek az övéi. Üres = nincs részleg-specifikus teendő.
+    department: Mapped[str] = mapped_column(String, default="")
+    # Terület (megye, constants.REGIONS kulcs): melyik zászlóalj állományát látja.
+    # Üres = ezredtörzs / minden.
+    region: Mapped[str] = mapped_column(String, default="")
     protected: Mapped[bool] = mapped_column(Boolean, default=False)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
@@ -63,6 +69,8 @@ class PersonModel(Base):
     unit: Mapped[str] = mapped_column(String)
     beosztas: Mapped[str] = mapped_column(String, default="")
     status: Mapped[str] = mapped_column(String, index=True)
+    # Jogviszony altípusa (constants.SERVICE_TYPES); üres, ha nem ismert.
+    service_type: Mapped[str] = mapped_column(String, default="")
     email: Mapped[str] = mapped_column(String, default="")
     phone: Mapped[str] = mapped_column(String, default="")
     birth_date: Mapped[str] = mapped_column(String, default="")
@@ -70,6 +78,9 @@ class PersonModel(Base):
     join_date: Mapped[str] = mapped_column(String, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     qualifications: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # A KGIR-export olyan oszlopai, amiknek nincs saját mezőjük (pl. anyja neve).
+    # Csak az import írja; a felületen olvasható. Döntés (2026-09-11): mindent átemelünk.
+    extra: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
 
 
 class AttendanceModel(Base):
@@ -87,6 +98,20 @@ class AttendanceModel(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     recorded_by: Mapped[str] = mapped_column(String, default="")
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class AttendanceClosureModel(Base):
+    """A napi létszámjelentés lezárása zászlóaljanként: „Lezárva: Kiss őrm., 08:12".
+    Utána csak indoklással módosítható; az ezredtörzs látja, ki zárt már le."""
+    __tablename__ = "attendance_closures"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    date: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)   # "" = ezredszint (minden)
+    closed_by: Mapped[str] = mapped_column(String, default="")
+    closed_by_name: Mapped[str] = mapped_column(String, default="")
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    note: Mapped[str] = mapped_column(Text, default="")
 
 
 class LeaveRequestModel(Base):
@@ -132,6 +157,7 @@ class EventModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     event_type: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
     type: Mapped[str] = mapped_column(String)
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
@@ -141,8 +167,15 @@ class EventModel(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
     assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    # Szülő művelet a művelet-fában. NULL = gyökérszintű elem.
+    parent_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
+def visible_events():
+    """Valódi események (az árnyék-sorok nélkül) — minden listázás ezt használja."""
+    from sqlalchemy import select as _select
+    from .constants import SHADOW_EVENT_TYPE
+    return _select(EventModel).where(EventModel.event_type != SHADOW_EVENT_TYPE)
 
 
 class ExerciseModel(Base):
@@ -154,6 +187,12 @@ class ExerciseModel(Base):
     start_date: Mapped[str] = mapped_column(String, index=True)
     end_date: Mapped[str] = mapped_column(String)
     location: Mapped[str] = mapped_column(String, default="")
+    # A kiképzés beolvadt a műveletbe: a „szervező" mezője ide került.
+    organizer: Mapped[str] = mapped_column(String, default="")
+    # Melyik zászlóaljé (constants.UNITS); üres = ezredszintű, mindenki látja.
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    # Szolgálat-típusú műveletnél: átadás-átvétel {handedOverBy, handedOverAt, takenOverBy, takenOverAt, note}
+    handover: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     max_personnel: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String, index=True)
@@ -164,33 +203,18 @@ class ExerciseModel(Base):
 
 
 class SeriesModel(Base):
+    # unit: melyik zászlóaljé (üres = ezredszintű); parent_id: alsorozat szülője (7×20 → Támadás → Támadás Alap).
     """Felkészítés-sorozat (szülő „kártya"), pl. „7×20 Tartalékos szakfelkészítés".
-    A gyakorlatok/kiképzések a series_id mezővel hivatkoznak rá."""
+    A műveletek a series_id mezővel hivatkoznak rá."""
     __tablename__ = "operation_series"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    parent_id: Mapped[str] = mapped_column(String, default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
-
-class TrainingModel(Base):
-    __tablename__ = "trainings"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
-    name: Mapped[str] = mapped_column(String, index=True)
-    type: Mapped[str] = mapped_column(String)
-    start_date: Mapped[str] = mapped_column(String, index=True)
-    end_date: Mapped[str] = mapped_column(String)
-    location: Mapped[str] = mapped_column(String, default="")
-    organizer: Mapped[str] = mapped_column(String, default="")
-    qualification_id: Mapped[str] = mapped_column(String, default="")
-    max_personnel: Mapped[int] = mapped_column(Integer, default=0)
-    description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String, index=True)
-    assigned: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    series_id: Mapped[str] = mapped_column(String, default="", index=True)  # szülő felkészítés-sorozat
-    level: Mapped[str] = mapped_column(String, default="")  # Alap/Haladó/Emelt
 
 class EquipmentModel(Base):
     __tablename__ = "equipment"
@@ -302,11 +326,29 @@ class AnnouncementModel(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String, index=True)
+    # Üres = ezredszintű közlemény (mindenki); egyébként a zászlóalj.
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
     category: Mapped[str] = mapped_column(String, index=True)
     content: Mapped[str] = mapped_column(Text)
     author: Mapped[str] = mapped_column(String)
     date: Mapped[str] = mapped_column(String, index=True)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PersonDocumentModel(Base):
+    """Személyi okmány / alkalmasság, lejárattal (igazolvány, nemzetbiztonsági
+    ellenőrzés, belépő, orvosi vagy fizikai alkalmasság). Lejáráskor a riasztó
+    rendszer jelzi."""
+    __tablename__ = "person_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    personnel_id: Mapped[str] = mapped_column(String, index=True)
+    category: Mapped[str] = mapped_column(String, default="Okmány")  # Okmány / Alkalmasság / Egyéb
+    name: Mapped[str] = mapped_column(String)
+    identifier: Mapped[str] = mapped_column(String, default="")  # okmányszám (opcionális)
+    issued_date: Mapped[str] = mapped_column(String, default="")
+    expiry_date: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
 
 
 class ActivityLogModel(Base):
@@ -323,3 +365,131 @@ class ActivityLogModel(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
+# ── Műveletek: jelenlét, anyagigény, dokumentumok ─────────────────────────
+
+class OperationAttendanceModel(Base):
+    """Egy művelet(-részfeladat) jelenléti íve.
+
+    NEM keverendő az AttendanceModel-lel: az a napi létszámjelentés (A1),
+    naptári nap szerint. Ez itt eseményhez kötött, és a művelet lezárásáig
+    szerkeszthető."""
+    __tablename__ = "operation_attendance"
+    __table_args__ = (
+        UniqueConstraint("sub_operation_id", "person_id", name="uq_operation_attendance_person"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    sub_operation_id: Mapped[str] = mapped_column(String, index=True)
+    person_id: Mapped[str] = mapped_column(String, index=True)
+    person_name: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="Pending")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class MaterialRequirementModel(Base):
+    """Egy művelethez igényelt anyag/eszköz, igénylés -> jóváhagyás -> teljesítés."""
+    __tablename__ = "material_requirements"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, index=True)
+    item_name: Mapped[str] = mapped_column(String, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, default="Requested", index=True)
+
+
+class OperationDocumentModel(Base):
+    """Művelethez csatolt dokumentum.
+
+    A fájl a lemezen él (uploads/operations/<művelet>/), a sorban csak a
+    hivatkozás. A `filename` a tárolt, véletlen név; az `original_name` a
+    felhasználó által adott — utóbbi soha nem kerül a fájlrendszerbe."""
+    __tablename__ = "operation_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(String, index=True)
+    filename: Mapped[str] = mapped_column(String)
+    original_name: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String, default="application/octet-stream")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    storage_path: Mapped[str] = mapped_column(String)
+    uploaded_by: Mapped[str] = mapped_column(String, default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class AppSettingModel(Base):
+    """Admin által állítható kulcs → érték (pl. riasztási küszöbök)."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String, default="")
+
+
+# ── Parancs-műhely (I5) ───────────────────────────────────────────────────────
+
+class OrderTypeModel(Base):
+    """Parancstípus (pl. leszerelési, vezénylési, behívó) a fejezet-sablonjával.
+
+    A `chapters` JSON-lista: [{name, responsible, required, template}] — a
+    sorrend a dokumentumbeli sorrend; a részlegek egymástól FÜGGETLENÜL
+    dolgoznak rajtuk. A `template` a fejezet kiinduló szövege, {{név}}-szerű
+    helyőrzőkkel. A `signers` a záró aláírók szerepe (2–3 illetékes
+    parancsnok). Egy parancs létrehozásakor mindebből PILLANATKÉP készül, így a
+    típus későbbi módosítása nem írja át a folyamatban lévő parancsokat."""
+    __tablename__ = "order_types"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    chapters: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    signers: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class OrderModel(Base):
+    """Egy konkrét parancs (pl. „Kiss Béla leszerelése"): a fejezetek szövegéből
+    áll össze a dokumentum, a végén az aláírásokkal. A `signatures` JSON-lista:
+    [{role, name, signed, signedAt, signedBy}]."""
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    order_type_id: Mapped[str] = mapped_column(String, index=True)
+    type_name: Mapped[str] = mapped_column(String, default="")
+    number: Mapped[str] = mapped_column(String, default="")
+    issuer: Mapped[str] = mapped_column(String, default="")
+    subject: Mapped[str] = mapped_column(String, index=True)
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    # Módosító parancs: melyik kiadott parancsot módosítja (a kiadott befagy).
+    amends_order_id: Mapped[str] = mapped_column(String, default="", index=True)
+    personnel_id: Mapped[str] = mapped_column(String, default="", index=True)
+    person_name: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, index=True, default="Előkészítés")
+    due_date: Mapped[str] = mapped_column(String, default="", index=True)
+    issued_date: Mapped[str] = mapped_column(String, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    signatures: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class OrderChapterModel(Base):
+    """A parancs egy fejezete: ki felel érte, hol tart, mikorra kell — és a szövege."""
+    __tablename__ = "order_chapters"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    order_id: Mapped[str] = mapped_column(String, index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String)
+    responsible: Mapped[str] = mapped_column(String, index=True)
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, index=True, default="Nincs elkezdve")
+    assignee: Mapped[str] = mapped_column(String, default="")
+    due_date: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

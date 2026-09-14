@@ -1,14 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   personnel as pStore,
   personnelQualifications as pqStore,
   qualificationTypes as qtStore,
+  documents as docStore,
   getErrorMessage,
+  type PersonDocument,
 } from '@/lib/store';
 import type { PersonnelQualification, QualificationType } from '@/lib/types';
 import type { Person } from '@/lib/types';
+import type { PersonTimeline, TimelineKind } from '@/lib/store';
+
+const TIMELINE_LABEL: Record<TimelineKind, string> = {
+  operation: 'művelet', duty: 'szolgálat', event: 'esemény', leave: 'távollét', attendance: 'létszám-eltérés',
+  qualification: 'képesítés', 'qualification-expiry': 'képesítés lejár', document: 'okmány', 'document-expiry': 'okmány lejár',
+  order: 'parancs', milestone: 'mérföldkő',
+};
+const TIMELINE_TONE: Record<TimelineKind, string> = {
+  operation: 'bg-primary', duty: 'bg-brass', event: 'bg-sky-600', leave: 'bg-amber-500', attendance: 'bg-orange-500',
+  qualification: 'bg-emerald-500', 'qualification-expiry': 'bg-destructive', document: 'bg-violet-500', 'document-expiry': 'bg-destructive',
+  order: 'bg-slate-500', milestone: 'bg-foreground',
+};
 import Modal from '@/components/Modal';
+import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
 import { differenceInDays, parseISO } from 'date-fns';
 
@@ -17,7 +32,6 @@ import { differenceInDays, parseISO } from 'date-fns';
 const PERSON_STATUS_CLASS: Record<string, string> = {
   Aktív: 'badge-active',
   Tartalékos: 'badge-reserve',
-  Szabadságon: 'badge-leave',
   Leszerelt: 'badge-discharged',
 };
 
@@ -86,7 +100,17 @@ interface Props {
 
 export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit }: Props) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'elozmenyek'>('alap');
+  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'okmanyok' | 'elozmenyek' | 'idoszalag'>('alap');
+  const [timeline, setTimeline] = useState<PersonTimeline | null>(null);
+  const [docs, setDocs] = useState<PersonDocument[]>([]);
+  const [addingDoc, setAddingDoc] = useState(false);
+  const [docCategory, setDocCategory] = useState<'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb'>('Okmány');
+  const [docName, setDocName] = useState('');
+  const [docIdentifier, setDocIdentifier] = useState('');
+  const [docIssued, setDocIssued] = useState('');
+  const [docExpiry, setDocExpiry] = useState('');
+  const [docNotes, setDocNotes] = useState('');
+  const [savingDoc, setSavingDoc] = useState(false);
   const [qualifications, setQualifications] = useState<PersonnelQualification[]>([]);
   const [qualTypes, setQualTypes] = useState<QualificationType[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -112,12 +136,16 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
       pqStore.getForPerson(person.id),
       qtStore.getAll(),
       pStore.getHistory(person.id),
+      docStore.getForPerson(person.id),
+      pStore.getTimeline(person.id).catch(() => null),
     ])
-      .then(([quals, types, hist]) => {
+      .then(([quals, types, hist, personDocs, tl]) => {
         if (!active) return;
         setQualifications(quals);
         setQualTypes(types);
         setHistory(hist as HistoryEntry[]);
+        setDocs(personDocs);
+        setTimeline(tl);
         setLoading(false);
       })
       .catch((err) => {
@@ -174,6 +202,39 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
     }
   }
 
+  async function handleAddDoc() {
+    const name = docName.trim();
+    if (!name) { toast.error('Add meg az okmány/alkalmasság nevét'); return; }
+    setSavingDoc(true);
+    try {
+      const created = await docStore.add(person.id, {
+        category: docCategory, name, identifier: docIdentifier,
+        issuedDate: docIssued, expiryDate: docExpiry || null, notes: docNotes,
+      });
+      setDocs(prev => [created, ...prev]);
+      setAddingDoc(false);
+      setDocName(''); setDocIdentifier(''); setDocIssued(''); setDocExpiry(''); setDocNotes('');
+      toast.success('Rögzítve');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setSavingDoc(false);
+    }
+  }
+
+  async function handleRemoveDoc(doc: PersonDocument) {
+    if (!confirm(`Törlöd a(z) "${doc.name}" tételt?`)) return;
+    try {
+      await docStore.remove(doc.id);
+      setDocs(prev => prev.filter(d => d.id !== doc.id));
+      toast.success('Törölve');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
+  const docExpiredCount = docs.filter(d => d.isExpired).length;
+
   const filteredHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
     if (!q) return history;
@@ -188,7 +249,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
   const pagedHistory = filteredHistory.slice((safePage - 1) * historyPageSize, safePage * historyPageSize);
 
   const EVENT_TYPE_LABEL: Record<string, string> = {
-    exercise: 'Gyakorlat', training: 'Kiképzés', event: 'Esemény', duty: 'Ügyelet',
+    exercise: 'Művelet', training: 'Kiképzés (régi)', event: 'Esemény', duty: 'Szolgálat (régi)',
   };
 
   const expiredCount = qualifications.filter(q => q.isExpired).length;
@@ -221,12 +282,13 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
               {person.status === 'Aktív' && <span className="pulse-dot" />}
               {person.status}
             </span>
+            {person.serviceType && <span className="block text-xs text-muted-foreground mt-1">{person.serviceType}</span>}
           </div>
         </div>
 
         {/* Tab-navigáció */}
         <div className="flex border-b border-border gap-4">
-          {(['alap', 'kepesitsegek', 'elozmenyek'] as const).map((t) => (
+          {(['alap', 'kepesitsegek', 'okmanyok', 'elozmenyek', 'idoszalag'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -239,7 +301,13 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                    {expiredCount > 0 && <span className="px-1 text-xs badge-cancelled">{expiredCount}</span>}
                    {expiringSoonCount > 0 && !expiredCount && <span className="px-1 text-xs badge-reserve">{expiringSoonCount}</span>}
                  </span>
-               ) : `Előzmények (${history.length})`}
+               ) :
+               t === 'okmanyok' ? (
+                 <span className="flex items-center gap-1">
+                   Okmányok/Alkalmasság
+                   {docExpiredCount > 0 && <span className="px-1 text-xs badge-cancelled">{docExpiredCount}</span>}
+                 </span>
+               ) : t === 'elozmenyek' ? `Előzmények (${history.length})` : `Időszalag (${timeline?.items.length ?? 0})`}
             </button>
           ))}
         </div>
@@ -287,6 +355,19 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                     <p className="mt-1 text-muted-foreground">{person.notes}</p>
                   </div>
                 )}
+                {person.extra && Object.keys(person.extra).length > 0 && (
+                  <div className="border-t border-border pt-3">
+                    <span className="text-muted-foreground text-xs uppercase tracking-military">Importált adatok (KGIR-export)</span>
+                    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                      {Object.entries(person.extra).map(([key, value]) => (
+                        <div key={key} className="contents">
+                          <dt className="text-muted-foreground">{key}</dt>
+                          <dd className="font-mono">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
               </div>
             )}
 
@@ -321,11 +402,11 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Megszerzés dátuma (alapból ma)</label>
-                            <input type="date" value={newQualEarned} onChange={e => setNewQualEarned(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                            <DatePickerInput value={newQualEarned} onChange={setNewQualEarned} />
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Lejárat dátuma (opcionális)</label>
-                            <input type="date" value={newQualExpiry} onChange={e => setNewQualExpiry(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                            <DatePickerInput value={newQualExpiry} onChange={setNewQualExpiry} />
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Megjegyzés</label>
@@ -381,6 +462,112 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
             )}
 
             {/* ── Előzmények tab ── */}
+            {tab === 'okmanyok' && (
+              <div className="space-y-3">
+                {canEdit && (
+                  !addingDoc ? (
+                    <button onClick={() => setAddingDoc(true)} className="btn-mil-secondary text-xs">+ Okmány / alkalmasság hozzáadása</button>
+                  ) : (
+                    <div className="border border-border p-3 space-y-3" style={{ borderRadius: '2px' }}>
+                      <p className="text-xs uppercase tracking-military text-primary font-mono">Új tétel</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Kategória</label>
+                          <select value={docCategory} onChange={e => setDocCategory(e.target.value as 'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb')} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }}>
+                            <option value="Okmány">Okmány</option>
+                            <option value="Alkalmasság">Alkalmasság</option>
+                            <option value="Szerződés">Szerződés (jogviszony)</option>
+                            <option value="Egyéb">Egyéb</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Megnevezés *</label>
+                          <input value={docName} onChange={e => setDocName(e.target.value)} placeholder="pl. Katonai igazolvány / Orvosi alkalmasság" className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Azonosító (opcionális)</label>
+                          <input value={docIdentifier} onChange={e => setDocIdentifier(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Kiállítás dátuma</label>
+                          <input type="date" value={docIssued} onChange={e => setDocIssued(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Lejárat (opcionális)</label>
+                          <input type="date" value={docExpiry} onChange={e => setDocExpiry(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Megjegyzés</label>
+                          <input value={docNotes} onChange={e => setDocNotes(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={handleAddDoc} disabled={savingDoc} className="btn-mil-primary text-xs">{savingDoc ? 'Mentés...' : 'Mentés'}</button>
+                        <button onClick={() => setAddingDoc(false)} className="btn-mil-secondary text-xs">Mégse</button>
+                      </div>
+                    </div>
+                  )
+                )}
+                {docs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-mono py-4">Nincs rögzített okmány / alkalmasság</p>
+                ) : (
+                  <table className="w-full mil-table">
+                    <thead><tr><th>Kategória</th><th>Megnevezés</th><th>Azonosító</th><th>Lejárat</th><th>Állapot</th>{canEdit && <th></th>}</tr></thead>
+                    <tbody>
+                      {docs.map(d => (
+                        <tr key={d.id}>
+                          <td><span className="mono-chip text-[10px]">{d.category}</span></td>
+                          <td className="font-mono text-sm">{d.name}</td>
+                          <td className="font-mono text-xs text-muted-foreground">{d.identifier || '—'}</td>
+                          <td className="font-mono text-xs">{d.expiryDate || '—'}</td>
+                          <td>
+                            {d.expiryDate == null ? <span className="text-xs text-muted-foreground">nincs lejárat</span>
+                              : d.isExpired ? <span className="px-2 py-0.5 text-xs badge-cancelled" style={{ borderRadius: '2px' }}>Lejárt</span>
+                              : (d.daysUntilExpiry ?? 99) <= 30 ? <span className="px-2 py-0.5 text-xs badge-reserve" style={{ borderRadius: '2px' }}>{d.daysUntilExpiry} nap</span>
+                              : <span className="px-2 py-0.5 text-xs badge-active" style={{ borderRadius: '2px' }}>Érvényes</span>}
+                          </td>
+                          {canEdit && <td><button onClick={() => handleRemoveDoc(d)} className="text-xs text-destructive hover:text-destructive/80 font-mono">Törlés</button></td>}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {tab === 'idoszalag' && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Minden, amit a rendszer tud róla, egy időrendben — műveletek, szolgálatok, események, szabadságok, létszám-eltérések, képesítések, okmányok, parancsok. Nem a KGIR; ez a „mi tudunk róla” nézet.</p>
+                {!timeline || timeline.items.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-mono py-6 text-center">Még nincs bejegyzés.</p>
+                ) : (
+                  <ol className="relative border-l border-border ml-3 max-h-[28rem] overflow-y-auto pr-2">
+                    {timeline.items.map((it, i) => {
+                      const tone = TIMELINE_TONE[it.kind] ?? 'bg-muted-foreground';
+                      const clickable = it.ref.type === 'exercise' || it.ref.type === 'event' || it.ref.type === 'order';
+                      const open = () => {
+                        if (!clickable) return;
+                        onClose();
+                        if (it.ref.type === 'exercise') navigate('/operations', { state: { openOperationId: it.ref.id, openOperationSource: 'exercise' } });
+                        else if (it.ref.type === 'event') navigate('/events', { state: { openEventId: it.ref.id } });
+                        else navigate('/parancsok', { state: { openOrderId: it.ref.id } });
+                      };
+                      return (
+                        <li key={`${it.kind}-${it.date}-${i}`} className="ml-4 py-1.5">
+                          <span className={`absolute -left-[5px] mt-1.5 w-2.5 h-2.5 ${tone}`} style={{ borderRadius: '2px' }} />
+                          <button onClick={open} className={`text-left w-full ${clickable ? 'hover:bg-secondary/40' : 'cursor-default'} px-2 py-1`} style={{ borderRadius: '2px' }}>
+                            <span className="block text-[11px] font-mono text-muted-foreground">{it.date}{it.endDate && it.endDate !== it.date ? ` – ${it.endDate}` : ''} · {TIMELINE_LABEL[it.kind] ?? it.kind}</span>
+                            <span className="block text-sm"><span className="font-medium">{it.title}</span>{it.subtitle ? <span className="text-muted-foreground"> — {it.subtitle}</span> : null}</span>
+                            {it.status && <span className="block text-[11px] font-mono text-primary">{it.status}</span>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            )}
+
             {tab === 'elozmenyek' && (
               <div className="space-y-3">
                 <div>
@@ -413,7 +600,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                         className="cursor-pointer hover:bg-secondary transition-colors"
                         onClick={() => {
                           onClose();
-                          if (item.eventType === 'training' || item.eventType === 'exercise') {
+                          if (item.eventType === 'exercise') {
                             navigate('/operations', { state: { openOperationId: item.eventId, openOperationSource: item.eventType } });
                           }
                         }}

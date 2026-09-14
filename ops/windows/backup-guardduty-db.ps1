@@ -1,9 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$WorkspaceRoot = "",
-    [string]$BackupRoot = "C:\ProgramData\GuardGuardDuty\backups",
+    [string]$ArchiveRoot = "C:\ProgramData\GuardGuardDuty\backups",
     [int]$RetentionDays = 30
 )
+
+# Ütemezett mentés. Két lépcső:
+#  1. a Python mentő (app.backup) a SQLite online backup API-val konzisztens
+#     pillanatképet készít a backend\data\backups mappába, és visszaállítás-
+#     próbával ellenőrzi (integritás + táblák darabszáma) — fájlmásolás WAL
+#     mellett nem lenne biztonságos, ezért nem azt csináljuk;
+#  2. a friss, ellenőrzött mentés tömörítve átkerül egy külön archív mappába
+#     (ideális esetben másik meghajtóra), és a réginél idősebbek törlődnek.
 
 $ErrorActionPreference = "Stop"
 
@@ -11,31 +19,29 @@ if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
     $WorkspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 }
 
-$dataDir = Join-Path $WorkspaceRoot "backend\data"
-$db = Join-Path $dataDir "guard_guard_duty.db"
-$wal = "$db-wal"
-$shm = "$db-shm"
+$backendDir = Join-Path $WorkspaceRoot "backend"
+$pythonExe = Join-Path $WorkspaceRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) { $pythonExe = "python" }
 
-if (-not (Test-Path $db)) {
-    throw "Nem található adatbázis: $db"
+Push-Location $backendDir
+try {
+    & $pythonExe -m app.backup
+    if ($LASTEXITCODE -ne 0) { throw "A mentés ellenőrzése sikertelen (kilépési kód: $LASTEXITCODE)." }
+} finally {
+    Pop-Location
 }
 
-New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$tempDir = Join-Path $BackupRoot "snapshot-$stamp"
-New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+$latest = Get-ChildItem -Path (Join-Path $backendDir "data\backups") -Filter "guard_*.db" |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $latest) { throw "Nem található elkészült mentés." }
 
-Copy-Item $db -Destination $tempDir -Force
-if (Test-Path $wal) { Copy-Item $wal -Destination $tempDir -Force }
-if (Test-Path $shm) { Copy-Item $shm -Destination $tempDir -Force }
-
-$zipPath = Join-Path $BackupRoot "guard_guard_duty-$stamp.zip"
+New-Item -ItemType Directory -Path $ArchiveRoot -Force | Out-Null
+$zipPath = Join-Path $ArchiveRoot ($latest.BaseName + ".zip")
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $tempDir "*") -DestinationPath $zipPath -CompressionLevel Optimal
-Remove-Item $tempDir -Recurse -Force
+Compress-Archive -Path $latest.FullName -DestinationPath $zipPath -CompressionLevel Optimal
 
-Get-ChildItem -Path $BackupRoot -File -Filter "guard_guard_duty-*.zip" |
+Get-ChildItem -Path $ArchiveRoot -File -Filter "guard_*.zip" |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$RetentionDays) } |
     Remove-Item -Force
 
-Write-Host "Mentés elkészült: $zipPath" -ForegroundColor Green
+Write-Host "Mentés kész és ellenőrizve: $($latest.Name) → $zipPath" -ForegroundColor Green
