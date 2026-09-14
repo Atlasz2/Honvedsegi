@@ -10,6 +10,7 @@ import CommandPalette, { openCommandPalette } from '@/components/CommandPalette'
 import { useConnection, setOnline } from '@/lib/connection';
 import { Search, WifiOff } from 'lucide-react';
 import NewsBell from '@/components/NewsBell';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { activeNavPath } from '@/lib/navigation';
 
 // A menü sorrendje a napi munka sorrendje: ami rám vár → mi a helyzet → naptár →
@@ -47,6 +48,7 @@ const roleBadge: Record<string, string> = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, canEdit } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const online = useConnection();
   const location = useLocation();
@@ -178,11 +180,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span className="px-2 py-0.5 text-[10px] uppercase tracking-military font-mono border border-border text-muted-foreground" style={{ borderRadius: '2px' }}>
               {roleBadge[user?.role || ''] || user?.role}
             </span>
-            <button onClick={logout} className="text-muted-foreground hover:text-destructive transition-colors p-1" title="Kijelentkezés">
+            <button onClick={() => setConfirmLogout(true)} className="text-muted-foreground hover:text-destructive transition-colors p-1" title="Kijelentkezés">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         </header>
+
+        <ConfirmDialog open={confirmLogout} onClose={() => setConfirmLogout(false)} onConfirm={() => { setConfirmLogout(false); logout(); }} message="Biztosan kijelentkezel? A mentetlen változások elvesznek." confirmLabel="Kijelentkezés" tone="primary" />
 
         {!online && (
           <div className="bg-destructive/15 border-b border-destructive/40 text-destructive px-4 py-2 text-xs font-mono flex items-center gap-2">

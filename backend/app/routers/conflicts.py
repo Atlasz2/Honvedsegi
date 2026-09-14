@@ -4,7 +4,7 @@ import unicodedata
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..audit import record_activity
 from ..constants import unit_label
@@ -169,37 +169,48 @@ def move_person(payload: MoveRequest, db: DB, user: Editor):
 def assignment_forecast(db: DB, user: Reader, start_date: str, end_date: str, exclude_type: str = "", exclude_id: str = ""):
     """Már a dátum megadásakor: a hatókörömben hány beosztható ember lesz
     foglalt (más, nem lemondott műveletben) az időszak alatt — mielőtt
-    egyesével kiderülne a beosztásnál."""
+    egyesével kiderülne a beosztásnál.
+
+    Három SQL, nincs eseményenkénti lekérdezés: az átfedő műveleteket/eseményeket
+    egy-egy dátum-szűrt lekérdezés adja (terhelés alatt ez volt a leglassabb végpont)."""
     from ..models import ParticipantModel
 
     if not start_date or not end_date:
         raise HTTPException(status_code=400, detail="Kezdő és záró dátum kell")
+    s, e = start_date[:10], end_date[:10]
     persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status != "Leszerelt"), user)).all()
-    ids = {p.id for p in persons}
-    if not ids:
-        return {"assignable": 0, "busy": 0, "busyPeople": []}
-    parts = db.scalars(select(ParticipantModel).where(
-        ParticipantModel.personnel_id.in_(ids),
-        ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
-    )).all()
-    models = {"exercise": ExerciseModel, "event": EventModel}
-    cache: dict[tuple[str, str], object] = {}
-    busy: dict[str, list[str]] = {}
-    for part in parts:
-        if part.event_type == exclude_type and part.event_id == exclude_id:
-            continue
-        key = (part.event_type, part.event_id)
-        if key not in cache:
-            model = models.get(part.event_type)
-            cache[key] = db.get(model, part.event_id) if model else None
-        item = cache[key]
-        if item is None or item.status in ("Lemondva", "Törölve"):
-            continue
-        if _dates_overlap(item.start_date, item.end_date, start_date, end_date):
-            busy.setdefault(part.personnel_id, []).append(item.name)
     by_id = {p.id: p for p in persons}
+    if not by_id:
+        return {"assignable": 0, "busy": 0, "busyPeople": []}
+    # Átfedő, nem lemondott műveletek/események — dátum szerint SQL-ben szűrve.
+    overlapping: dict[tuple[str, str], str] = {}
+    for event_type, model in (("exercise", ExerciseModel), ("event", EventModel)):
+        rows = db.execute(
+            select(model.id, model.name).where(
+                model.status.notin_(("Lemondva", "Törölve")),
+                func.substr(model.start_date, 1, 10) <= e,
+                func.substr(model.end_date, 1, 10) >= s,
+            )
+        ).all()
+        for item_id, name in rows:
+            if not (event_type == exclude_type and item_id == exclude_id):
+                overlapping[(event_type, item_id)] = name
+    if not overlapping:
+        return {"assignable": len(by_id), "busy": 0, "busyPeople": []}
+    parts = db.execute(
+        select(ParticipantModel.personnel_id, ParticipantModel.event_type, ParticipantModel.event_id).where(
+            ParticipantModel.event_id.in_([eid for _, eid in overlapping]),
+            ParticipantModel.personnel_id.in_(list(by_id)),
+            ParticipantModel.status.notin_(("Lemondva", "Visszamondta", "Hiányzott")),
+        )
+    ).all()
+    busy: dict[str, list[str]] = {}
+    for pid, event_type, event_id in parts:
+        name = overlapping.get((event_type, event_id))
+        if name:
+            busy.setdefault(pid, []).append(name)
     people = sorted(
         ({"personnelId": pid, "name": by_id[pid].name, "unit": by_id[pid].unit, "events": names} for pid, names in busy.items()),
         key=lambda x: x["name"].lower(),
     )
-    return {"assignable": len(ids), "busy": len(busy), "busyPeople": people[:50]}
+    return {"assignable": len(by_id), "busy": len(busy), "busyPeople": people[:50]}

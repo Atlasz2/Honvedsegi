@@ -44,7 +44,7 @@ export default function Riportok() {
   const refresh = useCallback(async () => {
     try {
       const [nextExs, nextEvents] = await Promise.all([
-        exercises.getAll(),
+        exercises.getLite(),
         events.getAll(),
       ]);
       setExs(nextExs);

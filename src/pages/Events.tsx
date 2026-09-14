@@ -45,7 +45,8 @@ export default function Events() {
   const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'Összes' | EventStatus>('Összes');
+  // Alapból csak az aktuális (tervezett + folyamatban): a lezajlottak nem töltik meg a listát.
+  const [filter, setFilter] = useState<'Összes' | 'Aktuális' | EventStatus>('Aktuális');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [creating, setCreating] = useState(false);
@@ -90,7 +91,7 @@ export default function Events() {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
       if (normalized && ![item.name, item.type, item.location, item.organizer, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
-      if (filter !== 'Összes' && item.status !== filter) return false;
+      if (filter === 'Aktuális' ? !(item.status === 'Tervezett' || item.status === 'Folyamatban') : filter !== 'Összes' && item.status !== filter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
       return true;
@@ -264,8 +265,8 @@ export default function Events() {
             style={{ borderRadius: '2px' }}
           />
         </div>
-        {['Összes', ...STATUSES].map((s) => (
-          <button key={s} onClick={() => { setFilter(s as 'Összes' | EventStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+        {['Aktuális', 'Összes', ...STATUSES].map((s) => (
+          <button key={s} onClick={() => { setFilter(s as 'Összes' | 'Aktuális' | EventStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? 'btn-mil-primary' : 'btn-mil-secondary'}`} title={s === 'Aktuális' ? 'Tervezett + folyamatban' : undefined}>
             {s}
           </button>
         ))}
@@ -297,7 +298,13 @@ export default function Events() {
                 </div>
                 <span className="mono-chip text-xs mb-3 inline-block">{item.type}</span> <UnitChip unit={item.unit} />
                 <div className="space-y-1 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span className="font-mono text-xs text-muted-foreground">{item.startDate.slice(0, 10)}</span>
+                    {item.startDate.includes('T') && <span className="font-rajdhani font-bold text-xl text-primary leading-none">{item.startDate.slice(11, 16)}</span>}
+                    {item.endDate.includes('T') && item.endDate.slice(0, 10) === item.startDate.slice(0, 10) && <span className="font-mono text-xs text-muted-foreground">– {item.endDate.slice(11, 16)}</span>}
+                    {item.endDate.slice(0, 10) !== item.startDate.slice(0, 10) && <span className="font-mono text-xs text-muted-foreground">→ {formatDate(item.endDate)}</span>}
+                  </div>
                   <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />{item.location || 'Nincs megadva'}</div>
                   <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /><span className="font-mono text-primary">{item.assigned.length}</span>/{item.maxPersonnel} fő</div>
                   <div className="text-xs">Szervező: <span className="font-mono text-primary">{item.organizer?.trim() || 'Nincs megadva'}</span></div>

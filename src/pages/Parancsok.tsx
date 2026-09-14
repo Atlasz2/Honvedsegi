@@ -621,12 +621,16 @@ export function OrderDetailModal({ order, canEdit: canEditProp, onClose, onChang
         open={amending}
         onClose={() => setAmending(false)}
         onConfirm={() => { void amend(); }}
+        confirmLabel="Módosító parancs"
+        tone="primary"
         message={`Módosító parancsot készítesz ehhez: „${order.number ? `${order.number} — ` : ''}${order.subject}". Az eredeti kiadott parancs nem változik; az új parancs ugyanazzal a szöveggel indul, szerkeszthető, és az eredetire hivatkozik.`}
       />
       <ConfirmDialog
         open={confirmIssue}
         onClose={() => setConfirmIssue(false)}
         onConfirm={() => { void issue(); }}
+        confirmLabel="Kiadás"
+        tone="primary"
         message={`Kiadod a parancsot: „${order.number ? `${order.number} — ` : ''}${order.subject}"? A státusz „Kiadva" lesz, a kelt a mai nap${order.issuedDate ? ` (${order.issuedDate})` : ''}. Ez a lépés naplózódik.`}
       />
       <ConfirmDialog open={!!removeChapter} onClose={() => setRemoveChapter(null)} onConfirm={() => { void doRemoveChapter(); }} message={`Törlöd a fejezetet: „${removeChapter?.name}"? A szövege elvész.`} />
@@ -719,6 +723,8 @@ function InlineChapter({ index, chapter, canEdit, onSave, onRemove }: {
 function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState<number | undefined>(thisYear);
+  const [period, setPeriod] = useState<'year' | 'month' | 'week'>('year');
+  const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -726,8 +732,16 @@ function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     if (!open) return;
     setStats(null);
     setError(null);
-    store.stats(year).then(setStats).catch((e) => setError(getErrorMessage(e)));
-  }, [open, year]);
+    store.stats(year, period, anchor).then(setStats).catch((e) => setError(getErrorMessage(e)));
+  }, [open, year, period, anchor]);
+
+  // Hónap/hét léptetése az anchor napból.
+  const shift = (dir: -1 | 1) => {
+    const d = new Date(`${anchor}T00:00:00`);
+    if (period === 'week') d.setDate(d.getDate() + 7 * dir);
+    else d.setMonth(d.getMonth() + dir);
+    setAnchor(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  };
 
   const fmt = (v: number | null) => (v === null ? '—' : `${v} nap`);
   const periods: { label: string; value: number | undefined }[] = [
@@ -740,12 +754,25 @@ function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Modal open={open} onClose={onClose} title="Parancsok átfutása" wide>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
-          {periods.map((p) => (
+          {(['year', 'month', 'week'] as const).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${period === p ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
+              {p === 'year' ? 'Éves' : p === 'month' ? 'Havi' : 'Heti'}
+            </button>
+          ))}
+          <span className="w-px h-6 bg-border mx-1" />
+          {period === 'year' ? periods.map((p) => (
             <button key={p.label} onClick={() => setYear(p.value)} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${year === p.value ? 'btn-mil-primary' : 'btn-mil-secondary'}`}>
               {p.label}
             </button>
-          ))}
-          <button onClick={() => { store.exportStatsPdf(year).catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-primary text-xs flex items-center gap-1.5 ml-auto">
+          )) : (
+            <>
+              <button onClick={() => shift(-1)} className="btn-mil-secondary text-xs">◀</button>
+              <span className="font-mono text-xs min-w-[190px] text-center">{stats?.period ? `${stats.period.from} – ${stats.period.to}` : anchor}</span>
+              <button onClick={() => shift(1)} className="btn-mil-secondary text-xs">▶</button>
+              <button onClick={() => setAnchor(new Date().toISOString().slice(0, 10))} className="btn-mil-secondary text-xs">Ma</button>
+            </>
+          )}
+          <button onClick={() => { store.exportStatsPdf(year, period, anchor).catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-primary text-xs flex items-center gap-1.5 ml-auto">
             <FileDown className="w-3.5 h-3.5" />PDF
           </button>
         </div>

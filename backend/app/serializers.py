@@ -92,14 +92,17 @@ def serialize_person_with_qual_table(db: Session, item: PersonModel) -> PersonRe
     return serialize_person_with_quals(item, qual_ids)
 
 
-def serialize_exercise(db: Session, item: ExerciseModel, participants: list[ParticipantModel] | None = None) -> ExerciseRead:
+def serialize_exercise(db: Session, item: ExerciseModel, participants: list[ParticipantModel] | None = None, *, lite: bool = False) -> ExerciseRead:
+    """lite=True: a résztvevő-lista helyett csak létszám + első nevek — a lista-
+    végpont válasza így ~5× kisebb; a teljes beosztás a /{id} lekérésen jön."""
     if participants is None:
         participants = get_participants(db, "exercise", item.id)
-    assigned = [
+    full = [
         {"personId": p.personnel_id, "personName": p.person_name, "role": p.role,
          "attendance": p.status, "rank": p.rank, "rankShort": p.rank_short, "sztsz": p.sztsz, "notes": p.notes or ""}
         for p in participants
     ] if participants else (item.assigned or [])
+    assigned = [] if lite else full
     return ExerciseRead(
         id=item.id, name=item.name, type=item.type,
         startDate=item.start_date, endDate=item.end_date, location=item.location,
@@ -107,6 +110,7 @@ def serialize_exercise(db: Session, item: ExerciseModel, participants: list[Part
         status=item.status, qualificationId=item.qualification_id or "",
         seriesId=item.series_id or "", level=item.level or "", assigned=assigned,
         handover=item.handover or None,
+        assignedCount=len(full), assignedNames=[str(a.get("personName") or "") for a in full[:3]],
     )
 
 

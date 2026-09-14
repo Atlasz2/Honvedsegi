@@ -188,4 +188,11 @@ def _daily_digest(db, user, today_iso: str, alerts: dict, pending_leave_count: i
     if news:
         add("warn" if any(n.category == "Sürgős" for n in news) else "info", f"{len(news)} fontos/sürgős közlemény ma", "/announcements")
     add("ok" if closed else "todo", f"Mai létszám: {'lezárva (' + closed.closed_by_name + ')' if closed else 'még nincs lezárva'}", "/letszam")
+    if user.role in ("admin", "fejleszto"):
+        try:
+            from ..backup import backup_status
+            for w in backup_status()["warnings"]:
+                add("warn", f"Mentés: {w}", "/settings")
+        except OSError:
+            pass
     return {"date": today_iso, "scope": region_label(user.region or "") if (user.region and user.role not in ("admin", "fejleszto")) else "Ezredtörzs — minden zászlóalj", "lines": lines}

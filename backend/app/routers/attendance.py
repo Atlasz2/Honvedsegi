@@ -140,6 +140,26 @@ def _build_day(db: Session, day: str, unit: str, include_reserve: bool = False, 
     return AttendanceDayRead(date=day, total=len(entries), summary=summary, items=entries, closures=_closures_for(db, day, user), closedForMe=_closed_for(db, day, user) is not None)
 
 
+def _upsert_marks(db: Session, day: str, marks: list[tuple[str, str, str | None]], username: str) -> None:
+    """(personnel_id, status, note|None) → INSERT … ON CONFLICT DO UPDATE.
+
+    Két ügyintéző egyszerre ugyanarra a napra/személyre: a régi „SELECT majd
+    INSERT" versenyben a második UNIQUE-hibával 500-at kapott. Az upsert atomi
+    — a később érkező felülír, hiba nélkül. A note None = nem változik."""
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    now = utc_now()
+    for personnel_id, status_value, note in marks:
+        values = {"id": new_id(), "date": day, "personnel_id": personnel_id, "status": status_value, "recorded_by": username, "recorded_at": now}
+        update = {"status": status_value, "recorded_by": username, "recorded_at": now}
+        if note is not None:
+            values["note"] = note
+            update["note"] = note
+        else:
+            values["note"] = ""
+        db.execute(sqlite_insert(AttendanceModel).values(**values).on_conflict_do_update(index_elements=["date", "personnel_id"], set_=update))
+
+
 @router.get("", response_model=AttendanceDayRead)
 def get_attendance(db: DB, user: Reader, date: str = Query(..., description="ÉÉÉÉ-HH-NN"), unit: str = "", include_reserve: bool = False):
     return _build_day(db, _parse_day(date), unit, include_reserve, user)
@@ -219,20 +239,7 @@ def fill_from_event(payload: AttendanceFill, db: DB, user: Editor):
     if not participant_ids:
         raise HTTPException(status_code=400, detail="Az eseménynek nincs beosztott résztvevője")
 
-    existing = {
-        r.personnel_id: r
-        for r in db.scalars(select(AttendanceModel).where(AttendanceModel.date == day)).all()
-    }
-    for personnel_id in participant_ids:
-        record = existing.get(personnel_id)
-        if record is None:
-            record = AttendanceModel(id=new_id(), date=day, personnel_id=personnel_id)
-            db.add(record)
-            existing[personnel_id] = record
-        record.status = payload.status
-        record.recorded_by = user.username
-        record.recorded_at = utc_now()
-
+    _upsert_marks(db, day, [(pid, payload.status, None) for pid in participant_ids], user.username)
     db.commit()
     return _build_day(db, day, "", user=user)
 
@@ -252,21 +259,7 @@ def set_attendance(payload: AttendanceUpdate, db: DB, user: Editor):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Ismeretlen személy azonosító(k): {', '.join(unknown)}")
 
-    existing = {
-        r.personnel_id: r
-        for r in db.scalars(select(AttendanceModel).where(AttendanceModel.date == day)).all()
-    }
-    for mark in payload.items:
-        record = existing.get(mark.personnelId)
-        if record is None:
-            record = AttendanceModel(id=new_id(), date=day, personnel_id=mark.personnelId)
-            db.add(record)
-            existing[mark.personnelId] = record
-        record.status = mark.status
-        record.note = mark.note
-        record.recorded_by = user.username
-        record.recorded_at = utc_now()
-
+    _upsert_marks(db, day, [(m.personnelId, m.status, m.note) for m in payload.items], user.username)
     db.commit()
     return _build_day(db, day, "", user=user)
 

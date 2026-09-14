@@ -14,7 +14,7 @@ import { isValidHungarianPhone, normalizeHungarianPhone } from '@/lib/phone';
 
 
 const statusClass: Record<string, string> = {
-  'Aktív': 'badge-active', 'Tartalékos': 'badge-reserve', 'Szabadságon': 'badge-leave', 'Leszerelt': 'badge-discharged',
+  'Aktív': 'badge-active', 'Tartalékos': 'badge-reserve', 'Leszerelt': 'badge-discharged',
 };
 
 const emptyPerson: Omit<Person, 'id'> = {
@@ -84,7 +84,7 @@ function FormField({ label, field, form, setForm, errors, type = 'text', require
 }
 
 export default function Personnel() {
-  const { canEdit } = useAuth();
+  const { canEdit, user: authUser } = useAuth();
   const [data, setData] = useState<Person[]>([]);
   const [statusSummary, setStatusSummary] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<string>('Összes');
@@ -238,8 +238,7 @@ export default function Personnel() {
   };
 
   const statusCounts = {
-    Aktív: statusSummary['Aktív'] ?? 0, Tartalékos: statusSummary['Tartalékos'] ?? 0,
-    Szabadságon: statusSummary['Szabadságon'] ?? 0, Leszerelt: statusSummary['Leszerelt'] ?? 0,
+    Aktív: statusSummary['Aktív'] ?? 0, Tartalékos: statusSummary['Tartalékos'] ?? 0, Leszerelt: statusSummary['Leszerelt'] ?? 0,
   };
 
   const openCreate = () => { setForm({ ...emptyPerson }); setErrors({}); setCreating(true); };
@@ -284,8 +283,8 @@ export default function Personnel() {
         {canEdit && <button onClick={openCreate} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új személy</button>}
       </div>
 
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        {(['Aktív','Tartalékos','Szabadságon','Leszerelt'] as const).map(s => (
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {(['Aktív','Tartalékos','Leszerelt'] as const).map(s => (
           <div key={s} className="stats-card">
             <div className="stats-number">{statusCounts[s]}</div>
             <div className="stats-label">{s}</div>
@@ -305,15 +304,18 @@ export default function Personnel() {
           />
         </div>
 
-        <select
-          value={unitFilter}
-          onChange={e => { setUnitFilter(e.target.value); setPage(1); }}
-          className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
-          style={{ borderRadius: '2px' }}
-        >
-          <option value="Összes">Minden alegység</option>
-          {units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
-        </select>
+        {/* Alegység-szűrő csak az ezredtörzsnek: a zászlóalj ügyintézője úgyis csak a sajátját látja. */}
+        {!authUser?.unit && (
+          <select
+            value={unitFilter}
+            onChange={e => { setUnitFilter(e.target.value); setPage(1); }}
+            className="bg-input border border-border px-3 py-2 text-xs uppercase tracking-military font-mono"
+            style={{ borderRadius: '2px' }}
+          >
+            <option value="Összes">Minden alegység</option>
+            {units.map(unit => <option key={unit} value={unit}>{referenceData.unitLabels?.[unit] ?? unit}</option>)}
+          </select>
+        )}
 
 
         <select
@@ -325,7 +327,7 @@ export default function Personnel() {
           <option value="">Minden képzettség</option>
           {qualTypeOptions.map(qt => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
         </select>
-        {/* Státusz: legördülő, nem gombsor — a Szabadságon/Leszerelt ritkán kell, ne foglalja a helyet. */}
+        {/* Státusz: legördülő, nem gombsor — a Leszerelt ritkán kell, ne foglalja a helyet. */}
         <select
           value={statusFilter}
           onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
@@ -499,7 +501,7 @@ export default function Personnel() {
               {(serviceTypes[form.status] ?? []).map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <p className="text-[11px] text-muted-foreground mt-1">
-              {form.status === 'Tartalékos' ? 'Tartalékos nem vehet ki szabadságot; az állandó behívásosnak szolgálatmentesség jár.' : form.status === 'Aktív' || form.status === 'Szabadságon' ? 'Az aktív (szerződéses vagy hivatásos) állomány vehet ki szabadságot.' : ''}
+              {form.status === 'Tartalékos' ? 'Tartalékos nem vehet ki szabadságot; az állandó behívásosnak szolgálatmentesség jár.' : form.status === 'Aktív' ? 'Az aktív (szerződéses vagy hivatásos) állomány vehet ki szabadságot.' : ''}
             </p>
           </div>
           <FormField label="Email" field="email" form={form} setForm={setForm} errors={errors} type="email" />

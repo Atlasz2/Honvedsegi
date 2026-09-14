@@ -51,6 +51,15 @@ def write_alert_settings(payload: AlertSettingsUpdate, db: DB, user: Admin):
     return {"items": get_all(db), "changed": list(changed) + [f"{k}.enabled" for k in toggled]}
 
 
+@router.get("/health")
+def operations_health(db: DB, _: Admin):
+    """Az adminnak: utolsó mentés, tükör, szabad hely, napló-archívum — a
+    „2 napja nincs mentés" ne a fejlesztőnek derüljön ki."""
+    from ..archive import archive_status
+    from ..backup import backup_status
+    return {"backup": backup_status(), "archive": archive_status(db)}
+
+
 @router.get("/alerts/custom")
 def read_custom_rules(db: DB, _: Reader):
     """Egyéni dátum-szabályok + a választható személy-mezők (alap + a KGIR-ből

@@ -112,10 +112,10 @@ def reseed_demo_database(db: Session, random_seed: int = 7, today: date | None =
             first = rng.choice(FEMALE if female else MALE)
             last = rng.choice(LAST)
             if unit == EZRED:
-                status = rng.choices(["Aktív", "Szabadságon"], weights=[92, 8])[0]
+                status = "Aktív"
             else:
-                status = rng.choices(["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"], weights=[38, 52, 6, 4])[0]
-            if status in ("Aktív", "Szabadságon"):
+                status = rng.choices(["Aktív", "Tartalékos", "Leszerelt"], weights=[44, 52, 4])[0]
+            if status == "Aktív":
                 service_type = rng.choices(["Hivatásos", "Szerződéses"], weights=[45, 55])[0]
             elif status == "Tartalékos":
                 service_type = rng.choices(["Önkéntes tartalékos", "Állandó behívásos"], weights=[70, 30])[0]
@@ -209,7 +209,7 @@ def reseed_demo_database(db: Session, random_seed: int = 7, today: date | None =
 
     for unit in BATTALIONS:
         pool = active(unit)
-        series = SeriesModel(id=new_id(), name=f"7×20 Tartalékos szakfelkészítés – {unit}", description="Évi hét alkalom, húsz fő")
+        series = SeriesModel(id=new_id(), name="7×20 Tartalékos szakfelkészítés", description="Évi hét alkalom, húsz fő", unit=unit)
         db.add(series)
         db.flush()
         reservists = [p for p in pool if p.status == "Tartalékos"]
@@ -288,8 +288,6 @@ def reseed_demo_database(db: Session, random_seed: int = 7, today: date | None =
                 r = rng.random()
                 if p.id in duty_today and d == 0:
                     status, note = "Szolgálatban", ""
-                elif p.status == "Szabadságon":
-                    status, note = "Szabadság", "éves szabadság"
                 elif r < 0.04:
                     status, note = "Betegállomány", "táppapír"
                 elif r < 0.06:

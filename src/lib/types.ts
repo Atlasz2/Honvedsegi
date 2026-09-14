@@ -36,7 +36,7 @@ export interface Person {
   rank: string;
   unit: string;
   beosztas: string;
-  status: 'Aktív' | 'Tartalékos' | 'Szabadságon' | 'Leszerelt';
+  status: 'Aktív' | 'Tartalékos' | 'Leszerelt';
   /** Jogviszony altípusa: Aktív → Szerződéses/Hivatásos; Tartalékos → Önkéntes tartalékos/Állandó behívásos. Üres = nem ismert. */
   serviceType: string;
   email: string;
@@ -81,6 +81,9 @@ export interface Exercise {
   organizer: string;
   /** Melyik zászlóaljé; üres = ezredszintű (mindenki látja). */
   unit?: string;
+  /** Karcsú listánál: létszám + első nevek (a teljes `assigned` csak a részletnél jön). */
+  assignedCount?: number;
+  assignedNames?: string[];
   /** Szolgálat átadás-átvétel (csak szolgálat-típusnál). */
   handover?: { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string } | null;
   maxPersonnel: number;
@@ -96,7 +99,12 @@ export interface Series {
   id: string;
   name: string;
   description: string;
+  /** Melyik zászlóaljé; üres = ezredszintű. */
+  unit?: string;
+  /** Alsorozat szülője (7×20 → Támadás → Támadás Alap). */
+  parentId?: string;
   itemCount: number;
+  childCount?: number;
 }
 
 export interface BasicAssignment {

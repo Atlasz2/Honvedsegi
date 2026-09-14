@@ -6,7 +6,7 @@ import { AvailabilityPanel } from "@/pages/Availability";
 import { CalendarSearch } from "lucide-react";
 import type { AppEvent, Exercise } from "@/lib/types";
 import { isDutyType } from "@/lib/dutyTypes";
-import { PALETTE, buildColorMap, isoDate, monthWeeks, toIso, weekBars, type CalendarItem } from "@/lib/calendarLayout";
+import { PALETTE, addDays, buildColorMap, isoDate, monthWeeks, toIso, weekBars, type CalendarItem } from "@/lib/calendarLayout";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { useReferenceData } from "@/lib/queries";
@@ -32,6 +32,9 @@ export default function CalendarPage() {
   const { user } = useAuth();
   const { data: reference } = useReferenceData();
   const [unitFilter, setUnitFilter] = useState<string>("all");
+  // Havi vagy heti nézet: sok gyakorlatnál a hét áttekinthetőbb (egy hét = teljes magasság).
+  const [view, setView] = useState<"month" | "week">("month");
+  const [weekStart, setWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return toIso(d); });
   const unitOptions = Object.keys(reference.unitLabels ?? {}).filter((u) => u !== reference.regimentUnit);
 
   const year = monthCursor.getFullYear();
@@ -41,7 +44,7 @@ export default function CalendarPage() {
   const refresh = useCallback(async () => {
     try {
       const [nextExercises, nextEvents] = await Promise.all([
-        exercises.getAll(),
+        exercises.getLite(),
         events.getAll(),
       ]);
       setExercisesData(nextExercises);
@@ -60,7 +63,8 @@ export default function CalendarPage() {
       .filter((item) => item.status !== "Lemondva")
       .map((item) => {
         const duty = isDutyType(item.type);
-        const names = item.assigned.map((a) => a.personName).filter(Boolean);
+        const names = (item.assignedNames ?? item.assigned.map((a) => a.personName)).filter(Boolean);
+        const count = item.assignedCount ?? item.assigned.length;
         return {
           id: item.id,
           source: duty ? "duty" : "exercise",
@@ -72,8 +76,8 @@ export default function CalendarPage() {
           endDate: item.endDate,
           location: item.location || "Nincs helyszín",
           status: item.status,
-          peopleSummary: duty && names.length > 0 ? names.join(", ") : `${item.assigned.length}/${item.maxPersonnel} fő`,
-          peopleCount: item.assigned.length,
+          peopleSummary: duty && names.length > 0 ? names.join(", ") : `${count}/${item.maxPersonnel} fő`,
+          peopleCount: count,
         };
       });
 
@@ -111,8 +115,21 @@ export default function CalendarPage() {
     [allItems, monthStart, monthEnd, unitFilter],
   );
   const colorOf = useMemo(() => buildColorMap([...new Set(monthItems.map((it) => it.kind))].sort((a, b) => a.localeCompare(b, "hu"))), [monthItems]);
-  const legend = useMemo(() => [...colorOf.entries()], [colorOf]);
-  const rows = useMemo(() => weeks.map((week) => ({ week, bars: weekBars(week, monthItems) })), [weeks, monthItems]);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const weekItems = useMemo(
+    () => allItems.filter((it) =>
+      isoDate(it.startDate) <= weekDays[6] && isoDate(it.endDate) >= weekDays[0]
+      && (unitFilter === "all" || (unitFilter === "" ? !it.unit : it.unit === unitFilter || !it.unit)),
+    ),
+    [allItems, weekDays, unitFilter],
+  );
+  const weekColorOf = useMemo(() => buildColorMap([...new Set(weekItems.map((it) => it.kind))].sort((a, b) => a.localeCompare(b, "hu"))), [weekItems]);
+  const rows = useMemo(
+    () => view === "week" ? [{ week: weekDays, bars: weekBars(weekDays, weekItems) }] : weeks.map((week) => ({ week, bars: weekBars(week, monthItems) })),
+    [view, weeks, monthItems, weekDays, weekItems],
+  );
+  const activeColorOf = view === "week" ? weekColorOf : colorOf;
+  const activeLegend = useMemo(() => [...activeColorOf.entries()], [activeColorOf]);
 
   const openSelectedItem = useCallback(() => {
     if (!selectedItem) return;
@@ -134,12 +151,29 @@ export default function CalendarPage() {
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Közös naptár</h1>
         <div className="flex items-center gap-2">
-          <button onClick={() => setMonthCursor(new Date(year, monthIndex - 1, 1))} className="btn-mil-secondary text-xs">◀</button>
-          <p className="font-rajdhani font-bold text-sm uppercase tracking-military min-w-[190px] text-center">
-            {monthCursor.toLocaleDateString("hu-HU", { year: "numeric", month: "long" })}
-          </p>
-          <button onClick={() => setMonthCursor(new Date(year, monthIndex + 1, 1))} className="btn-mil-secondary text-xs">▶</button>
-          <button onClick={() => setMonthCursor(new Date())} className="btn-mil-secondary text-xs">Ma</button>
+          <div className="flex border border-border" style={{ borderRadius: "2px" }}>
+            <button onClick={() => setView("month")} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${view === "month" ? "btn-mil-primary" : "btn-mil-secondary"}`}>Hónap</button>
+            <button onClick={() => setView("week")} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${view === "week" ? "btn-mil-primary" : "btn-mil-secondary"}`}>Hét</button>
+          </div>
+          {view === "month" ? (
+            <>
+              <button onClick={() => setMonthCursor(new Date(year, monthIndex - 1, 1))} className="btn-mil-secondary text-xs">◀</button>
+              <p className="font-rajdhani font-bold text-sm uppercase tracking-military min-w-[190px] text-center">
+                {monthCursor.toLocaleDateString("hu-HU", { year: "numeric", month: "long" })}
+              </p>
+              <button onClick={() => setMonthCursor(new Date(year, monthIndex + 1, 1))} className="btn-mil-secondary text-xs">▶</button>
+              <button onClick={() => setMonthCursor(new Date())} className="btn-mil-secondary text-xs">Ma</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="btn-mil-secondary text-xs">◀</button>
+              <p className="font-rajdhani font-bold text-sm uppercase tracking-military min-w-[190px] text-center">
+                {weekDays[0]} – {weekDays[6]}
+              </p>
+              <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="btn-mil-secondary text-xs">▶</button>
+              <button onClick={() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); setWeekStart(toIso(d)); }} className="btn-mil-secondary text-xs">Ma</button>
+            </>
+          )}
         </div>
         {!user?.unit && (
           <select value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)} className="bg-input border border-border px-2 py-1.5 text-xs" style={{ borderRadius: "2px" }} title="Melyik zászlóalj naptára">
@@ -155,9 +189,9 @@ export default function CalendarPage() {
         </button>
       </div>
 
-      {legend.length > 0 && (
+      {activeLegend.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-2">
-          {legend.map(([kind, cls]) => (
+          {activeLegend.map(([kind, cls]) => (
             <span key={kind} className="inline-flex items-center px-2 py-0.5 text-[10px] uppercase tracking-military font-mono text-white/90" style={{ borderRadius: "2px", backgroundColor: cls }}>
               {kind}
             </span>
@@ -168,7 +202,9 @@ export default function CalendarPage() {
       <div className="flex flex-col flex-1 min-h-0 border border-border bg-border gap-px" style={{ borderRadius: "2px" }}>
         <div className="grid grid-cols-7 gap-px shrink-0">
           {weekdayLabels.map((label, i) => (
-            <div key={`${label}-${i}`} className="bg-background px-2 py-1.5 text-center text-xs uppercase tracking-military text-muted-foreground">{label}</div>
+            <div key={`${label}-${i}`} className="bg-background px-2 py-1.5 text-center text-xs uppercase tracking-military text-muted-foreground">
+              {label}{view === "week" && <span className="ml-1 font-mono normal-case tracking-normal">{weekDays[i].slice(5).replace("-", ".")}.</span>}
+            </div>
           ))}
         </div>
 
@@ -176,7 +212,7 @@ export default function CalendarPage() {
           <div key={week[0]} className="relative flex-1 min-h-0 grid grid-cols-7 gap-px">
             {/* Napok háttere és számai */}
             {week.map((dateStr) => {
-              const inMonth = dateStr.startsWith(monthPrefix);
+              const inMonth = view === "week" || dateStr.startsWith(monthPrefix);
               const isToday = dateStr === todayIso;
               return (
                 <div key={dateStr} className={`bg-card p-1.5 min-h-0 ${inMonth ? "" : "opacity-40"} ${isToday ? "ring-2 ring-inset ring-primary/80 bg-primary/5" : ""}`}>
@@ -186,7 +222,7 @@ export default function CalendarPage() {
             })}
             {/* Sávok: egy elem egy folytonos csík a hét oszlopain át */}
             <div className="absolute inset-x-0 top-6 bottom-0 overflow-y-auto pr-0.5">
-              <div className="grid grid-cols-7 gap-px auto-rows-[22px] gap-y-0.5">
+              <div className={`grid grid-cols-7 gap-px gap-y-0.5 ${view === "week" ? "auto-rows-[28px]" : "auto-rows-[22px]"}`}>
                 {bars.map((bar) => {
                   const it = bar.item;
                   const line = it.source === "duty" ? `${it.dutyType}: ${it.peopleSummary}` : it.name;
@@ -194,9 +230,9 @@ export default function CalendarPage() {
                     <button
                       key={`${it.source}-${it.id}`}
                       onClick={() => setSelectedItem(it)}
-                      className="text-left text-[11px] px-1.5 leading-[22px] truncate text-white/95 transition-all hover:brightness-110"
+                      className={`text-left px-1.5 truncate text-white/95 transition-all hover:brightness-110 ${view === "week" ? "text-xs leading-[28px]" : "text-[11px] leading-[22px]"}`}
                       style={{
-                        backgroundColor: colorOf.get(it.kind) ?? PALETTE[0],
+                        backgroundColor: activeColorOf.get(it.kind) ?? PALETTE[0],
                         boxShadow: "inset 3px 0 0 rgba(0,0,0,0.25)",
                         gridColumn: `${bar.startCol + 1} / span ${bar.span}`,
                         gridRow: bar.lane + 1,
@@ -231,7 +267,7 @@ export default function CalendarPage() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground text-xs uppercase tracking-military">Típus</span>
-                <p className="inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 text-white/90" style={{ borderRadius: "2px", backgroundColor: colorOf.get(selectedItem.kind) ?? PALETTE[0] }}>
+                <p className="inline-flex px-2 py-0.5 text-xs uppercase tracking-military font-mono mt-1 text-white/90" style={{ borderRadius: "2px", backgroundColor: activeColorOf.get(selectedItem.kind) ?? PALETTE[0] }}>
                   {selectedItem.kind}
                 </p>
               </div>

@@ -101,6 +101,7 @@ def _ensure_extended_schema(db: Session) -> None:
         ("order_types", {"signers": "JSON"}),
         ("orders", {"number": "TEXT DEFAULT ''", "issuer": "TEXT DEFAULT ''", "issued_date": "TEXT DEFAULT ''", "signatures": "JSON", "amends_order_id": "TEXT DEFAULT ''"}),
         ("exercises", {"handover": "JSON"}),
+        ("operation_series", {"unit": "TEXT DEFAULT ''", "parent_id": "TEXT DEFAULT ''"}),
         ("order_chapters", {"content": "TEXT DEFAULT ''"}),
     ):
         existing = {row[1] for row in db.execute(text(f"PRAGMA table_info({table})")).fetchall()}

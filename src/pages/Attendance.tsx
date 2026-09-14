@@ -95,15 +95,31 @@ export default function Attendance() {
     return ['Összes', ...Array.from(units).sort((a, b) => a.localeCompare(b, 'hu'))];
   }, [day]);
 
+  const selectedEvent = events.find(e => `${e.eventType}|${e.eventId}` === selectedEventKey) ?? null;
+
+  // „Kit rakunk szolgálatba?" — a kiválasztott művelet résztvevőire szűrt névsor, itt lent, nem külön ablak.
+  const [eventScope, setEventScope] = useState<{ key: string; name: string; ids: Set<string> } | null>(null);
+  const showEventPeople = async () => {
+    if (!selectedEvent) return;
+    try {
+      const ids = await store.eventParticipantIds(selectedEvent.eventType, selectedEvent.eventId);
+      setEventScope({ key: `${selectedEvent.eventType}|${selectedEvent.eventId}`, name: selectedEvent.name, ids: new Set(ids) });
+      setOnlyExceptions(false);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (day?.items ?? []).filter(entry => {
+      if (eventScope && !eventScope.ids.has(entry.personnelId)) return false;
       if (unitFilter !== 'Összes' && entry.unit !== unitFilter) return false;
       if (needle && !entry.name.toLowerCase().includes(needle)) return false;
       if (onlyExceptions && (edits[entry.personnelId]?.status ?? entry.status) === 'Jelen') return false;
       return true;
     });
-  }, [day, unitFilter, search, onlyExceptions, edits]);
+  }, [day, unitFilter, search, onlyExceptions, edits, eventScope]);
 
   // Summary of the currently visible scope, with unsaved edits applied live.
   const summary = useMemo(() => {
@@ -205,7 +221,6 @@ export default function Attendance() {
     toast.info(`${visible.length} fő beállítva: ${bulkStatus} (mentés szükséges).`);
   };
 
-  const selectedEvent = events.find(e => `${e.eventType}|${e.eventId}` === selectedEventKey) ?? null;
 
   const applyEventFill = async () => {
     const event = selectedEvent;
@@ -397,6 +412,7 @@ export default function Attendance() {
                       {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     <button onClick={applyEventFill} disabled={filling} className="btn-mil-primary text-xs">Kitöltés</button>
+                    <button onClick={() => { void showEventPeople(); }} disabled={!selectedEvent} className="btn-mil-secondary text-xs" title="A névsor lent csak ennek a műveletnek a résztvevőit mutatja">Kik ők? — mutasd lent</button>
                     {selectedEvent && (
                       <p className={`w-full text-[11px] font-mono ${selectedEvent.recordedCount >= selectedEvent.participantCount ? 'text-emerald-400' : selectedEvent.recordedCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
                         {selectedEvent.recordedCount === 0
@@ -424,6 +440,14 @@ export default function Attendance() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {eventScope && (
+        <div className="flex items-center gap-3 px-3 py-2 border border-primary/40 bg-primary/5 text-sm" style={{ borderRadius: '2px' }}>
+          <Users className="w-4 h-4 text-primary" />
+          <span>Szűrve: <span className="font-medium">{eventScope.name}</span> résztvevői — {visible.length} fő a mai névsorban{eventScope.ids.size > visible.length ? ` (${eventScope.ids.size - visible.length} résztvevő nincs a mai listában, pl. tartalékos)` : ''}.</span>
+          <button onClick={() => setEventScope(null)} className="ml-auto text-xs font-mono text-muted-foreground hover:text-foreground hover:underline">szűrő törlése</button>
         </div>
       )}
 
@@ -484,6 +508,8 @@ export default function Attendance() {
         open={confirmClose}
         onClose={() => setConfirmClose(false)}
         onConfirm={() => { void closeDay(); }}
+        confirmLabel="Lezárás"
+        tone="primary"
         message={`Lezárod a(z) ${date} napi létszámjelentést? A pecsét a te neveddel és a mostani idővel kerül rá; utána csak indoklással módosítható (naplózva).`}
       />
       <Modal open={overrideOpen} onClose={() => setOverrideOpen(false)} title="Lezárt nap módosítása">

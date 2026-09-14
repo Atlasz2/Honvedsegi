@@ -32,10 +32,20 @@ router = APIRouter(prefix="/api/exercises", tags=["exercises"])
 
 
 @router.get("", response_model=list[ExerciseRead])
-def list_exercises(db: DB, user: Reader):
+def list_exercises(db: DB, user: Reader, lite: bool = False):
+    """lite=true: résztvevő-lista nélkül (létszám + első nevek) — a Műveletek
+    rács és a naptár ezt tölti; a teljes beosztás a /{item_id} végponton."""
     items = db.scalars(scoped_owned(select(ExerciseModel), ExerciseModel, user).order_by(ExerciseModel.start_date)).all()
     participants_by_event = load_participants_by_event(db, "exercise")
-    return [serialize_exercise(db, i, participants_by_event.get(i.id, [])) for i in items]
+    return [serialize_exercise(db, i, participants_by_event.get(i.id, []), lite=lite) for i in items]
+
+
+@router.get("/{item_id}", response_model=ExerciseRead)
+def get_exercise(item_id: str, db: DB, user: Reader):
+    """Egy művelet a teljes beosztással — a kártyára kattintva ezt töltjük."""
+    item = require_model(db, ExerciseModel, item_id)
+    assert_owned_in_scope(user, item, "A művelet")
+    return serialize_exercise(db, item)
 
 
 @router.post("", response_model=ExerciseRead, status_code=status.HTTP_201_CREATED)

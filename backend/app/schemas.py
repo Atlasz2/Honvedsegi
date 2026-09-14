@@ -8,7 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 Role = Literal["reader", "editor", "admin", "fejleszto"]
-PersonStatus = Literal["Aktív", "Tartalékos", "Szabadságon", "Leszerelt"]
+# Két jogviszony van (döntés 2026-09-13): Aktív (szerződéses/hivatásos) és Tartalékos
+# (önkéntes / állandó behívásos); a Leszerelt csak a rekord megőrzésére. A régi
+# „Szabadságon" státusz nem létezik — a szabadság a Szabadság modulban él.
+PersonStatus = Literal["Aktív", "Tartalékos", "Leszerelt"]
 # Az időbeli állapotot (Tervezett/Folyamatban/Befejezett) a dátumokból a rendszer
 # számolja; a felhasználó csak lemondani tud. (A régi "Törölve" → "Lemondva".)
 ExerciseStatus = Literal["Tervezett", "Folyamatban", "Befejezett", "Lemondva"]
@@ -288,6 +291,12 @@ class PersonBase(BaseModel):
     notes: str = ""
     qualifications: list[str] = Field(default_factory=list)
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _legacy_status(cls, value):
+        # Régi export / régi rekord: „Szabadságon" → Aktív (a szabadság külön modul).
+        return "Aktív" if value == "Szabadságon" else value
+
     @model_validator(mode="after")
     def _service_type_matches_status(self):
         from .constants import SERVICE_TYPES
@@ -394,11 +403,16 @@ class DutyHandoverUpdate(BaseModel):
 class ExerciseRead(ExerciseBase):
     id: str
     handover: DutyHandover | None = None
+    # Karcsú listánál: a résztvevők száma és az első nevek (a teljes lista a /{id}-n).
+    assignedCount: int = 0
+    assignedNames: list[str] = []
 
 
 class SeriesBase(BaseModel):
     name: str
     description: str = ""
+    unit: str = ""        # melyik zászlóaljé; üres = ezredszintű
+    parentId: str = ""    # alsorozat szülője
 
 
 class SeriesCreate(SeriesBase):
@@ -412,6 +426,7 @@ class SeriesUpdate(SeriesBase):
 class SeriesRead(SeriesBase):
     id: str
     itemCount: int = 0
+    childCount: int = 0
 
 
 class OperationRead(BaseModel):

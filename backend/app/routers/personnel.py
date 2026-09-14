@@ -155,6 +155,59 @@ def get_person(item_id: str, db: DB, user: Reader):
     return serialize_person_with_qual_table(db, item)
 
 
+@router.get("/{item_id}/timeline")
+def get_person_timeline(item_id: str, db: DB, user: Reader):
+    """Személy-akta időszalag: minden, amit a rendszer tud róla, egy időrendben —
+    műveletek, szolgálatok, események, szabadságok, létszám-eltérések,
+    képesítések (szerzés/lejárat), okmányok, parancsok. A KGIR-hez nem
+    hasonlítható; ez a „mi tudunk róla" nézet."""
+    from ..constants import DUTY_EXERCISE_TYPES
+    from ..models import AttendanceModel, LeaveRequestModel, OrderModel, PersonDocumentModel
+
+    person = require_model(db, PersonModel, item_id)
+    assert_person_in_scope(user, person)
+    items: list[dict] = []
+
+    def add(date: str, kind: str, title: str, subtitle: str = "", status: str = "", end: str = "", ref: dict | None = None):
+        if not date:
+            return
+        items.append({"date": date[:10], "endDate": (end or date)[:10], "kind": kind, "title": title,
+                      "subtitle": subtitle, "status": status, "ref": ref or {}})
+
+    for part in db.scalars(select(ParticipantModel).where(ParticipantModel.personnel_id == item_id)).all():
+        model_cls = _EVENT_MODELS.get(part.event_type)
+        ev = db.get(model_cls, part.event_id) if model_cls else None
+        if ev is None:
+            continue
+        if part.event_type == "exercise":
+            kind = "duty" if ev.type in DUTY_EXERCISE_TYPES else "operation"
+        else:
+            kind = "event"
+        add(ev.start_date, kind, ev.name, f"{ev.type} · {ev.location or ''}".strip(" ·"), part.status, ev.end_date,
+            {"type": part.event_type, "id": ev.id})
+    for lv in db.scalars(select(LeaveRequestModel).where(LeaveRequestModel.personnel_id == item_id)).all():
+        add(lv.start_date, "leave", lv.type, lv.reason or "", lv.status, lv.end_date, {"type": "leave", "id": lv.id})
+    for att in db.scalars(select(AttendanceModel).where(AttendanceModel.personnel_id == item_id, AttendanceModel.status != "Jelen")).all():
+        add(att.date, "attendance", att.status, att.note or "", "", "", {"type": "attendance", "id": att.id})
+    qual_names = {q.id: q.name for q in db.scalars(select(QualificationTypeModel)).all()}
+    for pq in db.scalars(select(PersonnelQualificationModel).where(PersonnelQualificationModel.personnel_id == item_id)).all():
+        name = qual_names.get(pq.qual_type_id, "képesítés")
+        add(pq.earned_date, "qualification", f"Képesítés: {name}", pq.notes or "", "megszerezve", "", {"type": "qualification", "id": pq.id})
+        if pq.expiry_date:
+            add(pq.expiry_date, "qualification-expiry", f"Lejár: {name}", "", "lejárat", "", {"type": "qualification", "id": pq.id})
+    for doc in db.scalars(select(PersonDocumentModel).where(PersonDocumentModel.personnel_id == item_id)).all():
+        add(doc.issued_date or doc.expiry_date or "", "document", f"Okmány: {doc.name}", doc.category or "", "", "", {"type": "document", "id": doc.id})
+        if doc.expiry_date:
+            add(doc.expiry_date, "document-expiry", f"Okmány lejár: {doc.name}", "", "lejárat", "", {"type": "document", "id": doc.id})
+    for order in db.scalars(select(OrderModel).where(OrderModel.personnel_id == item_id)).all():
+        add(order.issued_date or order.created_at.date().isoformat() if order.created_at else order.issued_date, "order",
+            f"Parancs: {order.subject}", f"{order.type_name}{' · ' + order.number if order.number else ''}", order.status, "", {"type": "order", "id": order.id})
+    if person.join_date:
+        add(person.join_date, "milestone", "Jogviszony kezdete", person.service_type or "", "", "", {})
+    items.sort(key=lambda x: (x["date"], x["title"]), reverse=True)
+    return {"personnelId": item_id, "name": person.name, "items": items}
+
+
 @router.get("/{item_id}/history")
 def get_person_history(item_id: str, db: DB, user: Reader):
     """Egy személy teljes eseménytörténete névvel és dátumokkal."""

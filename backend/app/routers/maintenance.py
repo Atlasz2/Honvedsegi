@@ -35,6 +35,13 @@ def backup_now(_: GodUser):
     return result
 
 
+@router.post("/archive-logs")
+def archive_logs_now(db: DB, _: GodUser):
+    """Napló-archiválás most (a 12 hónapnál régebbi sorok külön fájlba)."""
+    from ..archive import archive_old_logs
+    return archive_old_logs(db)
+
+
 @router.post("/sessions/purge")
 def purge_sessions(db: DB, _: GodUser):
     return purge_expired_sessions_now(db)

@@ -41,6 +41,11 @@ async def lifespan(_app: FastAPI):
     # Indulás: táblák → HIÁNYZÓ OSZLOPOK pótlása → seed → migrációk.
     # A séma-kiegészítés a seed ELŐTT fut: a seed az ORM-en át olvas, ami már az
     # új oszlopokat kéri — régi adatbázison különben az első lekérdezésnél elhasal.
+    # A szinkron végpontok a threadpoolban futnak (alapból 40 szál). ~100 ügyintéző
+    # egyidejű kattintgatásánál a 40 kevés volt a sorban álláshoz; a SQLite WAL az
+    # olvasásokat párhuzamosan viszi, az írás úgyis sorosodik. Egy folyamat!
+    import anyio
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 64
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         _ensure_personnel_sztsz_schema(db)
@@ -49,6 +54,13 @@ async def lifespan(_app: FastAPI):
         _enforce_single_god_user(db)
         run_migrations(db)
         purge_expired_sessions(db)
+        # Napló-archiválás 30 naponta (a 12 hónapnál régebbi sorok külön fájlba).
+        from .archive import archive_if_due
+        try:
+            archive_if_due(db)
+        except Exception as exc:  # az archiválás hibája ne akadályozza az indulást
+            import logging
+            logging.getLogger(__name__).warning("Napló-archiválás kihagyva: %s", exc)
     yield
 
 
@@ -76,6 +88,26 @@ else:
     ALLOWED_HOSTS   = [h.strip() for h in _raw_hosts.split(",") if h.strip()]
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+
+# ── Adatbázis-versenyhelyzetek: érthető válasz, nem 500 ───────────────────────
+# Sok ügyintéző egyszerre: két mentés ugyanarra a rekordra (UNIQUE) → 409, a
+# felület újratölt és a felhasználó látja a másik változását; a ritka
+# „database is locked" (busy_timeout után) → 503 „próbáld újra", nem ismeretlen hiba.
+from fastapi.responses import JSONResponse  # noqa: E402
+from sqlalchemy.exc import IntegrityError, OperationalError  # noqa: E402
+
+
+@app.exception_handler(IntegrityError)
+async def _integrity_error(_request: Request, exc: IntegrityError):
+    return JSONResponse(status_code=409, content={"detail": "Ütköző mentés: valaki ugyanezt a rekordot közben módosította vagy létrehozta. Frissítsd az oldalt és próbáld újra."})
+
+
+@app.exception_handler(OperationalError)
+async def _operational_error(_request: Request, exc: OperationalError):
+    if "locked" in str(exc.orig or exc).lower():
+        return JSONResponse(status_code=503, content={"detail": "Az adatbázis pillanatnyilag foglalt (sok egyidejű mentés). Próbáld újra pár másodperc múlva."}, headers={"Retry-After": "2"})
+    raise exc
 # Tömörítés: a nagy listák (állomány, riasztások) a belső hálón is töredékére csökkennek.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(

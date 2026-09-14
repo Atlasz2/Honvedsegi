@@ -203,6 +203,7 @@ class ExerciseModel(Base):
 
 
 class SeriesModel(Base):
+    # unit: melyik zászlóaljé (üres = ezredszintű); parent_id: alsorozat szülője (7×20 → Támadás → Támadás Alap).
     """Felkészítés-sorozat (szülő „kártya"), pl. „7×20 Tartalékos szakfelkészítés".
     A műveletek a series_id mezővel hivatkoznak rá."""
     __tablename__ = "operation_series"
@@ -210,6 +211,8 @@ class SeriesModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
+    unit: Mapped[str] = mapped_column(String, default="", index=True)
+    parent_id: Mapped[str] = mapped_column(String, default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 

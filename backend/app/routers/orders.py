@@ -13,7 +13,7 @@ e-mailben járnak körbe, nem látszik, ki mivel hol tart. Itt:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
@@ -405,15 +405,35 @@ def _days_between(start, end) -> float | None:
         return None
 
 
-def build_order_stats(db, year: int | None) -> dict:
+def _period_bounds(period: str, anchor: date) -> tuple[date, date]:
+    """év / hónap / hét (hétfőtől) — a megadott naphoz."""
+    if period == "week":
+        start = anchor - timedelta(days=anchor.weekday())
+        return start, start + timedelta(days=6)
+    if period == "month":
+        start = anchor.replace(day=1)
+        nxt = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return start, nxt - timedelta(days=1)
+    return date(anchor.year, 1, 1), date(anchor.year, 12, 31)
+
+
+def build_order_stats(db, year: int | None, period: str = "year", anchor: date | None = None, user=None) -> dict:
     """Típusonként: hány parancs, átlagos átfutás (létrehozás → kiadás), hány
     csúszott; részlegenként: átlagos fejezet-idő, lejárt és nyitott fejezetek.
     Ezek a számok mondják meg, hol lassul a folyamat — érv a megbeszélésre."""
     today = date.today()
     today_iso = today.isoformat()
-    orders = db.scalars(select(OrderModel)).all()
-    if year:
-        orders = [o for o in orders if o.created_at and o.created_at.year == year]
+    query = select(OrderModel)
+    if user is not None:
+        query = scoped_owned(query, OrderModel, user)
+    orders = db.scalars(query).all()
+    bounds: tuple[date, date] | None = None
+    if period in ("month", "week"):
+        bounds = _period_bounds(period, anchor or today)
+    elif year:
+        bounds = (date(year, 1, 1), date(year, 12, 31))
+    if bounds:
+        orders = [o for o in orders if o.created_at and bounds[0] <= _as_date(o.created_at) <= bounds[1]]
     chapters = _chapters_by_order(db, [o.id for o in orders])
 
     by_type: dict[str, dict] = {}
@@ -480,14 +500,28 @@ def build_order_stats(db, year: int | None) -> dict:
 
 
 @router.get("/stats")
-def order_stats(db: DB, _: Reader, year: int | None = Query(None, ge=2000, le=2100)):
-    return build_order_stats(db, year)
+def order_stats(db: DB, user: Reader, year: int | None = Query(None, ge=2000, le=2100),
+                period: str = Query("year", pattern="^(year|month|week)$"), anchor: str = ""):
+    """period=year: az adott év; month/week: az `anchor` napot tartalmazó hónap/hét."""
+    anchor_date = _parse_anchor(anchor)
+    stats = build_order_stats(db, year, period, anchor_date, user)
+    lo, hi = _period_bounds(period, anchor_date) if period != "year" else (date(year or date.today().year, 1, 1), date(year or date.today().year, 12, 31))
+    stats["period"] = {"kind": period, "from": lo.isoformat(), "to": hi.isoformat()}
+    return stats
+
+
+def _parse_anchor(value: str) -> date:
+    try:
+        return date.fromisoformat(value) if value else date.today()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Érvénytelen dátum") from exc
 
 
 @router.get("/stats/export.pdf")
-def order_stats_pdf(db: DB, _: Reader, year: int | None = Query(None, ge=2000, le=2100)):
+def order_stats_pdf(db: DB, user: Reader, year: int | None = Query(None, ge=2000, le=2100),
+                    period: str = Query("year", pattern="^(year|month|week)$"), anchor: str = ""):
     from ..order_export import build_stats_pdf
-    stats = build_order_stats(db, year)
+    stats = build_order_stats(db, year, period, _parse_anchor(anchor), user)
     return Response(
         content=build_stats_pdf(stats), media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=parancs-atfutas-{year or 'osszes'}.pdf"},

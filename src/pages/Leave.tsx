@@ -21,7 +21,7 @@ const PERMANENT_RESERVE = 'Állandó behívásos';
 /** Ki mit vehet ki — ugyanaz a szabály, mint a szerveren (ott a végső szó). */
 function allowedTypes(person: { status: Person['status']; serviceType?: string } | null): LeaveType[] {
   if (!person) return TYPE_OPTIONS;
-  const active = person.status === 'Aktív' || person.status === 'Szabadságon';
+  const active = person.status === 'Aktív';
   const permanentReserve = person.status === 'Tartalékos' && person.serviceType === PERMANENT_RESERVE;
   return TYPE_OPTIONS.filter((t) => (t === 'Szabadság' ? active : t === 'Szolgálatmentesség' ? permanentReserve : true));
 }

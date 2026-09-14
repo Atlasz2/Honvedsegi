@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { availability as store, getErrorMessage, Booking } from '@/lib/store';
 import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
@@ -17,6 +18,12 @@ function addDays(days: number): string {
 
 /** Beágyazható foglaltság-kereső (a Közös naptár tetején is ez ül). */
 export function AvailabilityPanel({ embedded = false }: { embedded?: boolean }) {
+  const navigate = useNavigate();
+  const openBooking = (b: Booking) => {
+    if (b.foreign || !b.eventId) return;
+    if (b.eventType === 'event') navigate('/events', { state: { openEventId: b.eventId } });
+    else navigate('/operations', { state: { openOperationId: b.eventId, openOperationSource: 'exercise' } });
+  };
   const [location, setLocation] = useState('');
   const [fromDate, setFromDate] = useState(addDays(0));
   const [toDate, setToDate] = useState('');
@@ -134,8 +141,8 @@ export function AvailabilityPanel({ embedded = false }: { embedded?: boolean }) 
                 <table className="w-full text-sm">
                   <tbody>
                     {items.map(b => (
-                      <tr key={`${b.eventType}-${b.eventId}`} className="border-t border-border/50">
-                        <td className={`px-3 py-1.5 font-rajdhani ${b.foreign ? 'text-muted-foreground italic' : 'text-foreground'}`} title={b.foreign ? 'Másik zászlóalj foglalása — a részletek nem látszanak, csak hogy foglalt' : undefined}>{b.eventName}</td>
+                      <tr key={`${b.eventType}-${b.eventId || b.startDate + b.location}`} className={`border-t border-border/50 ${b.foreign ? '' : 'cursor-pointer hover:bg-secondary/40'}`} onClick={() => openBooking(b)} title={b.foreign ? 'Másik zászlóalj foglalása — a részletek nem látszanak, csak hogy foglalt' : 'Megnyitás'}>
+                        <td className={`px-3 py-1.5 font-rajdhani ${b.foreign ? 'text-muted-foreground italic' : 'text-primary underline-offset-2 hover:underline'}`}>{b.eventName}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{TYPE_LABEL[b.eventType]}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{b.startDate} – {b.endDate}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{b.status}</td>

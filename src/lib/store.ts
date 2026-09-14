@@ -171,6 +171,13 @@ async function request<T>(path: string, init: RequestInit = {}, includeAuth = tr
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    // 503 = az adatbázis pillanatnyilag foglalt (sok egyidejű mentés): egyszer,
+    // a szerver által kért szünet után újrapróbáljuk — a felhasználó nem lát hibát.
+    if (response.status === 503 && !init.signal?.aborted) {
+      const wait = Math.min(5, Number(response.headers.get('Retry-After') || 2)) * 1000;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    }
   } catch (error) {
     if (isNetworkError(error)) {
       setOnline(false);
@@ -296,6 +303,14 @@ export const personnel = {
     return request<PersonnelPagedResult>(`/personnel/paged?${query.toString()}`);
   },
   getHistory: (id: string) => request<PersonHistoryEntry[]>(`/personnel/${id}/history`),
+  /** Személy-akta időszalag: minden, amit a rendszer tud róla, időrendben. */
+  getTimeline: (id: string) => request<PersonTimeline>(`/personnel/${id}/timeline`),
+};
+
+export type TimelineKind = 'operation' | 'duty' | 'event' | 'leave' | 'attendance' | 'qualification' | 'qualification-expiry' | 'document' | 'document-expiry' | 'order' | 'milestone';
+export type PersonTimeline = {
+  personnelId: string; name: string;
+  items: { date: string; endDate: string; kind: TimelineKind; title: string; subtitle: string; status: string; ref: { type?: string; id?: string } }[];
 };
 
 export type ReferenceData = {
@@ -403,7 +418,13 @@ export function movePersonFromConflicts(personnelId: string, fromEvents: { event
   return request(`/conflicts/person/move`, { method: 'POST', body: JSON.stringify({ personnelId, fromEvents, targetName }) });
 }
 
-export const exercises = createCrud<Exercise>('/exercises');
+export const exercises = {
+  ...createCrud<Exercise>('/exercises'),
+  /** Karcsú lista: résztvevők nélkül (~5× kisebb) — rács, naptár, riport-választó. */
+  getLite: () => request<Exercise[]>('/exercises?lite=true'),
+  /** Egy művelet a teljes beosztással. */
+  get: (id: string) => request<Exercise>(`/exercises/${id}`),
+};
 export type DutyHandover = { handedOverBy?: string; handedOverAt?: string; takenOverBy?: string; takenOverAt?: string; note?: string };
 /** Szolgálat átadás-átvétel: név + időpont, naplózva. */
 export function dutyHandover(exerciseId: string, action: 'handover' | 'takeover' | 'clear', personName = '', note = ''): Promise<Exercise> {
@@ -411,15 +432,15 @@ export function dutyHandover(exerciseId: string, action: 'handover' | 'takeover'
 }
 
 export type SeriesMatrix = {
-  operations: { id: string; name: string; level: string; source: string; startDate: string }[];
+  operations: { id: string; name: string; level: string; source: string; startDate: string; seriesId?: string; seriesName?: string }[];
   rows: { personnelId: string; name: string; completed: string[] }[];
 };
 
 export const series = {
   getAll: () => request<Series[]>('/series'),
-  create: (payload: { name: string; description?: string }) =>
+  create: (payload: { name: string; description?: string; parentId?: string; unit?: string }) =>
     request<Series>('/series', { method: 'POST', body: JSON.stringify(payload) }),
-  update: (id: string, payload: { name: string; description?: string }) =>
+  update: (id: string, payload: { name: string; description?: string; parentId?: string; unit?: string }) =>
     request<Series>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/series/${id}`, { method: 'DELETE' }),
   matrix: (id: string) => request<SeriesMatrix>(`/series/${id}/matrix`),
@@ -629,10 +650,21 @@ export type SystemStatus = {
  * Karbantartás — kizárólag a god (devmaster) éri el. Nem-god hívónál a backend
  * semleges 403-at ad, ezért a felület ezt a szekciót csak god esetén jeleníti meg.
  */
+export type OpsHealth = {
+  backup: {
+    latest: { name: string; sizeBytes: number; createdAt: string } | null; ageHours: number | null; count: number; staleAfterHours: number;
+    mirror: { configured: boolean; path: string; reachable: boolean; latest: string | null };
+    disk: { freeBytes: number; totalBytes: number }; database: { sizeBytes: number; walBytes: number }; warnings: string[];
+  };
+  archive: { lastRun: string | null; logRows: number; keepMonths: number; archiveFiles: string[]; archiveDir: string };
+};
+export const opsHealth = () => request<OpsHealth>('/settings/health');
+
 export const maintenance = {
   status: () => request<SystemStatus>('/maintenance/status'),
   purgeSessions: () => request<{ removed: number }>('/maintenance/sessions/purge', { method: 'POST' }),
   backupNow: () => request<BackupResult>('/maintenance/backup', { method: 'POST' }),
+  archiveLogs: () => request<{ archived: number; files: string[] }>('/maintenance/archive-logs', { method: 'POST' }),
   forceLogout: (username: string) => request<{ revoked: number }>(`/maintenance/users/${username}/logout`, { method: 'POST' }),
   unlock: (username: string) => request<{ status: string }>(`/maintenance/users/${username}/unlock`, { method: 'POST' }),
 };
@@ -897,6 +929,11 @@ export const reports = {
     window.URL.revokeObjectURL(url);
   },
 };
+/** Próbaüzem-PDF: a változáslista elfogadás előtt, aláírható. */
+export function exportImportDryRunPdf(entity: ImportEntity, draftId: string, filename: string): Promise<void> {
+  return downloadBlob(`/import/${entity}/draft/${draftId}/export.pdf?filename=${encodeURIComponent(filename)}`, `import-probauzem-${draftId.slice(0, 8)}.pdf`);
+}
+
 export async function previewImport(entity: ImportEntity, file: File): Promise<ImportPreviewResult> {
   const formData = new FormData();
   formData.append('file', file);
@@ -977,6 +1014,9 @@ export const attendance = {
     request<AttendanceDay>('/attendance/close', { method: 'POST', body: JSON.stringify({ date, note, unit }) }),
   reopenDay: (date: string, reason: string, unit = '') =>
     request<AttendanceDay>(`/attendance/close?date=${date}&unit=${encodeURIComponent(unit)}&reason=${encodeURIComponent(reason)}`, { method: 'DELETE' }),
+  /** Egy művelet/esemény résztvevőinek azonosítói — a létszám gyors kitöltés „kit rakunk be" nézetéhez. */
+  eventParticipantIds: (eventType: 'exercise' | 'event', eventId: string) =>
+    request<{ personnelId: string }[]>(`/${eventType === 'exercise' ? 'exercises' : 'events'}/${eventId}/participants`).then((rows) => rows.map((r) => r.personnelId)),
   eventsOnDay: (date: string) =>
     request<AttendanceEventOption[]>(`/attendance/events?date=${encodeURIComponent(date)}`),
   fillFromEvent: (date: string, eventType: string, eventId: string, status: AttendanceStatus) =>
@@ -1184,8 +1224,16 @@ export type Order = {
   pendingResponsibles: string[]; readyToSign: boolean; signedCount: number; isOverdue: boolean;
   signatures: OrderSignature[]; chapters: OrderChapter[];
 };
+function statsQuery(year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = ''): string {
+  const q = new URLSearchParams({ period });
+  if (year && period === 'year') q.set('year', String(year));
+  if (anchor) q.set('anchor', anchor);
+  return q.toString();
+}
+
 export type OrderStats = {
   year: number | null;
+  period?: { kind: 'year' | 'month' | 'week'; from: string; to: string };
   generatedAt: string;
   totals: { orders: number; issued: number; open: number; overdue: number; avgLeadDays: number | null };
   byType: { type: string; count: number; issued: number; open: number; withdrawn: number; overdue: number; avgDays: number | null }[];
@@ -1212,8 +1260,11 @@ export const orders = {
   update: (id: string, payload: { subject: string; status: OrderStatus; number?: string; issuer?: string; dueDate?: string; issuedDate?: string; notes?: string }) =>
     request<Order>(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
-  stats: (year?: number) => request<OrderStats>(`/orders/stats${year ? `?year=${year}` : ''}`),
-  exportStatsPdf: (year?: number) => downloadBlob(`/orders/stats/export.pdf${year ? `?year=${year}` : ''}`, `parancs-atfutas-${year ?? 'osszes'}.pdf`),
+  /** period: év (year + `year`), hónap vagy hét (az `anchor` napot tartalmazó). */
+  stats: (year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = '') =>
+    request<OrderStats>(`/orders/stats?${statsQuery(year, period, anchor)}`),
+  exportStatsPdf: (year?: number, period: 'year' | 'month' | 'week' = 'year', anchor = '') =>
+    downloadBlob(`/orders/stats/export.pdf?${statsQuery(year, period, anchor)}`, `parancs-atfutas-${period === 'year' ? (year ?? 'osszes') : `${period}-${anchor}`}.pdf`),
   /** Módosító parancs egy kiadott parancshoz — az eredeti érintetlen marad. */
   amend: (id: string, payload: { subject: string; number?: string; dueDate?: string }) =>
     request<Order>(`/orders/${id}/amend`, { method: 'POST', body: JSON.stringify(payload) }),

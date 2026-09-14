@@ -54,3 +54,11 @@ backend/.tmp-*
 backend/*.db
 
 backend/uploads/
+
+# pytest-cov adatfájl
+.coverage
+backend/.coverage
+# HTTPS kulcs és tanúsítvány — soha nem kerül gitbe
+backend/certs/
+# napló-archívum és mentés-tükör
+backend/data/archive/

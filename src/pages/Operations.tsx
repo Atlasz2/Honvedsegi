@@ -35,6 +35,8 @@ type OperationItemBase = {
   status: OperationStatus;
   seriesId: string;
   level: string;
+  /** A listából: létszám; a teljes `assigned` csak a részlet megnyitásakor töltődik. */
+  assignedCount: number;
 };
 
 type OperationItem = OperationItemBase & { source: OperationSource; assigned: ExerciseAssignment[] };
@@ -136,6 +138,7 @@ function normalizeExercise(item: Exercise): OperationItem {
     status: item.status,
     seriesId: item.seriesId ?? "",
     level: item.level ?? "",
+    assignedCount: item.assignedCount ?? item.assigned.length,
     assigned: item.assigned,
   };
 }
@@ -153,11 +156,13 @@ export default function Operations() {
   const [newSeriesOpen, setNewSeriesOpen] = useState(false);
   const [newSeriesName, setNewSeriesName] = useState("");
   const [newSeriesDesc, setNewSeriesDesc] = useState("");
+  const [newSeriesParent, setNewSeriesParent] = useState("");
   const [savingSeries, setSavingSeries] = useState(false);
   const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
   const [personnelData, setPersonnelData] = useState<PersonLite[]>([]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"Összes" | OperationStatus>("Összes");
+  // Alapból csak az aktuális (tervezett + folyamatban): a lezajlottak ne töltsék meg a rácsot.
+  const [filter, setFilter] = useState<"Összes" | "Aktuális" | OperationStatus>("Aktuális");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [detail, setDetail] = useState<OperationItem | null>(null);
@@ -202,6 +207,8 @@ export default function Operations() {
   const [createForecast, setCreateForecast] = useState<AssignmentForecast | null>(null);
   const [editForecast, setEditForecast] = useState<AssignmentForecast | null>(null);
   const [handoverName, setHandoverName] = useState("");
+  // Az űrlapból nyitott képzettség-kezelő: az új típus rögtön kiválasztódik, az űrlap nem vész el.
+  const [qualPickTarget, setQualPickTarget] = useState<"create" | "edit" | null>(null);
   const [handoverNote, setHandoverNote] = useState("");
 
   const detailRef = useRef<OperationItem | null>(null);
@@ -264,30 +271,51 @@ export default function Operations() {
     return parsed.toLocaleDateString("hu-HU");
   };
 
+  /** A teljes művelet (beosztással) letöltése és a részlet frissítése. */
+  const loadFull = useCallback(async (id: string): Promise<Exercise | null> => {
+    try {
+      const full = await exercises.get(id);
+      setRawExercises((prev) => [...prev.filter((e) => e.id !== id), full]);
+      setDetail((current) => (current && current.id === id ? { ...normalizeExercise(full) } : current));
+      return full;
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      return null;
+    }
+  }, []);
+
+
   const refresh = useCallback(async () => {
     try {
+      // Karcsú lista (résztvevők nélkül): a rács ezt mutatja; a teljes beosztás
+      // csak a megnyitott művelethez jön le (loadFull) — ~5× kisebb forgalom.
       const [exerciseData, seriesData] = await Promise.all([
-        exercises.getAll(),
+        exercises.getLite(),
         seriesStore.getAll(),
       ]);
-      setRawExercises(exerciseData);
       setSeriesList(seriesData);
       const merged = exerciseData.map(normalizeExercise)
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
       setData(merged);
       if (detailRef.current) {
-        const updated = merged.find((item) => item.id === detailRef.current!.id && item.source === detailRef.current!.source) ?? null;
-        setDetail(updated);
+        const stillThere = merged.find((item) => item.id === detailRef.current!.id);
+        if (!stillThere) setDetail(null);
+        else await loadFull(stillThere.id);
       }
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadFull]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useAutoRefresh(refresh);
+
+  const openDetail = (item: OperationItem) => {
+    setDetail(item);
+    void loadFull(item.id);
+  };
 
   // Az állomány ritkán változik: egyszer töltjük, könnyű formában (nem 30 mp-enként a teljes aktát).
   useEffect(() => {
@@ -298,7 +326,7 @@ export default function Operations() {
     const normalized = search.trim().toLowerCase();
     return data.filter((item) => {
       if (normalized && ![item.name, item.type, item.location, item.description].some((v) => v?.toLowerCase().includes(normalized))) return false;
-      if (filter !== "Összes" && item.status !== filter) return false;
+      if (filter === "Aktuális" ? !(item.status === "Tervezett" || item.status === "Folyamatban") : filter !== "Összes" && item.status !== filter) return false;
       if (dateFrom && item.endDate.slice(0, 10) < dateFrom) return false;
       if (dateTo && item.startDate.slice(0, 10) > dateTo) return false;
       return true;
@@ -334,8 +362,8 @@ export default function Operations() {
       item.id === navState.openOperationId &&
       (!navState.openOperationSource || item.source === navState.openOperationSource),
     );
-    if (found) setDetail(found);
-  }, [location.state, data]);
+    if (found) { setDetail(found); void loadFull(found.id); }
+  }, [location.state, data, loadFull]);
 
   const activePpl = useMemo(
     () =>
@@ -477,8 +505,9 @@ export default function Operations() {
 
   // ── Szerkesztés ────────────────────────────────────────────────────────────
 
-  const openEdit = (item: OperationItem) => {
-    const raw = rawExercises.find((e) => e.id === item.id);
+  const openEdit = async (item: OperationItem) => {
+    const raw = rawExercises.find((e) => e.id === item.id) ?? await loadFull(item.id);
+    if (!raw) return;
     setEditForm({
       name: item.name, type: item.type,
       startDate: item.startDate, endDate: item.endDate,
@@ -566,9 +595,9 @@ export default function Operations() {
     if (!name) { toast.error("Add meg a sorozat nevét"); return; }
     setSavingSeries(true);
     try {
-      await seriesStore.create({ name, description: newSeriesDesc.trim() });
+      await seriesStore.create({ name, description: newSeriesDesc.trim(), parentId: newSeriesParent });
       await logAction(user!.displayName, user!.username, "létrehozva", "Sorozatok", name);
-      setNewSeriesName(""); setNewSeriesDesc(""); setNewSeriesOpen(false);
+      setNewSeriesName(""); setNewSeriesDesc(""); setNewSeriesParent(""); setNewSeriesOpen(false);
       await refresh();
       toast.success("Sorozat létrehozva");
     } catch (error) {
@@ -593,6 +622,8 @@ export default function Operations() {
       setQualTypeOptions(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, "hu")));
       setNewTypeName(""); setNewTypeCategory("");
       await logAction(user!.displayName, user!.username, "létrehozva", "Képzettségek", created.name);
+      if (qualPickTarget === "create") { setForm((prev) => ({ ...prev, qualificationId: created.id })); setQualMgrOpen(false); setQualPickTarget(null); toast.success(`„${created.name}" létrehozva és kiválasztva — folytathatod a műveletet.`); return; }
+      if (qualPickTarget === "edit") { setEditForm((prev) => ({ ...prev, qualificationId: created.id })); setQualMgrOpen(false); setQualPickTarget(null); toast.success(`„${created.name}" létrehozva és kiválasztva.`); return; }
       toast.success("Képzettség létrehozva");
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -698,7 +729,7 @@ export default function Operations() {
             <Layers className="w-4 h-4 text-primary" /> Felkészítés-sorozatok
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {seriesList.map((s) => (
+            {seriesList.filter((s) => !s.parentId).map((s) => (
               <button
                 key={s.id}
                 onClick={() => setSelectedSeries(s)}
@@ -708,8 +739,9 @@ export default function Operations() {
                 <div className="flex items-center gap-2 mb-1">
                   <Layers className="w-4 h-4 text-primary" />
                   <h3 className="font-bold font-rajdhani">{s.name}</h3>
+                  <UnitChip unit={s.unit} />
                 </div>
-                <p className="text-xs text-muted-foreground font-mono">{s.itemCount} elem — belépéshez kattints</p>
+                <p className="text-xs text-muted-foreground font-mono">{s.itemCount} elem{s.childCount ? ` · ${s.childCount} alsorozat` : ""} — belépéshez kattints</p>
               </button>
             ))}
           </div>
@@ -727,9 +759,9 @@ export default function Operations() {
             style={{ borderRadius: "2px" }}
           />
         </div>
-        {["Összes", ...STATUSES].map((s) => (
-          <button key={s} onClick={() => { setFilter(s as "Összes" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`}>
-            {s === "Összes" ? s : STATUS_LABEL[s as OperationStatus]}
+        {["Aktuális", "Összes", ...STATUSES].map((s) => (
+          <button key={s} onClick={() => { setFilter(s as "Összes" | "Aktuális" | OperationStatus); setPage(1); }} className={`px-3 py-1.5 text-xs uppercase tracking-military font-mono ${filter === s ? "btn-mil-primary" : "btn-mil-secondary"}`} title={s === "Aktuális" ? "Tervezett + folyamatban" : undefined}>
+            {s === "Összes" || s === "Aktuális" ? s : STATUS_LABEL[s as OperationStatus]}
           </button>
         ))}
         <div>
@@ -750,7 +782,7 @@ export default function Operations() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {pagedItems.length === 0 && <div className="col-span-3 text-center text-muted-foreground font-mono py-12">Nincs találat a jelenlegi szűrőkre</div>}
             {pagedItems.map((item) => (
-              <div key={`${item.source}-${item.id}`} className="bg-card border border-border border-l-2 border-l-primary p-4 cursor-pointer hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }} onClick={() => setDetail(item)}>
+              <div key={`${item.source}-${item.id}`} className="bg-card border border-border border-l-2 border-l-primary p-4 cursor-pointer hover:bg-secondary transition-colors" style={{ borderRadius: "2px" }} onClick={() => openDetail(item)}>
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="font-bold font-rajdhani text-lg">{item.name}</h3>
                   <span className={`px-2 py-0.5 text-xs uppercase tracking-military font-mono ${statusClass[item.status]}`} style={{ borderRadius: "2px" }}>
@@ -774,10 +806,10 @@ export default function Operations() {
                 <div className="space-y-1 text-sm text-muted-foreground">
                   <div className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /><span className="font-mono text-primary text-xs">{formatDate(item.startDate)} → {formatDate(item.endDate)}</span></div>
                   <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />{item.location || "Nincs megadva"}</div>
-                  <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /><span className="font-mono text-primary">{item.assigned.length}</span>/{item.maxPersonnel} fő</div>
+                  <div className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /><span className="font-mono text-primary">{item.assignedCount}</span>/{item.maxPersonnel} fő</div>
                 </div>
                 <div className="mt-3 w-full bg-border h-1.5" style={{ borderRadius: "2px" }}>
-                  <div className="bg-primary h-1.5 transition-all" style={{ width: `${item.maxPersonnel > 0 ? Math.min(100, (item.assigned.length / item.maxPersonnel) * 100) : 0}%`, borderRadius: "2px" }} />
+                  <div className="bg-primary h-1.5 transition-all" style={{ width: `${item.maxPersonnel > 0 ? Math.min(100, (item.assignedCount / item.maxPersonnel) * 100) : 0}%`, borderRadius: "2px" }} />
                 </div>
               </div>
             ))}
@@ -813,12 +845,33 @@ export default function Operations() {
                   <button onClick={() => openCreateInSeries(selectedSeries.id)} className="btn-mil-primary flex items-center gap-2 text-xs">
                     <Plus className="w-4 h-4" /> Új elem a sorozatba
                   </button>
+                  <button onClick={() => { setNewSeriesParent(selectedSeries.id); setNewSeriesOpen(true); }} className="btn-mil-secondary flex items-center gap-2 text-xs" title="Alsorozat, pl. 7×20 → Támadás → Támadás Alap">
+                    <Layers className="w-4 h-4" /> Új alsorozat
+                  </button>
                   <button onClick={() => setSeriesDeleteTarget(selectedSeries)} className="btn-mil-danger text-xs">
                     Sorozat törlése
                   </button>
                 </div>
               )}
             </div>
+            {seriesList.some((s) => s.parentId === selectedSeries.id) && (
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-military mb-2">Alsorozatok</h3>
+                <div className="flex flex-wrap gap-2">
+                  {seriesList.filter((s) => s.parentId === selectedSeries.id).map((s) => (
+                    <button key={s.id} onClick={() => setSelectedSeries(s)} className="border border-border px-3 py-2 text-left hover:bg-secondary/40" style={{ borderRadius: "2px" }}>
+                      <span className="font-rajdhani font-bold flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-primary" />{s.name}</span>
+                      <span className="block text-[11px] font-mono text-muted-foreground">{s.itemCount} elem{s.childCount ? ` · ${s.childCount} alsorozat` : ""}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedSeries.parentId && (
+              <button onClick={() => { const parent = seriesList.find((s) => s.id === selectedSeries.parentId); if (parent) setSelectedSeries(parent); }} className="text-xs font-mono text-primary hover:underline">
+                ↑ Vissza: {seriesNameById.get(selectedSeries.parentId) ?? "szülő sorozat"}
+              </button>
+            )}
             {(() => {
               const items = data.filter((o) => o.seriesId === selectedSeries.id);
               return items.length === 0 ? (
@@ -836,7 +889,7 @@ export default function Operations() {
                     </thead>
                     <tbody>
                       {items.map((o) => (
-                        <tr key={`${o.source}-${o.id}`} className="border-b border-border/50 hover:bg-secondary/40 cursor-pointer" onClick={() => { setSelectedSeries(null); setDetail(o); }}>
+                        <tr key={`${o.source}-${o.id}`} className="border-b border-border/50 hover:bg-secondary/40 cursor-pointer" onClick={() => { setSelectedSeries(null); openDetail(o); }}>
                           <td className="px-3 py-1.5 font-rajdhani text-foreground">{o.name}</td>
                           <td className="px-3 py-1.5 text-muted-foreground">{o.level || "—"}</td>
                           <td className="px-3 py-1.5 text-muted-foreground text-xs">{formatDate(o.startDate)} → {formatDate(o.endDate)}</td>
@@ -862,7 +915,10 @@ export default function Operations() {
                       <tr className="text-xs uppercase tracking-military text-muted-foreground border-b border-border">
                         <th className="px-3 py-2 text-left sticky left-0 bg-card">Név</th>
                         {seriesMatrix.operations.map((o) => (
-                          <th key={o.id} className="px-2 py-2 text-center whitespace-nowrap">{o.name}{o.level ? ` (${o.level})` : ""}</th>
+                          <th key={o.id} className="px-2 py-2 text-center whitespace-nowrap">
+                            {o.seriesId !== selectedSeries.id && o.seriesName && <span className="block text-[10px] text-primary normal-case tracking-normal">{o.seriesName}</span>}
+                            {o.name}{o.level ? ` (${o.level})` : ""}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -888,8 +944,11 @@ export default function Operations() {
         )}
       </Modal>
 
-      <Modal open={newSeriesOpen} onClose={() => setNewSeriesOpen(false)} title="Új felkészítés-sorozat">
+      <Modal open={newSeriesOpen} onClose={() => { setNewSeriesOpen(false); setNewSeriesParent(""); }} title={newSeriesParent ? "Új alsorozat" : "Új felkészítés-sorozat"}>
         <div className="space-y-3">
+          {newSeriesParent && (
+            <p className="text-xs font-mono text-muted-foreground">Szülő: {seriesNameById.get(newSeriesParent) ?? newSeriesParent} — az alsorozat a szülő zászlóaljáé.</p>
+          )}
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Sorozat neve *</label>
             <input value={newSeriesName} onChange={(e) => setNewSeriesName(e.target.value)} placeholder="pl. 7×20 Tartalékos szakfelkészítés" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
@@ -905,52 +964,6 @@ export default function Operations() {
         </div>
       </Modal>
 
-      <Modal open={qualMgrOpen} onClose={() => setQualMgrOpen(false)} title="Képzettségek" wide>
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be.</p>
-          {canEdit && (
-            <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto] items-end bg-secondary/30 border border-border p-3" style={{ borderRadius: "2px" }}>
-              <div>
-                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Új képzettség neve</label>
-                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="pl. Gépjárművezető B" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label>
-                <input value={newTypeCategory} onChange={(e) => setNewTypeCategory(e.target.value)} placeholder="Általános" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-              </div>
-              <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs whitespace-nowrap py-2">Létrehoz</button>
-            </div>
-          )}
-          <input value={qualMgrSearch} onChange={(e) => setQualMgrSearch(e.target.value)} placeholder="Szűrés név vagy kategória szerint…" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
-          <div className="border border-border max-h-[60vh] overflow-auto" style={{ borderRadius: "2px" }}>
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col />
-                <col className="w-[22%]" />
-                <col className="w-[16%]" />
-                {canEdit && <col className="w-[190px]" />}
-              </colgroup>
-              <thead className="sticky top-0 bg-card">
-                <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
-                  <th className="px-3 py-2">Név</th>
-                  <th className="px-3 py-2">Kategória</th>
-                  <th className="px-3 py-2">Lejárat</th>
-                  {canEdit && <th className="px-3 py-2"></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {qualTypeOptions.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-4 text-center text-muted-foreground">Nincs képzettség.</td></tr>
-                ) : qualTypeOptions
-                  .filter((qt) => !qualMgrSearch.trim() || `${qt.name} ${qt.category}`.toLowerCase().includes(qualMgrSearch.trim().toLowerCase()))
-                  .map((qt) => (
-                  <QualTypeRow key={qt.id} item={qt} canEdit={canEdit} onSaved={(saved) => setQualTypeOptions((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))} onDeleted={() => setQualTypeOptions((prev) => prev.filter((x) => x.id !== qt.id))} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </Modal>
 
       <Modal open={creating} onClose={() => setCreating(false)} title="Új művelet hozzáadása">
         <div className="space-y-3">
@@ -1047,9 +1060,10 @@ export default function Operations() {
 
           <div>
             <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mit ad teljesítéskor (képesítés)</label>
-            <select value={form.qualificationId} onChange={(e) => setForm({ ...form, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+            <select value={form.qualificationId} onChange={(e) => { if (e.target.value === "__new__") { setQualPickTarget("create"); setQualMgrOpen(true); return; } setForm({ ...form, qualificationId: e.target.value }); }} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
               <option value="">— nem ad képesítést —</option>
               {qualTypeOptions.map((qt) => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
+              {canEdit && <option value="__new__">＋ Új képzettség létrehozása…</option>}
             </select>
             <p className="text-[11px] text-muted-foreground mt-1">A „Megjelent" résztvevők automatikusan megkapják (a lemondott művelet nem ad).</p>
           </div>
@@ -1292,7 +1306,7 @@ export default function Operations() {
               <button onClick={() => { setDetail(null); setPersonSearch(""); }} className="btn-mil-secondary text-xs">Bezárás</button>
               {canEdit && (
                 <div className="flex gap-2">
-                  <button onClick={() => openEdit(detail)} className="btn-mil-secondary text-xs">Szerkesztés</button>
+                  <button onClick={() => { void openEdit(detail); }} className="btn-mil-secondary text-xs">Szerkesztés</button>
                   {detail.status === "Lemondva" ? (
                     <button onClick={() => { void setCancelled(false); }} className="btn-mil-secondary text-xs">Lemondás visszavonása</button>
                   ) : (
@@ -1363,9 +1377,10 @@ export default function Operations() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Mit ad teljesítéskor (képesítés)</label>
-                <select value={editForm.qualificationId} onChange={(e) => setEditForm({ ...editForm, qualificationId: e.target.value })} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
+                <select value={editForm.qualificationId} onChange={(e) => { if (e.target.value === "__new__") { setQualPickTarget("edit"); setQualMgrOpen(true); return; } setEditForm({ ...editForm, qualificationId: e.target.value }); }} className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }}>
                   <option value="">— nem ad képesítést —</option>
                   {qualTypeOptions.map((qt) => <option key={qt.id} value={qt.id}>{qt.name}</option>)}
+                  {canEdit && <option value="__new__">＋ Új képzettség létrehozása…</option>}
                 </select>
               </div>
               <div>
@@ -1435,6 +1450,53 @@ export default function Operations() {
         onConfirm={() => { void setCancelled(true); }}
         message={`Lemondod a műveletet: „${cancelTarget?.name}"? A lemondott művelet nem számít bele semmibe (képesítés, éves szolgálati napok), a beosztás megmarad.`}
       />
+      <Modal open={qualMgrOpen} onClose={() => { setQualMgrOpen(false); setQualPickTarget(null); }} title={qualPickTarget ? "Új képzettség a művelethez" : "Képzettségek"} wide>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">{qualPickTarget ? "Hozd létre a képzettséget — a művelet-űrlap megmarad, és az új képzettség rögtön kiválasztódik benne." : "Itt hozhatsz létre új képzettség-típust; a katonáknak a Személyek oldalon adod ki, a műveletekhez pedig követelményként állítod be."}</p>
+          {canEdit && (
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto] items-end bg-secondary/30 border border-border p-3" style={{ borderRadius: "2px" }}>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Új képzettség neve</label>
+                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="pl. Gépjárművezető B" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-military text-muted-foreground mb-1">Kategória</label>
+                <input value={newTypeCategory} onChange={(e) => setNewTypeCategory(e.target.value)} placeholder="Általános" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+              </div>
+              <button onClick={handleCreateType} disabled={savingType} className="btn-mil-primary text-xs whitespace-nowrap py-2">Létrehoz</button>
+            </div>
+          )}
+          <input value={qualMgrSearch} onChange={(e) => setQualMgrSearch(e.target.value)} placeholder="Szűrés név vagy kategória szerint…" className="w-full bg-input border border-border px-3 py-2 text-sm" style={{ borderRadius: "2px" }} />
+          <div className="border border-border max-h-[60vh] overflow-auto" style={{ borderRadius: "2px" }}>
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col className="w-[22%]" />
+                <col className="w-[16%]" />
+                {canEdit && <col className="w-[190px]" />}
+              </colgroup>
+              <thead className="sticky top-0 bg-card">
+                <tr className="text-left text-xs uppercase tracking-military text-muted-foreground border-b border-border">
+                  <th className="px-3 py-2">Név</th>
+                  <th className="px-3 py-2">Kategória</th>
+                  <th className="px-3 py-2">Lejárat</th>
+                  {canEdit && <th className="px-3 py-2"></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {qualTypeOptions.length === 0 ? (
+                  <tr><td colSpan={4} className="px-3 py-4 text-center text-muted-foreground">Nincs képzettség.</td></tr>
+                ) : qualTypeOptions
+                  .filter((qt) => !qualMgrSearch.trim() || `${qt.name} ${qt.category}`.toLowerCase().includes(qualMgrSearch.trim().toLowerCase()))
+                  .map((qt) => (
+                  <QualTypeRow key={qt.id} item={qt} canEdit={canEdit} onSaved={(saved) => setQualTypeOptions((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))} onDeleted={() => setQualTypeOptions((prev) => prev.filter((x) => x.id !== qt.id))} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Modal>
+
       {/* ── Személy-ütközés: döntés a beosztás előtt ─────────────────────── */}
       <Modal open={!!overlap} onClose={() => { if (!overlapBusy) setOverlap(null); }} title="Ütköző beosztás">
         {overlap && detail && (

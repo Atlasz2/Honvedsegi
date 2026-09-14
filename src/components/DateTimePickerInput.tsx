@@ -56,7 +56,8 @@ export default function DateTimePickerInput({ value, onChange, placeholder = 'D�
           <CalendarIcon className="w-4 h-4 text-muted-foreground" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-3" align="start">
+      {/* A görgetés a nyitott választón belül marad — a modal görgetése ne zárja be és ne lapozza el. */}
+      <PopoverContent className="w-auto p-3" align="start" onWheel={(e) => e.stopPropagation()} onInteractOutside={(e) => { if ((e.target as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper]')) e.preventDefault(); }}>
         <div className="space-y-3">
           <Calendar
             mode="single"
@@ -67,14 +68,31 @@ export default function DateTimePickerInput({ value, onChange, placeholder = 'D�
             initialFocus
           />
           <div>
-            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Időpont</label>
-            <input
-              type="time"
-              value={current.time}
-              onChange={e => setTime(e.target.value)}
-              className="w-full bg-input border border-border px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-              style={{ borderRadius: '2px' }}
-            />
+            <label className="block text-[10px] uppercase tracking-military text-muted-foreground mb-1">Időpont (óra : perc)</label>
+            <div className="flex items-center gap-1">
+              <select
+                value={current.time.slice(0, 2)}
+                onChange={e => setTime(`${e.target.value}:${current.time.slice(3, 5) || '00'}`)}
+                className="bg-input border border-border px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-primary"
+                style={{ borderRadius: '2px' }}
+              >
+                {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+              <span className="font-mono text-muted-foreground">:</span>
+              <select
+                value={current.time.slice(3, 5) || '00'}
+                onChange={e => setTime(`${current.time.slice(0, 2) || '00'}:${e.target.value}`)}
+                className="bg-input border border-border px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-primary"
+                style={{ borderRadius: '2px' }}
+              >
+                {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).concat([current.time.slice(3, 5)].filter(m => m && Number(m) % 5 !== 0)).sort().map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <div className="flex gap-1 ml-2">
+                {['06:00', '08:00', '12:00', '18:00'].map(t => (
+                  <button key={t} type="button" onClick={() => setTime(t)} className="px-1.5 py-1 text-[10px] font-mono border border-border hover:border-primary hover:text-primary" style={{ borderRadius: '2px' }}>{t}</button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </PopoverContent>

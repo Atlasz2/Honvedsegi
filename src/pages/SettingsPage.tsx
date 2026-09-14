@@ -6,6 +6,7 @@ import {
   previewImport,
   updateImportDraft,
   confirmImport,
+  exportImportDryRunPdf,
   type ImportPreviewResult,
   type ImportEntity,
   type ImportPreviewItem,
@@ -20,6 +21,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import SystemStatusPanel from '@/components/SystemStatusPanel';
 import DevelopersFooter from '@/components/DevelopersFooter';
 import AlertThresholdsPanel from '@/components/AlertThresholdsPanel';
+import OpsHealthPanel from '@/components/OpsHealthPanel';
 import { applyTheme, getTheme, type Theme } from '@/lib/theme';
 import BasicTrainingImportPanel from '@/components/BasicTrainingImportPanel';
 
@@ -38,7 +40,7 @@ const IMPORT_FIELDS: Record<ImportEntity, ImportFieldConfig[]> = {
     { key: 'sztsz', label: 'SZTSZ', required: true, placeholder: 'pl. HU123456' },
     { key: 'rank', label: 'Rendfokozat', required: true, placeholder: 'pl. főhadnagy' },
     { key: 'unit', label: 'Alegység', required: true, placeholder: 'pl. 2. lövészszázad' },
-    { key: 'status', label: 'Státusz', required: true, options: ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'] },
+    { key: 'status', label: 'Státusz', required: true, options: ['Aktív', 'Tartalékos', 'Leszerelt'] },
     { key: 'email', label: 'E-mail', placeholder: 'pl. nev@honved.hu' },
     { key: 'phone', label: 'Telefon', placeholder: 'pl. +36 30 123 4567' },
     { key: 'birthDate', label: 'Születési dátum', placeholder: 'YYYY-MM-DD' },
@@ -443,6 +445,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {isAdmin && <OpsHealthPanel isDev={isDev} />}
       {isAdmin && <AlertThresholdsPanel canEdit={isAdmin} />}
 
       {/* Import — egy helyen: állomány (KGIR-export) és alapkiképzés-tábla */}
@@ -616,6 +619,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => setImportEditorOpen(true)} className="btn-mil-secondary text-xs">Tervezet megnyitása</button>
+                  <button onClick={() => { exportImportDryRunPdf(importPreview.entity, importPreview.draftId, importFile?.name ?? '').catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-secondary text-xs" title="Aláírható változáslista — mit engedsz be az elfogadással">Próbaüzem-PDF</button>
                   <button onClick={() => { void handleSaveDraft(); }} disabled={!draftDirty || savingDraft} className="btn-mil-primary text-xs">
                     {savingDraft ? 'Mentés...' : draftDirty ? 'Tervezet mentése' : 'Tervezet naprakész'}
                   </button>

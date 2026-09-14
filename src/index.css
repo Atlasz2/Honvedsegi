@@ -46,40 +46,46 @@
   /* Világos téma: ugyanaz a felépítés, papír-szerű háttérrel. A Beállításokban
      kapcsolható; a választás a böngészőben marad (localStorage). */
   :root[data-theme="light"] {
-    --background: 210 20% 96%;
-    --foreground: 220 25% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 25% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 25% 12%;
-    --primary: 148 40% 34%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 20% 92%;
-    --secondary-foreground: 220 25% 12%;
-    --muted: 210 20% 92%;
-    --muted-foreground: 216 12% 40%;
-    --accent: 40 60% 40%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 6 63% 42%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 216 18% 82%;
-    --input: 0 0% 100%;
-    --ring: 148 40% 34%;
+    /* Nem vakító: tört, enyhén meleg-szürke „papír” háttér, a kártyák egy
+       árnyalattal világosabbak (nem tiszta fehér), a szöveg sötétszürke (nem
+       fekete), a zöld mélyebb. A kontraszt marad olvasható, a fény nem éget. */
+    --background: 40 12% 91%;
+    --foreground: 220 18% 20%;
+    --card: 40 14% 95%;
+    --card-foreground: 220 18% 20%;
+    --popover: 40 14% 96%;
+    --popover-foreground: 220 18% 20%;
+    --primary: 148 34% 30%;
+    --primary-foreground: 40 20% 97%;
+    --secondary: 40 10% 86%;
+    --secondary-foreground: 220 18% 20%;
+    --muted: 40 10% 87%;
+    --muted-foreground: 216 10% 42%;
+    --accent: 40 45% 36%;
+    --accent-foreground: 40 20% 97%;
+    --destructive: 6 55% 40%;
+    --destructive-foreground: 40 20% 97%;
+    --border: 40 10% 78%;
+    --input: 40 16% 97%;
+    --ring: 148 34% 30%;
 
-    --sidebar-background: 216 22% 14%;
-    --sidebar-foreground: 210 27% 93%;
-    --sidebar-border: 216 20% 24%;
+    /* Világosban a bal sáv és a fejléc is világos (tört fehér), nem marad sötét. */
+    --sidebar-background: 40 14% 97%;
+    --sidebar-foreground: 220 18% 20%;
+    --sidebar-border: 40 10% 78%;
 
-    --mil-brass: 40 60% 38%;
-    --mil-warning: 28 70% 42%;
-    --mil-surface-elevated: 210 20% 90%;
-    --mil-table-odd: 0 0% 100%;
-    --mil-table-even: 210 20% 97%;
-    --mil-table-hover: 148 40% 94%;
-    --mil-grid-line: rgba(0, 0, 0, 0.035);
+    --mil-brass: 40 50% 34%;
+    --mil-warning: 28 60% 38%;
+    --mil-surface-elevated: 40 12% 88%;
+    --mil-table-odd: 40 14% 95%;
+    --mil-table-even: 40 12% 92%;
+    --mil-table-hover: 148 30% 88%;
+    --mil-grid-line: rgba(0, 0, 0, 0.04);
     color-scheme: light;
   }
   /* A világos témában a sárga/zöld/kék feliratok sötétebb árnyalatot kapnak, hogy olvashatók maradjanak. */
+  :root[data-theme="light"] .crosshair-bg { background-image: none; }
+  :root[data-theme="light"] .scanline-overlay { background: none; }
   :root[data-theme="light"] .text-amber-400 { color: #b45309; }
   :root[data-theme="light"] .text-emerald-400 { color: #047857; }
   :root[data-theme="light"] .text-sky-400 { color: #0369a1; }

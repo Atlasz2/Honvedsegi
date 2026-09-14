@@ -23,10 +23,9 @@ export const queryKeys = {
  */
 const FALLBACK: ReferenceData = {
   units: ['31 TVZ', '83 TVZ', '19 TVZ', 'Ezredtörzs'],
-  personStatuses: ['Aktív', 'Tartalékos', 'Szabadságon', 'Leszerelt'],
+  personStatuses: ['Aktív', 'Tartalékos', 'Leszerelt'],
   serviceTypes: {
     Aktív: ['Szerződéses', 'Hivatásos'],
-    Szabadságon: ['Szerződéses', 'Hivatásos'],
     Tartalékos: ['Önkéntes tartalékos', 'Állandó behívásos'],
   },
   regions: { 'Veszprém': ['31 TVZ'], 'Vas': ['83 TVZ'], 'Győr-Moson-Sopron': ['19 TVZ'] },

@@ -49,17 +49,16 @@ def region_label(region: str) -> str:
         return "Ezredtörzs (Győr)"
     return f"{unit_label(units[0])} – {region}"
 
-PERSON_STATUSES: tuple[str, ...] = ("Aktív", "Tartalékos", "Szabadságon", "Leszerelt")
+PERSON_STATUSES: tuple[str, ...] = ("Aktív", "Tartalékos", "Leszerelt")
 
 # Jogviszony altípusa a státuszon belül. Az aktív (szerződéses/hivatásos)
 # vehet ki szabadságot; a tartalékos nem — az állandó behívásos tartalékosnak
 # szolgálatmentesség jár helyette. Üres = importból még nem ismert.
 SERVICE_TYPES: dict[str, tuple[str, ...]] = {
     "Aktív": ("Szerződéses", "Hivatásos"),
-    "Szabadságon": ("Szerződéses", "Hivatásos"),
     "Tartalékos": ("Önkéntes tartalékos", "Állandó behívásos"),
 }
-ACTIVE_STATUSES: tuple[str, ...] = ("Aktív", "Szabadságon")
+ACTIVE_STATUSES: tuple[str, ...] = ("Aktív",)
 PERMANENT_RESERVE = "Állandó behívásos"
 
 # Növekvő rangsorban. A rövidítést a frontend a listákban használja.

@@ -11,10 +11,12 @@ from app.core.time import as_utc, utc_now
 from app.db import SessionLocal
 from app.models import SessionTokenModel
 from app.security import fingerprint_token
+from conftest import ADMIN_PASSWORD, ADMIN_USERNAME  # rootdir-relatív (pytest a tests mappát az útvonalra teszi)
 
 
 def _login(client) -> str:
-    response = client.post("/api/auth/login", json={"username": "admin", "password": "AdminTeszt_2026!"})
+    # A jelszó a környezetből jön (a CI mást állít be, mint a helyi gép) — nem beégetett.
+    response = client.post("/api/auth/login", json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})
     assert response.status_code == 200, response.text
     return response.json()["token"]
 

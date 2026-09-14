@@ -10,7 +10,20 @@ import {
 } from '@/lib/store';
 import type { PersonnelQualification, QualificationType } from '@/lib/types';
 import type { Person } from '@/lib/types';
+import type { PersonTimeline, TimelineKind } from '@/lib/store';
+
+const TIMELINE_LABEL: Record<TimelineKind, string> = {
+  operation: 'művelet', duty: 'szolgálat', event: 'esemény', leave: 'távollét', attendance: 'létszám-eltérés',
+  qualification: 'képesítés', 'qualification-expiry': 'képesítés lejár', document: 'okmány', 'document-expiry': 'okmány lejár',
+  order: 'parancs', milestone: 'mérföldkő',
+};
+const TIMELINE_TONE: Record<TimelineKind, string> = {
+  operation: 'bg-primary', duty: 'bg-brass', event: 'bg-sky-600', leave: 'bg-amber-500', attendance: 'bg-orange-500',
+  qualification: 'bg-emerald-500', 'qualification-expiry': 'bg-destructive', document: 'bg-violet-500', 'document-expiry': 'bg-destructive',
+  order: 'bg-slate-500', milestone: 'bg-foreground',
+};
 import Modal from '@/components/Modal';
+import DatePickerInput from '@/components/DatePickerInput';
 import { toast } from 'sonner';
 import { differenceInDays, parseISO } from 'date-fns';
 
@@ -19,7 +32,6 @@ import { differenceInDays, parseISO } from 'date-fns';
 const PERSON_STATUS_CLASS: Record<string, string> = {
   Aktív: 'badge-active',
   Tartalékos: 'badge-reserve',
-  Szabadságon: 'badge-leave',
   Leszerelt: 'badge-discharged',
 };
 
@@ -88,7 +100,8 @@ interface Props {
 
 export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit }: Props) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'okmanyok' | 'elozmenyek'>('alap');
+  const [tab, setTab] = useState<'alap' | 'kepesitsegek' | 'okmanyok' | 'elozmenyek' | 'idoszalag'>('alap');
+  const [timeline, setTimeline] = useState<PersonTimeline | null>(null);
   const [docs, setDocs] = useState<PersonDocument[]>([]);
   const [addingDoc, setAddingDoc] = useState(false);
   const [docCategory, setDocCategory] = useState<'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb'>('Okmány');
@@ -124,13 +137,15 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
       qtStore.getAll(),
       pStore.getHistory(person.id),
       docStore.getForPerson(person.id),
+      pStore.getTimeline(person.id).catch(() => null),
     ])
-      .then(([quals, types, hist, personDocs]) => {
+      .then(([quals, types, hist, personDocs, tl]) => {
         if (!active) return;
         setQualifications(quals);
         setQualTypes(types);
         setHistory(hist as HistoryEntry[]);
         setDocs(personDocs);
+        setTimeline(tl);
         setLoading(false);
       })
       .catch((err) => {
@@ -273,7 +288,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
 
         {/* Tab-navigáció */}
         <div className="flex border-b border-border gap-4">
-          {(['alap', 'kepesitsegek', 'okmanyok', 'elozmenyek'] as const).map((t) => (
+          {(['alap', 'kepesitsegek', 'okmanyok', 'elozmenyek', 'idoszalag'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -292,7 +307,7 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                    Okmányok/Alkalmasság
                    {docExpiredCount > 0 && <span className="px-1 text-xs badge-cancelled">{docExpiredCount}</span>}
                  </span>
-               ) : `Előzmények (${history.length})`}
+               ) : t === 'elozmenyek' ? `Előzmények (${history.length})` : `Időszalag (${timeline?.items.length ?? 0})`}
             </button>
           ))}
         </div>
@@ -387,11 +402,11 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Megszerzés dátuma (alapból ma)</label>
-                            <input type="date" value={newQualEarned} onChange={e => setNewQualEarned(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                            <DatePickerInput value={newQualEarned} onChange={setNewQualEarned} />
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Lejárat dátuma (opcionális)</label>
-                            <input type="date" value={newQualExpiry} onChange={e => setNewQualExpiry(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                            <DatePickerInput value={newQualExpiry} onChange={setNewQualExpiry} />
                           </div>
                           <div>
                             <label className="block text-xs text-muted-foreground mb-1">Megjegyzés</label>
@@ -516,6 +531,39 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                       ))}
                     </tbody>
                   </table>
+                )}
+              </div>
+            )}
+
+            {tab === 'idoszalag' && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Minden, amit a rendszer tud róla, egy időrendben — műveletek, szolgálatok, események, szabadságok, létszám-eltérések, képesítések, okmányok, parancsok. Nem a KGIR; ez a „mi tudunk róla” nézet.</p>
+                {!timeline || timeline.items.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-mono py-6 text-center">Még nincs bejegyzés.</p>
+                ) : (
+                  <ol className="relative border-l border-border ml-3 max-h-[28rem] overflow-y-auto pr-2">
+                    {timeline.items.map((it, i) => {
+                      const tone = TIMELINE_TONE[it.kind] ?? 'bg-muted-foreground';
+                      const clickable = it.ref.type === 'exercise' || it.ref.type === 'event' || it.ref.type === 'order';
+                      const open = () => {
+                        if (!clickable) return;
+                        onClose();
+                        if (it.ref.type === 'exercise') navigate('/operations', { state: { openOperationId: it.ref.id, openOperationSource: 'exercise' } });
+                        else if (it.ref.type === 'event') navigate('/events', { state: { openEventId: it.ref.id } });
+                        else navigate('/parancsok', { state: { openOrderId: it.ref.id } });
+                      };
+                      return (
+                        <li key={`${it.kind}-${it.date}-${i}`} className="ml-4 py-1.5">
+                          <span className={`absolute -left-[5px] mt-1.5 w-2.5 h-2.5 ${tone}`} style={{ borderRadius: '2px' }} />
+                          <button onClick={open} className={`text-left w-full ${clickable ? 'hover:bg-secondary/40' : 'cursor-default'} px-2 py-1`} style={{ borderRadius: '2px' }}>
+                            <span className="block text-[11px] font-mono text-muted-foreground">{it.date}{it.endDate && it.endDate !== it.date ? ` – ${it.endDate}` : ''} · {TIMELINE_LABEL[it.kind] ?? it.kind}</span>
+                            <span className="block text-sm"><span className="font-medium">{it.title}</span>{it.subtitle ? <span className="text-muted-foreground"> — {it.subtitle}</span> : null}</span>
+                            {it.status && <span className="block text-[11px] font-mono text-primary">{it.status}</span>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
                 )}
               </div>
             )}

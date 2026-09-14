@@ -463,6 +463,18 @@ def _migrate_event_cancelled_status(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _migrate_leave_status_to_active(db: Session) -> None:
+    """A „Szabadságon" személy-státusz megszűnt: az ilyen rekord Aktív (a szabadság a Szabadság modulban van)."""
+    key = "v8_person_status_no_szabadsagon"
+    if _migration_done(db, key):
+        return
+    result = db.execute(text("UPDATE personnel SET status = 'Aktív' WHERE status = 'Szabadságon'"))
+    if result.rowcount:
+        log.info("personnel: %d Szabadságon → Aktív", result.rowcount)
+    db.commit()
+    _mark_done(db, key)
+
+
 def _migrate_trainings_into_exercises(db: Session) -> None:
     """A kiképzés is művelet (döntés: 2026-09-13). Minden trainings-sor gyakorlat
     lesz ugyanazzal az azonosítóval (a szervező mező átmegy), a résztvevők,
@@ -513,3 +525,4 @@ def run_all(db: Session) -> None:
     _mark_shadow_events(db)
     _migrate_trainings_into_exercises(db)
     _migrate_event_cancelled_status(db)
+    _migrate_leave_status_to_active(db)
