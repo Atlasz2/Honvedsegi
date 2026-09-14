@@ -55,9 +55,10 @@ function YearDeadlineLine({ d }: { d: YearDeadline }) {
 }
 
 // Közös oszlopok: név / rendfokozat / alegység — minden személyes lista így kezdődik.
-function personColumns<T extends { name: string; rank: string; unit: string }>(): AlertColumn<T>[] {
+function personColumns<T extends { name: string; rank: string; unit: string; sztsz?: string }>(): AlertColumn<T>[] {
   return [
     { header: "Név", render: (r) => <span className="font-medium">{r.name}</span>, value: (r) => r.name },
+    { header: "SZTSZ", render: (r) => <span className="font-mono text-xs">{r.sztsz ?? ""}</span>, value: (r) => r.sztsz ?? "" },
     { header: "Rendfokozat", render: (r) => <span className="font-mono text-xs text-primary">{r.rank}</span>, value: (r) => r.rank },
     { header: "Alegység", render: (r) => <span className="text-muted-foreground text-xs">{r.unit}</span>, value: (r) => r.unit },
   ];
@@ -251,6 +252,7 @@ export default function Alerts() {
         emptyText="Nincs lejáró képesítés a kiválasztott időablakban"
         columns={[
           { header: "Név", render: (a) => <span className="font-medium">{a.personnelName}</span>, value: (a) => a.personnelName },
+          { header: "SZTSZ", render: (a) => <span className="font-mono text-xs">{a.sztsz ?? ""}</span>, value: (a) => a.sztsz ?? "" },
           { header: "Rendfokozat", render: (a) => <span className="font-mono text-xs text-primary">{a.rank}</span>, value: (a) => a.rank },
           { header: "Alegység", render: (a) => <span className="text-muted-foreground text-xs">{a.unit}</span>, value: (a) => a.unit },
           { header: "Képesítés", render: (a) => a.qualTypeName, value: (a) => a.qualTypeName },

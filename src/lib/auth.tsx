@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AuthToken } from './types';
-import { getToken, login as storeLogin, logoutSession } from './store';
+import { getToken, login as storeLogin, logoutSession, refreshStoredUser } from './store';
 
 interface AuthContextType {
   user: AuthToken | null;
@@ -28,6 +28,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     void logoutSession();
     setUser(null);
+  }, []);
+
+  // Betöltéskor a szerver mondja meg, ki vagyok (zászlóalj, részleg, szerep) — a
+  // régi tokenben ez hiányozhat, és akkor az ezredtörzs-nézet jelenne meg.
+  useEffect(() => {
+    let alive = true;
+    void refreshStoredUser().then((fresh) => { if (alive && fresh) setUser(fresh); });
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {

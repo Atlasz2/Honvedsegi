@@ -54,8 +54,10 @@ export default function Attendance() {
   const [selectedEventKey, setSelectedEventKey] = useState('');
   const [fillStatus, setFillStatus] = useState<AttendanceStatus>('Szolgálatban');
   const [filling, setFilling] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [onlyExceptions, setOnlyExceptions] = useState(false);
+  // A gyors kitöltés (a mai műveletek résztvevői) alapból nyitva — ez a napi munka első lépése.
+  const [quickOpen, setQuickOpen] = useState(true);
+  // Alapból csak az eltérések: 500 „Jelen” sort fölösleges kirajzolni; a teljes névsor egy gombra jön.
+  const [onlyExceptions, setOnlyExceptions] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -104,7 +106,7 @@ export default function Attendance() {
     try {
       const ids = await store.eventParticipantIds(selectedEvent.eventType, selectedEvent.eventId);
       setEventScope({ key: `${selectedEvent.eventType}|${selectedEvent.eventId}`, name: selectedEvent.name, ids: new Set(ids) });
-      setOnlyExceptions(false);
+      setOnlyExceptions(false);   // a résztvevőket mind mutatjuk, a „Jelen”-eket is
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -348,10 +350,13 @@ export default function Attendance() {
             <input type="checkbox" checked={includeReserve} onChange={e => setIncludeReserve(e.target.checked)} />
             Tartalékosok is
           </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none pb-2">
-            <input type="checkbox" checked={onlyExceptions} onChange={e => setOnlyExceptions(e.target.checked)} />
-            Csak az eltérések
-          </label>
+          <button
+            onClick={() => setOnlyExceptions((v) => !v)}
+            className={`text-xs uppercase tracking-military font-mono px-3 py-2 mb-0.5 ${onlyExceptions ? 'btn-mil-secondary' : 'btn-mil-primary'}`}
+            title={onlyExceptions ? 'A teljes névsor megjelenítése (aki „Jelen”, az is)' : 'Vissza: csak az eltérések'}
+          >
+            {onlyExceptions ? 'Teljes névsor' : 'Csak az eltérések'}
+          </button>
         </div>
         <div className="flex flex-wrap gap-2 mt-3">
           <span className="px-3 py-1.5 bg-background border border-border text-sm font-rajdhani" style={{ borderRadius: '2px' }}>
@@ -447,7 +452,7 @@ export default function Attendance() {
         <div className="flex items-center gap-3 px-3 py-2 border border-primary/40 bg-primary/5 text-sm" style={{ borderRadius: '2px' }}>
           <Users className="w-4 h-4 text-primary" />
           <span>Szűrve: <span className="font-medium">{eventScope.name}</span> résztvevői — {visible.length} fő a mai névsorban{eventScope.ids.size > visible.length ? ` (${eventScope.ids.size - visible.length} résztvevő nincs a mai listában, pl. tartalékos)` : ''}.</span>
-          <button onClick={() => setEventScope(null)} className="ml-auto text-xs font-mono text-muted-foreground hover:text-foreground hover:underline">szűrő törlése</button>
+          <button onClick={() => { setEventScope(null); setOnlyExceptions(true); }} className="ml-auto text-xs font-mono text-muted-foreground hover:text-foreground hover:underline">szűrő törlése</button>
         </div>
       )}
 

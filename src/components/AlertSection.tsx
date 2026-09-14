@@ -27,7 +27,7 @@ type Props<T> = {
   onRowClick?: (row: T) => void;
   /** Csoportosítás (pl. lejárt / hamarosan / folyamatban): a csoportok sorrendje a visszaadott címkék első előfordulása. */
   groupOf?: (row: T) => string;
-  /** Alapból nyitva? Alapértelmezés: ha van sor, de legfeljebb ennyi. */
+  /** Alapból nyitva, ha van sor, de legfeljebb ennyi. Alapértelmezés 0 = minden zárva, kattintásra nyílik. */
   openIfAtMost?: number;
   loading?: boolean;
 };
@@ -48,7 +48,7 @@ function fold(value: string): string {
  * szórja tele az oldalt — alapból csak a kis listák vannak nyitva.
  */
 export default function AlertSection<T>({
-  title, tone, icon, rows, columns, rowKey, emptyText, description, onRowClick, groupOf, openIfAtMost = 10, loading = false,
+  title, tone, icon, rows, columns, rowKey, emptyText, description, onRowClick, groupOf, openIfAtMost = 0, loading = false,
 }: Props<T>) {
   const [open, setOpen] = useState<boolean | null>(null);
   const [filter, setFilter] = useState('');
@@ -70,13 +70,18 @@ export default function AlertSection<T>({
     return [...map.entries()];
   }, [filtered, groupOf]);
 
+  // Export: az ügyintéző választja, mely oszlopok kellenek; az SZTSZ mindig megy (ez az azonosító a KGIR felé).
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportCols, setExportCols] = useState<Set<string>>(() => new Set(columns.map((c) => c.header)));
   const exportXlsx = async () => {
     try {
-      const headers = [...(groupOf ? ['Csoport'] : []), ...columns.map((c) => c.header)];
+      const chosen = columns.filter((c) => exportCols.has(c.header) || /sztsz/i.test(c.header));
+      const headers = [...(groupOf ? ['Csoport'] : []), ...chosen.map((c) => c.header)];
       const body = groups.flatMap(([group, items]) =>
-        items.map((row) => [...(groupOf ? [group] : []), ...columns.map((c) => c.value(row))]),
+        items.map((row) => [...(groupOf ? [group] : []), ...chosen.map((c) => c.value(row))]),
       );
       await tableExport.xlsx(title, headers, body, `${fold(title).replace(/[^a-z0-9]+/g, '-')}.xlsx`);
+      setExportOpen(false);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -121,11 +126,32 @@ export default function AlertSection<T>({
                   />
                 </div>
                 <span className="text-xs font-mono text-muted-foreground">{filtered.length} / {rows.length}</span>
-                <button onClick={() => { void exportXlsx(); }} className="btn-mil-secondary text-xs flex items-center gap-1.5 ml-auto">
+                <button onClick={() => setExportOpen((v) => !v)} className="btn-mil-secondary text-xs flex items-center gap-1.5 ml-auto">
                   <FileDown className="w-3.5 h-3.5" />
-                  Excel
+                  Excel…
                 </button>
               </div>
+              {exportOpen && (
+                <div className="mb-3 border border-border p-3 text-xs" style={{ borderRadius: '2px' }}>
+                  <p className="uppercase tracking-military font-mono text-muted-foreground mb-2">Mely oszlopok kerüljenek az Excelbe? (az SZTSZ mindig)</p>
+                  <div className="flex flex-wrap gap-3">
+                    {columns.map((c) => {
+                      const locked = /sztsz/i.test(c.header);
+                      return (
+                        <label key={c.header} className={`flex items-center gap-1.5 ${locked ? 'text-muted-foreground' : 'cursor-pointer'}`}>
+                          <input type="checkbox" className="accent-primary" checked={locked || exportCols.has(c.header)} disabled={locked}
+                            onChange={(e) => setExportCols((prev) => { const n = new Set(prev); if (e.target.checked) n.add(c.header); else n.delete(c.header); return n; })} />
+                          {c.header}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-end gap-2 mt-3">
+                    <button onClick={() => setExportOpen(false)} className="btn-mil-secondary text-xs">Mégsem</button>
+                    <button onClick={() => { void exportXlsx(); }} className="btn-mil-primary text-xs">Excel letöltése ({filtered.length} sor)</button>
+                  </div>
+                </div>
+              )}
               <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
                 <table className="w-full mil-table">
                   <thead className="sticky top-0 bg-card">

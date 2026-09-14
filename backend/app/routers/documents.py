@@ -134,12 +134,15 @@ def expiring_documents(db: DB, user: Reader, days: int = Query(60, ge=1, le=365)
         if days_left > days:
             continue  # még messze van a lejárat
         person = persons.get(doc.personnel_id)
+        if person is None:
+            continue   # hatókörön kívül vagy törölt személy
         result.append({
             "documentId": doc.id,
             "personnelId": doc.personnel_id,
-            "name": person.name if person else doc.personnel_id,
-            "rank": person.rank if person else "",
-            "unit": person.unit if person else "",
+            "name": person.name,
+            "sztsz": person.sztsz,
+            "rank": person.rank,
+            "unit": person.unit,
             "category": doc.category,
             "documentName": doc.name,
             "expiryDate": doc.expiry_date,

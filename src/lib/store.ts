@@ -446,23 +446,23 @@ export const series = {
   matrix: (id: string) => request<SeriesMatrix>(`/series/${id}/matrix`),
 };
 
-export type UnexcusedAlert = { personnelId: string; name: string; rank: string; unit: string; date: string; note: string };
+export type UnexcusedAlert = { personnelId: string; name: string; sztsz?: string; rank: string; unit: string; date: string; note: string };
 export type ReadinessGap = { personnelId: string; name: string; rank: string; unit: string };
 
 export type LeaveMinimumItem = {
-  personnelId: string; name: string; rank: string; unit: string;
+  personnelId: string; name: string; sztsz?: string; rank: string; unit: string;
   takenDays: number; missingDays: number;
 };
 /** Éves kötelezettség határideje (dec. 31.) és az előrejelzés állapota. */
 export type YearDeadline = { deadline: string; daysLeft: number; warnDays: number; isOverdue: boolean; isDueSoon: boolean };
 export type LeaveMinimumResult = YearDeadline & { year: number; minDays: number; items: LeaveMinimumItem[] };
 export type ServiceMinimumItem = {
-  personnelId: string; name: string; rank: string; unit: string;
+  personnelId: string; name: string; sztsz?: string; rank: string; unit: string;
   servedDays: number; missingDays: number;
 };
 export type ServiceMinimumResult = YearDeadline & { year: number; minDays: number; items: ServiceMinimumItem[] };
 export type BasicTrainingItem = {
-  personnelId: string; name: string; rank: string; unit: string;
+  personnelId: string; name: string; sztsz?: string; rank: string; unit: string;
   joinDate: string; deadline: string | null; daysLeft: number | null;
   isOverdue: boolean; isDueSoon: boolean;
   completedModules: number; totalModules: number; missingModules: string[];
@@ -486,7 +486,7 @@ export const alerts = {
 };
 
 export type CustomRuleAlertItem = {
-  ruleId: string; ruleLabel: string; personnelId: string; name: string; rank: string; unit: string;
+  ruleId: string; ruleLabel: string; personnelId: string; name: string; sztsz?: string; rank: string; unit: string;
   baseDate: string; deadline: string; daysLeft: number; isOverdue: boolean;
 };
 export type CustomRuleAlertsResult = { rules: CustomAlertRule[]; items: CustomRuleAlertItem[] };
@@ -552,6 +552,7 @@ export type ExpiringDocument = {
   documentId: string;
   personnelId: string;
   name: string;
+  sztsz?: string;
   rank: string;
   unit: string;
   category: string;
@@ -1354,4 +1355,22 @@ export const settings = {
 export const me = {
   todos: () => request<MyTodos>('/me/todos'),
 };
+
+/** A tárolt felhasználó-adat frissítése a szerverről (szerep, részleg, zászlóalj
+ *  változhatott a bejelentkezés óta — pl. az admin átállította). */
+export async function refreshStoredUser(): Promise<AuthToken | null> {
+  const stored = getToken();
+  if (!stored) return null;
+  try {
+    const fresh = await request<AuthToken>('/auth/me');
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as StoredSession;
+      localStorage.setItem(TOKEN_KEY, JSON.stringify({ ...parsed, user: fresh }));
+    }
+    return fresh;
+  } catch {
+    return null;
+  }
+}
 

@@ -853,6 +853,7 @@ class ParticipantRead(ParticipantBase):
 class QualificationAlert(BaseModel):
     personnelId: str
     personnelName: str
+    sztsz: str = ""
     rank: str
     unit: str
     qualificationId: str

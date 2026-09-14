@@ -253,6 +253,7 @@ export interface PersonnelQualification {
 export interface QualificationAlert {
   personnelId: string;
   personnelName: string;
+  sztsz?: string;
   rank: string;
   unit: string;
   qualificationId: string;

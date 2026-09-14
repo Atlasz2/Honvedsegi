@@ -262,6 +262,7 @@ def get_alerts(db: DB, user: Reader, days_ahead: int = 60):
         result.append(QualificationAlert(
             personnelId=person.id,
             personnelName=person.name,
+            sztsz=person.sztsz,
             rank=person.rank,
             unit=person.unit,
             qualificationId=pq.id,

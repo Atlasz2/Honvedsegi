@@ -51,11 +51,14 @@ def unexcused_absences(db: DB, user: Reader, days: int = Query(30, ge=1, le=365)
     result = []
     for record in records:
         person = persons.get(record.personnel_id)
+        if person is None:
+            continue   # más zászlóalj embere (hatókörön kívül) vagy törölt személy — nem azonosítóval listázzuk
         result.append({
             "personnelId": record.personnel_id,
-            "name": person.name if person else record.personnel_id,
-            "rank": person.rank if person else "",
-            "unit": person.unit if person else "",
+            "name": person.name,
+            "sztsz": person.sztsz,
+            "rank": person.rank,
+            "unit": person.unit,
             "date": record.date,
             "note": record.note,
         })
@@ -78,7 +81,7 @@ def readiness_gaps(db: DB, user: Reader):
 
     persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS), user)).all()
     gaps = [
-        {"personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit}
+        {"personnelId": p.id, "name": p.name, "sztsz": p.sztsz, "rank": p.rank, "unit": p.unit}
         for p in persons if p.id not in valid_holders
     ]
     gaps.sort(key=lambda x: (x["unit"], x["name"].lower()))
@@ -129,7 +132,7 @@ def leave_minimum(
     persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _ACTIVE_STATUS), user)).all()
     result = [
         {
-            "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
+            "personnelId": p.id, "name": p.name, "sztsz": p.sztsz, "rank": p.rank, "unit": p.unit,
             "takenDays": taken[p.id], "missingDays": min_days - taken[p.id],
         }
         for p in persons if taken[p.id] < min_days
@@ -199,7 +202,7 @@ def service_minimum(
     persons = db.scalars(scoped_persons(select(PersonModel).where(PersonModel.status == _RESERVE_STATUS), user)).all()
     result = [
         {
-            "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
+            "personnelId": p.id, "name": p.name, "sztsz": p.sztsz, "rank": p.rank, "unit": p.unit,
             "servedDays": served[p.id], "missingDays": min_days - served[p.id],
         }
         for p in persons if served[p.id] < min_days
@@ -241,7 +244,7 @@ def basic_training_deadline(
             deadline = date.fromisoformat(p.join_date[:10]) + timedelta(days=deadline_days)
             days_left = (deadline - today).days
         items.append({
-            "personnelId": p.id, "name": p.name, "rank": p.rank, "unit": p.unit,
+            "personnelId": p.id, "name": p.name, "sztsz": p.sztsz, "rank": p.rank, "unit": p.unit,
             "joinDate": p.join_date,
             "deadline": deadline.isoformat() if deadline else None,
             "daysLeft": days_left,
@@ -347,7 +350,7 @@ def custom_rule_alerts(db: DB, user: Reader):
                 continue
             items.append({
                 "ruleId": rule["id"], "ruleLabel": rule["label"],
-                "personnelId": person.id, "name": person.name, "rank": person.rank, "unit": person.unit,
+                "personnelId": person.id, "name": person.name, "sztsz": person.sztsz, "rank": person.rank, "unit": person.unit,
                 "baseDate": base.isoformat(), "deadline": deadline.isoformat(), "daysLeft": days_left,
                 "isOverdue": days_left < 0,
             })

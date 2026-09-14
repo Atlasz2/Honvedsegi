@@ -26,6 +26,12 @@ import DatePickerInput from '@/components/DatePickerInput';
 // A részlegek, amelyek fejezetet írnak. Az ellenjegyzés nem részleg, hanem a
 // záró aláírás (2–3 illetékes parancsnok). A backend ORDER_RESPONSIBLES párja.
 const RESPONSIBLES = ['Ügyvitel', 'Jog', 'Kiképzés', 'Személyügy', 'Pénzügy'] as const;
+/** Helyi nap (nem UTC): este 23-kor ne holnapot mutasson. */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const ORDER_STATUSES: OrderStatus[] = ['Előkészítés', 'Aláírásra vár', 'Kiadva', 'Visszavonva'];
 const PLACEHOLDERS = ['{{név}}', '{{rendfokozat}}', '{{sztsz}}', '{{alegység}}', '{{tárgy}}', '{{dátum}}', '{{parancsszám}}'];
 
@@ -51,6 +57,7 @@ function emptyChapter(): OrderChapterTemplate {
 
 export default function Parancsok() {
   const { canEdit } = useAuth();
+  const today = localToday();
   const [list, setList] = useState<Order[]>([]);
   const [overview, setOverview] = useState<OrderOverview | null>(null);
   const [types, setTypes] = useState<OrderType[]>([]);
@@ -227,6 +234,9 @@ export default function Parancsok() {
                   <td className="font-mono text-xs">
                     {o.dueDate || '—'}
                     {o.isOverdue && <AlertTriangle className="inline w-3.5 h-3.5 ml-1 text-destructive" />}
+                    {!o.isOverdue && o.dueDate === today && (o.status === 'Előkészítés' || o.status === 'Aláírásra vár') && (
+                      <AlertTriangle className="inline w-3.5 h-3.5 ml-1 text-amber-400" aria-label="Ma esedékes" />
+                    )}
                   </td>
                   <td><span className={orderStatusClass[o.status]}>{o.status}</span></td>
                   <td className="font-mono text-xs">{o.doneChapters} / {o.totalChapters}</td>
@@ -724,7 +734,7 @@ function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState<number | undefined>(thisYear);
   const [period, setPeriod] = useState<'year' | 'month' | 'week'>('year');
-  const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
+  const [anchor, setAnchor] = useState(() => localToday());
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -769,7 +779,7 @@ function StatsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
               <button onClick={() => shift(-1)} className="btn-mil-secondary text-xs">◀</button>
               <span className="font-mono text-xs min-w-[190px] text-center">{stats?.period ? `${stats.period.from} – ${stats.period.to}` : anchor}</span>
               <button onClick={() => shift(1)} className="btn-mil-secondary text-xs">▶</button>
-              <button onClick={() => setAnchor(new Date().toISOString().slice(0, 10))} className="btn-mil-secondary text-xs">Ma</button>
+              <button onClick={() => setAnchor(localToday())} className="btn-mil-secondary text-xs">Ma</button>
             </>
           )}
           <button onClick={() => { store.exportStatsPdf(year, period, anchor).catch((e) => toast.error(getErrorMessage(e))); }} className="btn-mil-primary text-xs flex items-center gap-1.5 ml-auto">
