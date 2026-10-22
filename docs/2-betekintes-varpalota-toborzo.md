@@ -51,8 +51,8 @@ Megépítve (2026-10-22, az „ezek mehetnek" = indulhatnak):
   (shortcut: az EventModel-alapú csomópontokra nincs).
 - **Leszerelési jegyzőkönyv (I12):** Felszerelés oldal → „Leszerelési jegyzőkönyv";
   soronként visszaadva/hiányzik + fizetendő összeg, DOCX két példányban (veszprémi
-  személyügy, ellátó). A kiadás-nyilvántartást nem módosítja (shortcut: a visszavételt
-  külön kell rögzíteni).
+  személyügy, ellátó). A „Leszerelés lezárása" a nyilvántartásba is beírja: visszavétel,
+  a hiány megtérítendőként a katonánál marad, a státusz Leszerelt.
 
 Nem épül:
 

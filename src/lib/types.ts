@@ -48,6 +48,8 @@ export interface Person {
   qualifications: string[];
   /** Importból átemelt, nem modellezett oszlopok (KGIR-export). */
   extra?: Record<string, string>;
+  /** Optimista zárolás: mentéskor visszaküldjük; ha közben más mentett, 409. */
+  version?: number;
 }
 
 /** Egy eseményhez beosztott személy közös mezői; a művelet-beosztás ezt bővíti. */

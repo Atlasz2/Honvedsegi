@@ -523,6 +523,20 @@ def _migrate_document_rank_on_card(db: Session) -> None:
     _mark_done(db, key)
 
 
+def _remove_person_orphans(db: Session) -> None:
+    """Egyszeri takarítás: a korábbi személytörlések után maradt árva sorok."""
+    from .services.person_removal import remove_orphans
+
+    key = "v8_remove_person_orphans"
+    if _migration_done(db, key):
+        return
+    removed = remove_orphans(db)
+    db.commit()
+    if removed:
+        log.info("Árva rekordok törölve: %s", removed)
+    _mark_done(db, key)
+
+
 def run_all(db: Session) -> None:
     _ensure_migrations_table(db)
     _seed_default_qual_types(db)
@@ -537,3 +551,4 @@ def run_all(db: Session) -> None:
     _migrate_event_cancelled_status(db)
     _migrate_leave_status_to_active(db)
     _migrate_document_rank_on_card(db)
+    _remove_person_orphans(db)

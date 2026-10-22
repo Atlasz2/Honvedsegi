@@ -114,7 +114,7 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 | I9 | **Típusos okmányok + „új kártya kell"** ✅ | S | Szolgálati igazolvány / sárga kártya rögzített típus; `rank_on_card` az igazolványon, eltérésnél jelzés (személy-fül, Okmányok oldal, Figyelmeztetések). |
 | I10 | **Okmány-lista + Excel** ✅ | S | `/okmanyok`, `GET /api/documents`, `/export.xlsx`: típus, N napon belül lejáró, rendfokozat-eltérés szűrővel. |
 | I11 | **Beléptetés + élelmezési átjelentő** ✅ | M | `/api/entry/{id}/entry.xlsx` és `meals.xlsx`; határidő = kezdés − 5 nap a Figyelmeztetéseken. Az átjelentő oszlopai Ritára várnak. |
-| I12 | **Leszerelési jegyzőkönyv** ✅ | M | Felszerelés → DOCX, két példány (személyügy, ellátó), visszaadva/hiányzik + fizetendő összeg. |
+| I12 | **Leszerelési jegyzőkönyv** ✅ | M | Felszerelés → DOCX, két példány (személyügy, ellátó), visszaadva/hiányzik + fizetendő összeg. **Lezárás** (`/api/entry/protocol/{id}/close`): a visszaadott felszerelés visszavéve, a hiányzó a katonánál marad megtérítendőként (a kiadás-történetben), a katona Leszerelt. |
 
 Részletek és elvetett ötletek (behívóparancs, átadás-elbocsátási ív): [`2-betekintes-varpalota-toborzo.md`](2-betekintes-varpalota-toborzo.md).
 

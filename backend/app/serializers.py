@@ -34,6 +34,7 @@ def serialize_person(item: PersonModel) -> PersonRead:
         notes=item.notes,
         qualifications=item.qualifications or [],
         extra=item.extra or {},
+        version=item.version or 1,
     )
 
 
@@ -59,6 +60,7 @@ def serialize_person_with_quals(item: PersonModel, qualification_ids: list[str])
         notes=item.notes,
         qualifications=qualification_ids,
         extra=item.extra or {},
+        version=item.version or 1,
     )
 
 

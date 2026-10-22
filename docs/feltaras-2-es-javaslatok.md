@@ -44,6 +44,12 @@ plusz egy teszt, ami végigviszi a kört: módosítás → visszaállítás → 
 
 ### 🔴 H2. Nincs egyetlen idegen kulcs sem — a törlés árva rekordokat hagy
 
+> **Kész (2026-10-22), archiválás-úton.** A „Leszerelt" státusz az archívum. Előzményes
+> személyt ügyintéző nem törölhet (409, Leszereltet ajánl); admin végleges törlése a
+> kapcsolódó okmányt, képesítést, részvételt, szabadságot és létszámot is viszi
+> (`services/person_removal.py`). Akinél felszerelés vagy jármű van, nem törölhető.
+> A meglévő árvákat a `v8_remove_person_orphans` migráció egyszer kitakarítja.
+
 A `db.py` bekapcsolja a `PRAGMA foreign_keys=ON`-t, de a modellrétegben
 **nulla `ForeignKey`** van, így nincs mit kikényszerítenie.
 
@@ -78,6 +84,9 @@ utána megelőzés. A megelőzésre két út van, és ez **termékdöntés**:
 A tényleges törlés maradjon meg adminnak, külön „végleges törlés" műveletként.
 
 ### 🟡 H3. Elveszett módosítás: két ügyintéző egymásra ír
+
+> **Kész a személyekre (2026-10-22).** `PersonModel.version` (SQLAlchemy `version_id_col`),
+> a `PUT /api/personnel/{id}` régi verzióra 409-et ad. A többi entitás még nyitott.
 
 Nincs verziómező, `updated_at`-alapú ellenőrzés vagy ETag egyetlen entitáson sem.
 A `PUT` az összes mezőt felülírja.

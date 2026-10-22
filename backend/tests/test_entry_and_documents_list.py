@@ -68,3 +68,27 @@ def test_discharge_protocol_docx(client, admin_headers):
     assert r.status_code == 200 and r.content[:2] == b"PK"  # DOCX = zip
     other = _person(client, admin_headers, "Más Miska", "18700005")
     assert client.post(f"/api/entry/protocol/{other}", json={"items": [{"equipmentId": eq["id"]}]}, headers=admin_headers).status_code == 400
+
+
+def test_close_discharge_returns_marks_missing_and_discharges(client, admin_headers):
+    pid = _person(client, admin_headers, "Lezáró Lenke", "18700006")
+    helmet = client.post("/api/equipment", json={"name": "Sisak", "category": "Védőfelszerelés", "serialNumber": "S-2", "condition": "Jó"}, headers=admin_headers).json()
+    vest = client.post("/api/equipment", json={"name": "Mellény", "category": "Védőfelszerelés", "serialNumber": "M-1", "condition": "Jó"}, headers=admin_headers).json()
+    for eq in (helmet, vest):
+        client.post(f"/api/equipment/{eq['id']}/checkout", json={"personId": pid}, headers=admin_headers)
+
+    # A katonánál lévő összes tételnek szerepelnie kell.
+    partial = client.post(f"/api/entry/protocol/{pid}/close", json={"items": [{"equipmentId": helmet["id"]}]}, headers=admin_headers)
+    assert partial.status_code == 400
+
+    r = client.post(f"/api/entry/protocol/{pid}/close", json={"items": [
+        {"equipmentId": helmet["id"], "returned": True},
+        {"equipmentId": vest["id"], "returned": False, "amount": 25000},
+    ]}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"returned": 1, "missing": 1, "amount": 25000, "status": "Leszerelt"}
+
+    items = {e["id"]: e for e in client.get("/api/equipment", headers=admin_headers).json()}
+    assert items[helmet["id"]]["checkedOutTo"] is None
+    assert items[vest["id"]]["checkedOutTo"] == pid  # hiányzik: a katonánál marad, megtérítendő
+    assert client.get(f"/api/personnel/{pid}", headers=admin_headers).json()["status"] == "Leszerelt"

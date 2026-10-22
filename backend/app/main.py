@@ -96,10 +96,12 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 # „database is locked" (busy_timeout után) → 503 „próbáld újra", nem ismeretlen hiba.
 from fastapi.responses import JSONResponse  # noqa: E402
 from sqlalchemy.exc import IntegrityError, OperationalError  # noqa: E402
+from sqlalchemy.orm.exc import StaleDataError  # noqa: E402
 
 
 @app.exception_handler(IntegrityError)
-async def _integrity_error(_request: Request, exc: IntegrityError):
+@app.exception_handler(StaleDataError)
+async def _integrity_error(_request: Request, exc: IntegrityError | StaleDataError):
     return JSONResponse(status_code=409, content={"detail": "Ütköző mentés: valaki ugyanezt a rekordot közben módosította vagy létrehozta. Frissítsd az oldalt és próbáld újra."})
 
 

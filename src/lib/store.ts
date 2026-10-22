@@ -610,6 +610,7 @@ export const documents = {
 
 export type EntryDeadline = { exerciseId: string; name: string; startDate: string; deadline: string; daysLeft: number; participants: number };
 export type ProtocolItem = { equipmentId: string; returned: boolean; amount: number; note?: string };
+export type DischargeCloseResult = { returned: number; missing: number; amount: number; status: string };
 
 /** Beléptetés, élelmezési átjelentő, leszerelési jegyzőkönyv (2. betekintés, Várpalota). */
 export const entry = {
@@ -618,6 +619,9 @@ export const entry = {
   mealsXlsx: (exerciseId: string) => downloadBlob(`/entry/${exerciseId}/meals.xlsx`, 'elelmezesi-atjelento.xlsx'),
   protocolDocx: (personId: string, items: ProtocolItem[]) =>
     downloadBlob(`/entry/protocol/${personId}`, 'leszerelesi-jegyzokonyv.docx', { items }),
+  /** Lezárás a nyilvántartásban: visszavétel, hiány rögzítése, Leszerelt státusz. */
+  closeDischarge: (personId: string, items: ProtocolItem[], discharge = true) =>
+    request<DischargeCloseResult>(`/entry/protocol/${personId}/close`, { method: 'POST', body: JSON.stringify({ items, discharge }) }),
 };
 export const events = createCrud<AppEvent>('/events');
 export const announcements = createCrud<Announcement>('/announcements',);

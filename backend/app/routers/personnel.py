@@ -7,10 +7,12 @@ from sqlalchemy import func, select
 
 from ..appliers import apply_person
 from ..audit import record_activity
+from ..core.auth import ADMIN_ROLES
 from ..core.scope import assert_person_in_scope, scoped_persons
 from ..core.dependencies import DB, Reader, Editor
 from ..models import EventModel, ExerciseModel, ParticipantModel, PersonModel
 from ..repository import require_model
+from ..services import person_removal
 from ..schemas import PersonLite, PersonCreate, PersonRead, PersonUpdate
 from ..serializers import load_qualification_ids_by_person, serialize_person_with_qual_table, serialize_person_with_quals
 from ..validation import assert_unique_sztsz, normalize_sztsz
@@ -269,6 +271,11 @@ def create_person(payload: PersonCreate, db: DB, user: Editor):
 def update_person(item_id: str, payload: PersonUpdate, db: DB, user: Editor):
     item = require_model(db, PersonModel, item_id)
     assert_person_in_scope(user, item)
+    if payload.version is not None and payload.version != item.version:
+        raise HTTPException(
+            status_code=409,
+            detail="Valaki más közben módosította ezt a személyt. Nyisd meg újra, és úgy mentsd a változtatást.",
+        )
     before = _person_snapshot(item)
     normalized = normalize_sztsz(payload.sztsz)
     assert_unique_sztsz(db, normalized, exclude_id=item_id)
@@ -285,8 +292,19 @@ def update_person(item_id: str, payload: PersonUpdate, db: DB, user: Editor):
 def delete_person(item_id: str, db: DB, user: Editor):
     item = require_model(db, PersonModel, item_id)
     assert_person_in_scope(user, item)
+    held = person_removal.held_items(db, item_id)
+    if held:
+        raise HTTPException(status_code=409, detail=f"Törlés előtt vedd vissza, ami nála van: {', '.join(held)}")
+    history = person_removal.history_counts(db, item_id)
+    if history and user.role not in ADMIN_ROLES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{item.name} előzményekkel rendelkezik ({person_removal.describe(history)}). "
+                   "Állítsd Leszereltre; végleges törlést admin végezhet.",
+        )
     before = _person_snapshot(item)
     record_name = item.name
+    person_removal.delete_dependents(db, item_id)
     db.delete(item)
     record_activity(db, user, mode="delete", module="Személyek", record_name=record_name,
                     entity="personnel", before=before)
