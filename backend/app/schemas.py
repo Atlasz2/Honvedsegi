@@ -330,6 +330,9 @@ class PersonCreate(PersonBase):
 
 
 class PersonUpdate(PersonBase):
+    # A kliens által látott verzió; ha közben más mentett, 409. Hiánya esetén nincs ellenőrzés.
+    version: int | None = None
+
     @field_validator("phone")
     @classmethod
     def normalize_phone(cls, value: str) -> str:
@@ -348,6 +351,7 @@ class PersonLite(BaseModel):
 
 class PersonRead(PersonBase):
     id: str
+    version: int = 1
     # Importból átemelt, nem modellezett oszlopok (KGIR-export); csak olvasható.
     extra: dict[str, str] = Field(default_factory=dict)
 

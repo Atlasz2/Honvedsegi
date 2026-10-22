@@ -137,8 +137,11 @@ def require_editor(user: UserModel = Depends(get_current_user)) -> UserModel:
     return user
 
 
+ADMIN_ROLES = frozenset({"admin", "fejleszto"})
+
+
 def require_admin(user: UserModel = Depends(get_current_user)) -> UserModel:
-    if user.role not in {"admin", "fejleszto"}:
+    if user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin jogosultság szükséges")
     return user
 

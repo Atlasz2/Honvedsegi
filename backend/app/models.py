@@ -81,6 +81,11 @@ class PersonModel(Base):
     # A KGIR-export olyan oszlopai, amiknek nincs saját mezőjük (pl. anyja neve).
     # Csak az import írja; a felületen olvasható. Döntés (2026-09-11): mindent átemelünk.
     extra: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    # Optimista zárolás: minden mentés növeli. Ha két ügyintéző ugyanazt a
+    # verziót szerkeszti, a második mentése 409-et kap (nem írja felül némán).
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    __mapper_args__ = {"version_id_col": version}
 
 
 class AttendanceModel(Base):

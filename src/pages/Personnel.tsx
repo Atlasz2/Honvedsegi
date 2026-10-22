@@ -223,6 +223,8 @@ export default function Personnel() {
       await refresh();
     } catch (error) {
       toast.error(getErrorMessage(error));
+      // Ütközésnél (409) a lista a friss verziót hozza, így az újranyitott űrlap már arra épül.
+      if (editing) void refresh();
     }
   };
 
