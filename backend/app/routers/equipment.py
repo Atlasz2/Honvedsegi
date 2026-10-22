@@ -10,6 +10,7 @@ from ..models import EquipmentModel, PersonModel
 from ..repository import require_model
 from ..schemas import EquipmentCheckoutRequest, EquipmentCreate, EquipmentRead, EquipmentUpdate
 from ..serializers import serialize_equipment
+from ..services.equipment import release_equipment
 
 router = APIRouter(prefix="/api/equipment", tags=["equipment"])
 
@@ -74,13 +75,7 @@ def checkout_equipment(item_id: str, payload: EquipmentCheckoutRequest, db: DB, 
 @router.post("/{item_id}/return", response_model=EquipmentRead)
 def return_equipment(item_id: str, db: DB, _: Editor):
     item = require_model(db, EquipmentModel, item_id)
-    history = list(item.checkout_history or [])
-    if history:
-        history[-1]["returnedDate"] = utc_now().date().isoformat()
-    item.checked_out_to = None
-    item.checked_out_to_name = None
-    item.checked_out_date = None
-    item.checkout_history = history
+    release_equipment(item)
     db.commit()
     db.refresh(item)
     return serialize_equipment(item)

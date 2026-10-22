@@ -236,7 +236,7 @@ export default function EquipmentPage() {
         </div>
       </Modal>
 
-      <DischargeProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} equipment={data} />
+      <DischargeProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} equipment={data} onClosed={() => { void refresh(); }} />
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => {
         if (deleteTarget) {
           void (async () => {

@@ -22,6 +22,7 @@ from ..core.scope import assert_owned_in_scope, assert_person_in_scope, scoped_o
 from ..models import EquipmentModel, ExerciseModel, PersonDocumentModel, PersonModel
 from ..participants import get_participants
 from ..protocol_export import ProtocolLine, build_protocol_docx
+from ..services.equipment import mark_missing, release_equipment
 from ..table_export import build_table_xlsx
 
 router = APIRouter(prefix="/api/entry", tags=["entry"])
@@ -131,20 +132,32 @@ class ProtocolRequest(BaseModel):
     items: list[ProtocolItem]
 
 
-@router.post("/protocol/{person_id}")
-def discharge_protocol(person_id: str, body: ProtocolRequest, db: DB, user: Editor):
+class ProtocolCloseRequest(ProtocolRequest):
+    # A katona státusza Leszerelt lesz (az archívum); kikapcsolható, ha csak a felszerelést veszik vissza.
+    discharge: bool = True
+
+
+def _protocol_items(db, person_id: str, body: ProtocolRequest, user) -> tuple[PersonModel, list[tuple[EquipmentModel, ProtocolItem]]]:
     person = db.get(PersonModel, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="A személy nem található")
     assert_person_in_scope(user, person)
-    lines = []
+    pairs = []
     for item in body.items:
         eq = db.get(EquipmentModel, item.equipmentId)
         if eq is None or eq.checked_out_to != person_id:
             raise HTTPException(status_code=400, detail="Csak a katonánál lévő felszerelés szerepelhet a jegyzőkönyvben")
         if item.amount < 0:
             raise HTTPException(status_code=400, detail="A fizetendő összeg nem lehet negatív")
-        lines.append(ProtocolLine(name=eq.name, serialNumber=eq.serial_number, returned=item.returned, amount=item.amount, note=item.note))
+        pairs.append((eq, item))
+    return person, pairs
+
+
+@router.post("/protocol/{person_id}")
+def discharge_protocol(person_id: str, body: ProtocolRequest, db: DB, user: Editor):
+    person, pairs = _protocol_items(db, person_id, body, user)
+    lines = [ProtocolLine(name=eq.name, serialNumber=eq.serial_number, returned=item.returned, amount=item.amount, note=item.note)
+             for eq, item in pairs]
     content = build_protocol_docx(person.name, person.rank, person.sztsz, person.unit, date.today().isoformat(), lines)
     missing = [line.name for line in lines if not line.returned]
     record_activity(db, user, mode="create", module="Felszerelés", record_name=f"Leszerelési jegyzőkönyv — {person.name}",
@@ -152,3 +165,32 @@ def discharge_protocol(person_id: str, body: ProtocolRequest, db: DB, user: Edit
     db.commit()
     return Response(content=content, media_type=_DOCX,
                     headers={"Content-Disposition": f"attachment; filename=leszerelesi-jegyzokonyv-{person.sztsz}.docx"})
+
+
+@router.post("/protocol/{person_id}/close")
+def close_discharge(person_id: str, body: ProtocolCloseRequest, db: DB, user: Editor):
+    """A jegyzőkönyv lezárása a nyilvántartásban: a visszaadott felszerelés visszavéve,
+    a hiányzó a katonánál marad megtérítendőként, a katona Leszerelt lesz."""
+    person, pairs = _protocol_items(db, person_id, body, user)
+    held = set(db.scalars(select(EquipmentModel.id).where(EquipmentModel.checked_out_to == person_id)).all())
+    if held != {eq.id for eq, _ in pairs}:
+        raise HTTPException(status_code=400, detail="A lezáráshoz a katonánál lévő összes felszerelésnek szerepelnie kell")
+    returned, missing = [], []
+    for eq, item in pairs:
+        if item.returned:
+            release_equipment(eq)
+            returned.append(eq.name)
+        else:
+            mark_missing(eq, item.amount, item.note)
+            missing.append(eq.name)
+    amount = sum(item.amount for _, item in pairs if not item.returned)
+    before_status = person.status
+    if body.discharge:
+        person.status = "Leszerelt"
+        person.service_type = ""
+    record_activity(db, user, mode="update", module="Felszerelés", record_name=f"Leszerelés lezárva — {person.name}",
+                    entity="discharge_protocol",
+                    before={"státusz": before_status},
+                    after={"státusz": person.status, "visszavéve": returned, "hiányzik": missing, "megtérítendő": amount})
+    db.commit()
+    return {"returned": len(returned), "missing": len(missing), "amount": amount, "status": person.status}
