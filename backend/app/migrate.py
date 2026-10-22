@@ -513,6 +513,16 @@ def _migrate_trainings_into_exercises(db: Session) -> None:
 
 # ── belépési pont ──────────────────────────────────────────────────────────────
 
+def _migrate_document_rank_on_card(db: Session) -> None:
+    key = "v7_document_rank_on_card"
+    if _migration_done(db, key):
+        return
+    if _table_exists(db, "person_documents") and not _column_exists(db, "person_documents", "rank_on_card"):
+        db.execute(text("ALTER TABLE person_documents ADD COLUMN rank_on_card TEXT DEFAULT ''"))
+        db.commit()
+    _mark_done(db, key)
+
+
 def run_all(db: Session) -> None:
     _ensure_migrations_table(db)
     _seed_default_qual_types(db)
@@ -526,3 +536,4 @@ def run_all(db: Session) -> None:
     _migrate_trainings_into_exercises(db)
     _migrate_event_cancelled_status(db)
     _migrate_leave_status_to_active(db)
+    _migrate_document_rank_on_card(db)

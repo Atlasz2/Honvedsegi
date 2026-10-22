@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { rankWeight } from '@/lib/rank';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import DischargeProtocolModal from '@/components/DischargeProtocolModal';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Search, ArrowUpFromLine, ArrowDownToLine, History } from 'lucide-react';
 
@@ -28,6 +29,7 @@ export default function EquipmentPage() {
   const [checkoutNote, setCheckoutNote] = useState('');
   const [historyTarget, setHistoryTarget] = useState<Eq | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [protocolOpen, setProtocolOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -120,7 +122,10 @@ export default function EquipmentPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold font-rajdhani uppercase tracking-military">Felszerelés</h1>
-        {canEdit && <button onClick={() => { setForm({ name: '', category: CATEGORIES[0], serialNumber: '', qrCode: '', condition: 'Jó', description: '' }); setErrors({}); setCreating(true); }} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új eszköz</button>}
+        <div className="flex items-center gap-2">
+          {canEdit && <button onClick={() => setProtocolOpen(true)} className="btn-mil-secondary text-xs">Leszerelési jegyzőkönyv</button>}
+          {canEdit && <button onClick={() => { setForm({ name: '', category: CATEGORIES[0], serialNumber: '', qrCode: '', condition: 'Jó', description: '' }); setErrors({}); setCreating(true); }} className="btn-mil-primary flex items-center gap-2 text-xs"><Plus className="w-4 h-4" />Új eszköz</button>}
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-4 mb-6">
@@ -231,6 +236,7 @@ export default function EquipmentPage() {
         </div>
       </Modal>
 
+      <DischargeProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} equipment={data} />
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => {
         if (deleteTarget) {
           void (async () => {

@@ -20,6 +20,7 @@ const Announcements = lazy(() => import("@/pages/Announcements"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ActivityLogPage = lazy(() => import("@/pages/ActivityLogPage"));
 const Alerts = lazy(() => import("@/pages/Alerts"));
+const Okmanyok = lazy(() => import("@/pages/Okmanyok"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Leave = lazy(() => import("@/pages/Leave"));
 const Parancsok = lazy(() => import("@/pages/Parancsok"));
@@ -65,6 +66,7 @@ function AppRoutes() {
           <Route path="/vehicles" element={<Vehicles />} />
           <Route path="/announcements" element={<Announcements />} />
           <Route path="/figyelmeztetesek" element={<Alerts />} />
+          <Route path="/okmanyok" element={<Okmanyok />} />
           {canEdit && <Route path="/settings" element={<SettingsPage />} />}
           <Route path="/activity-log" element={<ActivityLogPage />} />
           <Route path="*" element={<NotFound />} />

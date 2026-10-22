@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Clock, CheckCircle2, RefreshCw, FileWarning, UserX, GraduationCap, Palmtree, Shield, FileSignature, CalendarClock } from "lucide-react";
 import {
-  qualificationAlerts, alerts as alertsStore, documents as docStore, settings as settingsStore,
-  type UnexcusedAlert, type ReadinessGap, type ExpiringDocument,
+  qualificationAlerts, alerts as alertsStore, documents as docStore, entry as entryStore, settings as settingsStore,
+  type UnexcusedAlert, type ReadinessGap, type ExpiringDocument, type DocumentRow, type EntryDeadline,
   type LeaveMinimumResult, type BasicTrainingResult, type BasicTrainingItem, type ServiceMinimumResult, type YearDeadline,
   type OrderDeadlinesResult, type OrderDeadlineItem, type CustomRuleAlertsResult, type CustomRuleAlertItem,
 } from "@/lib/store";
@@ -71,6 +71,8 @@ export default function Alerts() {
   const [unexcused, setUnexcused] = useState<UnexcusedAlert[]>([]);
   const [gaps, setGaps] = useState<ReadinessGap[]>([]);
   const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
+  const [mismatchDocs, setMismatchDocs] = useState<DocumentRow[]>([]);
+  const [entryDeadlines, setEntryDeadlines] = useState<EntryDeadline[]>([]);
   const [leaveMinimum, setLeaveMinimum] = useState<LeaveMinimumResult | null>(null);
   const [basicTraining, setBasicTraining] = useState<BasicTrainingResult | null>(null);
   const [serviceMinimum, setServiceMinimum] = useState<ServiceMinimumResult | null>(null);
@@ -84,7 +86,7 @@ export default function Alerts() {
 
   const refresh = useCallback(async () => {
     try {
-      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData, orderData, customData, settingsData] = await Promise.all([
+      const [alertData, statData, unexcusedData, gapData, docData, leaveData, basicData, serviceData, orderData, customData, settingsData, mismatchData, entryData] = await Promise.all([
         qualificationAlerts.getAlerts(daysAhead),
         qualificationAlerts.getStats(),
         alertsStore.unexcused(30),
@@ -96,6 +98,8 @@ export default function Alerts() {
         alertsStore.orderDeadlines(),
         alertsStore.custom(),
         settingsStore.alerts(),
+        docStore.list({ mismatch: true }),
+        entryStore.deadlines(7),
       ]);
       setOrderDeadlines(orderData);
       setCustomAlerts(customData);
@@ -105,6 +109,8 @@ export default function Alerts() {
       setUnexcused(unexcusedData);
       setGaps(gapData);
       setExpiringDocs(docData);
+      setMismatchDocs(mismatchData);
+      setEntryDeadlines(entryData);
       setLeaveMinimum(leaveData);
       setBasicTraining(basicData);
       setServiceMinimum(serviceData);
@@ -261,6 +267,39 @@ export default function Alerts() {
           { header: "Állapot", render: (a) => expiryBadge(a.isExpired, a.daysUntilExpiry), value: (a) => (a.isExpired ? `lejárt ${Math.abs(a.daysUntilExpiry)} napja` : `${a.daysUntilExpiry} nap`) },
         ]}
       />}
+
+      <AlertSection<EntryDeadline>
+        title="Beléptetés határideje — feladat előtt 5 nappal"
+        tone="warning"
+        icon={<CalendarClock className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={entryDeadlines}
+        rowKey={(d) => d.exerciseId}
+        emptyText="Nincs közelgő beléptetési határidő"
+        description="A beléptetést és az élelmezési átjelentőt a Műveletek részletében (Beléptetés Excel / Élelmezési átjelentő) lehet exportálni."
+        columns={[
+          { header: "Feladat", render: (d) => <span className="font-medium">{d.name}</span>, value: (d) => d.name },
+          { header: "Kezdés", render: (d) => <span className="font-mono text-xs">{d.startDate}</span>, value: (d) => d.startDate },
+          { header: "Leadási határidő", render: (d) => <span className="font-mono text-xs">{d.deadline}</span>, value: (d) => d.deadline },
+          { header: "Résztvevő", render: (d) => d.participants, value: (d) => String(d.participants) },
+          { header: "Állapot", render: (d) => expiryBadge(d.daysLeft < 0, d.daysLeft), value: (d) => (d.daysLeft < 0 ? `lejárt ${Math.abs(d.daysLeft)} napja` : `${d.daysLeft} nap`) },
+        ]}
+      />
+
+      <AlertSection<DocumentRow>
+        title="Új szolgálati igazolvány kell — a rendfokozat megváltozott"
+        tone="warning"
+        icon={<FileWarning className="w-4 h-4 text-amber-400" />}
+        loading={loading}
+        rows={mismatchDocs}
+        rowKey={(d) => d.documentId}
+        onRowClick={(d) => openPerson(d.personnelId)}
+        emptyText="Minden igazolványon a mostani rendfokozat áll"
+        columns={[
+          ...personColumns<DocumentRow>(),
+          { header: "Kártyán", render: (d) => <span className="font-mono text-xs">{d.rankOnCard}</span>, value: (d) => d.rankOnCard },
+        ]}
+      />
 
       <AlertSection<ExpiringDocument>
         title={`Lejáró okmányok / alkalmasság — ${daysAhead} napon belül`}

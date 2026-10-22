@@ -537,6 +537,9 @@ export type PersonDocument = {
   notes: string;
   isExpired: boolean;
   daysUntilExpiry: number | null;
+  rankOnCard: string;
+  /** A szolgálati igazolványon más rendfokozat áll, mint a mostani → új kártya kell. */
+  rankMismatch: boolean;
 };
 
 export type DocumentPayload = {
@@ -546,6 +549,36 @@ export type DocumentPayload = {
   issuedDate?: string;
   expiryDate?: string | null;
   notes?: string;
+  rankOnCard?: string;
+};
+
+/** Egy sor az összesített okmány-listában (személy + okmány). */
+export type DocumentRow = {
+  documentId: string;
+  personnelId: string;
+  name: string;
+  sztsz: string;
+  rank: string;
+  unit: string;
+  documentName: string;
+  category: string;
+  identifier: string;
+  issuedDate: string;
+  expiryDate: string | null;
+  daysUntilExpiry: number | null;
+  isExpired: boolean;
+  rankOnCard: string;
+  rankMismatch: boolean;
+};
+
+export type DocumentFilter = { name?: string; days?: number | null; mismatch?: boolean };
+
+const documentQuery = ({ name, days, mismatch }: DocumentFilter) => {
+  const query = new URLSearchParams();
+  if (name) query.set('name', name);
+  if (days !== null && days !== undefined) query.set('days', String(days));
+  if (mismatch) query.set('mismatch', 'true');
+  return query.toString();
 };
 
 export type ExpiringDocument = {
@@ -570,6 +603,21 @@ export const documents = {
     request<PersonDocument>(`/documents/${docId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   remove: (docId: string) => request<void>(`/documents/${docId}`, { method: 'DELETE' }),
   expiring: (days = 60) => request<ExpiringDocument[]>(`/documents/expiring?days=${days}`),
+  types: () => request<string[]>('/documents/types'),
+  list: (filter: DocumentFilter) => request<DocumentRow[]>(`/documents?${documentQuery(filter)}`),
+  exportXlsx: (filter: DocumentFilter) => downloadBlob(`/documents/export.xlsx?${documentQuery(filter)}`, 'okmanyok.xlsx'),
+};
+
+export type EntryDeadline = { exerciseId: string; name: string; startDate: string; deadline: string; daysLeft: number; participants: number };
+export type ProtocolItem = { equipmentId: string; returned: boolean; amount: number; note?: string };
+
+/** Beléptetés, élelmezési átjelentő, leszerelési jegyzőkönyv (2. betekintés, Várpalota). */
+export const entry = {
+  deadlines: (ahead = 7) => request<EntryDeadline[]>(`/entry/deadlines?ahead=${ahead}`),
+  entryXlsx: (exerciseId: string) => downloadBlob(`/entry/${exerciseId}/entry.xlsx`, 'belepteres.xlsx'),
+  mealsXlsx: (exerciseId: string) => downloadBlob(`/entry/${exerciseId}/meals.xlsx`, 'elelmezesi-atjelento.xlsx'),
+  protocolDocx: (personId: string, items: ProtocolItem[]) =>
+    downloadBlob(`/entry/protocol/${personId}`, 'leszerelesi-jegyzokonyv.docx', { items }),
 };
 export const events = createCrud<AppEvent>('/events');
 export const announcements = createCrud<Announcement>('/announcements',);

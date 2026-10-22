@@ -21,6 +21,15 @@ IMPORT_MISSING_LIST_LIMIT = 200
 # fokozatokat generált ("Honvéd", "Őrvezető"), amiket a frontend legördülője nem
 # ismert. A /api/reference végpont ezt szolgálja ki a kliensnek.
 
+# Rögzített okmány-típusok (2. betekintés, Várpalota): a szolgálati igazolványon
+# rendfokozat is van, a sárga kártya a vezetői engedély. Az okmány `name` mezője
+# ezek egyike (vagy szabad szöveg, „Egyéb"), így megbízhatóan szűrhető/exportálható.
+ID_CARD_TYPE = "Szolgálati igazolvány"
+DRIVING_CARD_TYPE = "Vezetői engedély (sárga kártya)"
+DOCUMENT_TYPES: tuple[str, ...] = (ID_CARD_TYPE, DRIVING_CARD_TYPE)
+# A beléptetést a feladat előtt ennyi nappal kell leadni a laktanyának.
+ENTRY_LEAD_DAYS = 5
+
 UNITS: tuple[str, ...] = ("31 TVZ", "83 TVZ", "19 TVZ", "Ezredtörzs")
 
 # Területek (megyék) → a hozzájuk tartozó zászlóalj(ak). A felhasználó területe

@@ -111,6 +111,12 @@ hozzávetőleges méret (S/M/L), és hogy meglévő modult bővít-e vagy új.
 | I8 | **KGIR-export: minden oszlop átjön** ✅ | S | `PersonModel.extra` (JSON) a nem modellezett oszlopoknak; a személy részletében „Importált adatok” blokk. Minta-export: `make_kgir_sample.py` → `../Importálandók/kgir_export_minta.xlsx`. |
 | I4 | **Kampányterv** ✅ | M | **Kész**: `/api/campaign/{exercise|training}/{id}/applicants` (beillesztett lista: SZTSZ vagy név soronként, „Jelentkezett" státusz, nem található/kétértelmű jelzés), `/plan` + `export.xlsx/.pdf` (jogosultak elöl, nem jogosultak sárgán, hiányzó képesítés). `CampaignPanel` a Műveletek részletében + ⚠ a résztvevő-sorban. Hátra: a valós kampányterv-formátum (C/5) és a behívóparancs-kapcsolat (I5). |
 | I5 | **Parancs-műhely** ✅ (2. kör) | L | A parancs a részlegek fejezeteiből áll össze. **Kész**: parancstípus = fejezetek (részleg, kötelező, **sablon-szöveg** `{{név}}`-féle helyőrzőkkel) + **aláírók** (2–3 illetékes parancsnok; az ellenjegyzés nem részleg). A részlegek **egymástól függetlenül** írják a fejezetüket a belső szerkesztőben; „még dolgozik rajta” = akinek nyitott kötelező fejezete van. Minden kötelező fejezet kész → automatikusan „Aláírásra vár”; minden aláírás → „Kiadva”. **Dokumentum-nézet** és **DOCX/PDF export** (`order_export.py`). Naplózva. Demo: `populate_orders.py [--reset]`. **A valós formai követelmények és szövegek a C/3-4 kérdésekre várnak.** |
+| I9 | **Típusos okmányok + „új kártya kell"** ✅ | S | Szolgálati igazolvány / sárga kártya rögzített típus; `rank_on_card` az igazolványon, eltérésnél jelzés (személy-fül, Okmányok oldal, Figyelmeztetések). |
+| I10 | **Okmány-lista + Excel** ✅ | S | `/okmanyok`, `GET /api/documents`, `/export.xlsx`: típus, N napon belül lejáró, rendfokozat-eltérés szűrővel. |
+| I11 | **Beléptetés + élelmezési átjelentő** ✅ | M | `/api/entry/{id}/entry.xlsx` és `meals.xlsx`; határidő = kezdés − 5 nap a Figyelmeztetéseken. Az átjelentő oszlopai Ritára várnak. |
+| I12 | **Leszerelési jegyzőkönyv** ✅ | M | Felszerelés → DOCX, két példány (személyügy, ellátó), visszaadva/hiányzik + fizetendő összeg. |
+
+Részletek és elvetett ötletek (behívóparancs, átadás-elbocsátási ív): [`2-betekintes-varpalota-toborzo.md`](2-betekintes-varpalota-toborzo.md).
 
 ---
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ClipboardPaste, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
-import { campaign, getErrorMessage, type ApplicantPasteResult } from '@/lib/store';
+import { campaign, entry, getErrorMessage, type ApplicantPasteResult } from '@/lib/store';
 import Modal from '@/components/Modal';
 
 type Props = {
@@ -42,6 +42,14 @@ export default function CampaignPanel({ source, eventId, eventName, canEdit, onC
     }
   };
 
+  const downloadEntry = async (kind: 'entry' | 'meals') => {
+    try {
+      await (kind === 'entry' ? entry.entryXlsx(eventId) : entry.mealsXlsx(eventId));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   const download = async (format: 'xlsx' | 'pdf') => {
     try {
       await (format === 'xlsx' ? campaign.exportXlsx(source, eventId) : campaign.exportPdf(source, eventId));
@@ -66,6 +74,14 @@ export default function CampaignPanel({ source, eventId, eventName, canEdit, onC
         <button onClick={() => { void download('pdf'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5">
           <FileDown className="w-3.5 h-3.5" />
           Kampányterv PDF
+        </button>
+        <button onClick={() => { void downloadEntry('entry'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5" title="Résztvevők igazolványszámmal és lejárattal — a feladat előtt 5 nappal kell leadni">
+          <FileDown className="w-3.5 h-3.5" />
+          Beléptetés Excel
+        </button>
+        <button onClick={() => { void downloadEntry('meals'); }} className="btn-mil-secondary text-xs flex items-center gap-1.5">
+          <FileDown className="w-3.5 h-3.5" />
+          Élelmezési átjelentő
         </button>
       </div>
 

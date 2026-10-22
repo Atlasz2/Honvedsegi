@@ -3,7 +3,7 @@ import { useAuth } from '@/lib/auth';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ListChecks, Users, Crosshair, Shield as ShieldIcon,
-  Package, Truck, CalendarRange, CalendarDays, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, History, FileSignature,
+  Package, Truck, CalendarRange, CalendarDays, Settings, ChevronLeft, ChevronRight, LogOut, BellRing, ClipboardCheck, Palmtree, History, FileSignature, IdCard,
 } from 'lucide-react';
 import { qualificationAlerts } from '@/lib/store';
 import CommandPalette, { openCommandPalette } from '@/components/CommandPalette';
@@ -30,6 +30,7 @@ const navItems: NavItem[] = [
   { path: '/operations', label: 'Műveletek', icon: Crosshair },
   { path: '/events', label: 'Események', icon: CalendarDays },
   { path: '/parancsok', label: 'Parancsok', icon: FileSignature },
+  { path: '/okmanyok', label: 'Okmányok', icon: IdCard },
   { path: '/figyelmeztetesek', label: 'Figyelmeztetések', icon: BellRing, alertBadge: true },
   { path: '/activity-log', label: 'Napló', icon: History },
   { path: '/settings', label: 'Beállítások', icon: Settings, editorOnly: true },

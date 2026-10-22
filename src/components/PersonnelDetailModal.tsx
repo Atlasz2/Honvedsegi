@@ -106,6 +106,10 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
   const [addingDoc, setAddingDoc] = useState(false);
   const [docCategory, setDocCategory] = useState<'Okmány' | 'Alkalmasság' | 'Szerződés' | 'Egyéb'>('Okmány');
   const [docName, setDocName] = useState('');
+  // Rögzített okmány-típusok (szolgálati igazolvány, sárga kártya…); a többi „Egyéb” szabad szöveg.
+  const [docTypes, setDocTypes] = useState<string[]>([]);
+  const [customDoc, setCustomDoc] = useState(false);
+  const [docRankOnCard, setDocRankOnCard] = useState('');
   const [docIdentifier, setDocIdentifier] = useState('');
   const [docIssued, setDocIssued] = useState('');
   const [docExpiry, setDocExpiry] = useState('');
@@ -138,9 +142,11 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
       pStore.getHistory(person.id),
       docStore.getForPerson(person.id),
       pStore.getTimeline(person.id).catch(() => null),
+      docStore.types().catch(() => [] as string[]),
     ])
-      .then(([quals, types, hist, personDocs, tl]) => {
+      .then(([quals, types, hist, personDocs, tl, docTypeList]) => {
         if (!active) return;
+        setDocTypes(docTypeList);
         setQualifications(quals);
         setQualTypes(types);
         setHistory(hist as HistoryEntry[]);
@@ -209,11 +215,11 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
     try {
       const created = await docStore.add(person.id, {
         category: docCategory, name, identifier: docIdentifier,
-        issuedDate: docIssued, expiryDate: docExpiry || null, notes: docNotes,
+        issuedDate: docIssued, expiryDate: docExpiry || null, notes: docNotes, rankOnCard: docRankOnCard,
       });
       setDocs(prev => [created, ...prev]);
       setAddingDoc(false);
-      setDocName(''); setDocIdentifier(''); setDocIssued(''); setDocExpiry(''); setDocNotes('');
+      setDocName(''); setCustomDoc(false); setDocRankOnCard(''); setDocIdentifier(''); setDocIssued(''); setDocExpiry(''); setDocNotes('');
       toast.success('Rögzítve');
     } catch (err) {
       toast.error(getErrorMessage(err));
@@ -482,8 +488,25 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                         </div>
                         <div>
                           <label className="block text-xs text-muted-foreground mb-1">Megnevezés *</label>
-                          <input value={docName} onChange={e => setDocName(e.target.value)} placeholder="pl. Katonai igazolvány / Orvosi alkalmasság" className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                          <select
+                            value={customDoc ? '__custom' : docName}
+                            onChange={e => { const v = e.target.value; setCustomDoc(v === '__custom'); setDocName(v === '__custom' ? '' : v); }}
+                            className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }}
+                          >
+                            <option value="">— válassz —</option>
+                            {docTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                            <option value="__custom">Egyéb (szabad szöveg)…</option>
+                          </select>
+                          {customDoc && (
+                            <input value={docName} onChange={e => setDocName(e.target.value)} placeholder="pl. Orvosi alkalmasság" className="w-full mt-1 bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                          )}
                         </div>
+                        {docName === docTypes[0] && (
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Rendfokozat a kártyán</label>
+                            <input value={docRankOnCard} onChange={e => setDocRankOnCard(e.target.value)} placeholder={person.rank} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
+                          </div>
+                        )}
                         <div>
                           <label className="block text-xs text-muted-foreground mb-1">Azonosító (opcionális)</label>
                           <input value={docIdentifier} onChange={e => setDocIdentifier(e.target.value)} className="w-full bg-input border border-border px-2 py-1.5 text-sm" style={{ borderRadius: '2px' }} />
@@ -512,13 +535,17 @@ export default function PersonnelDetailModal({ person, canEdit, onClose, onEdit 
                   <p className="text-xs text-muted-foreground font-mono py-4">Nincs rögzített okmány / alkalmasság</p>
                 ) : (
                   <table className="w-full mil-table">
-                    <thead><tr><th>Kategória</th><th>Megnevezés</th><th>Azonosító</th><th>Lejárat</th><th>Állapot</th>{canEdit && <th></th>}</tr></thead>
+                    <thead><tr><th>Kategória</th><th>Megnevezés</th><th>Azonosító</th><th>Kártyán lévő rendfokozat</th><th>Lejárat</th><th>Állapot</th>{canEdit && <th></th>}</tr></thead>
                     <tbody>
                       {docs.map(d => (
                         <tr key={d.id}>
                           <td><span className="mono-chip text-[10px]">{d.category}</span></td>
                           <td className="font-mono text-sm">{d.name}</td>
                           <td className="font-mono text-xs text-muted-foreground">{d.identifier || '—'}</td>
+                          <td className="font-mono text-xs">
+                            {d.rankOnCard || '—'}
+                            {d.rankMismatch && <span className="ml-1 px-2 py-0.5 text-xs badge-cancelled" style={{ borderRadius: '2px' }}>új kártya kell</span>}
+                          </td>
                           <td className="font-mono text-xs">{d.expiryDate || '—'}</td>
                           <td>
                             {d.expiryDate == null ? <span className="text-xs text-muted-foreground">nincs lejárat</span>

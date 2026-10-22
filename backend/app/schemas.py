@@ -229,6 +229,7 @@ class PersonDocumentCreate(BaseModel):
     issuedDate: str = ""
     expiryDate: str | None = None
     notes: str = ""
+    rankOnCard: str = ""
 
 
 class PersonDocumentRead(BaseModel):
@@ -242,6 +243,8 @@ class PersonDocumentRead(BaseModel):
     notes: str
     isExpired: bool
     daysUntilExpiry: int | None
+    rankOnCard: str = ""
+    rankMismatch: bool = False
 
 
 # ── Szabadság / távollét ────────────────────────────────────────────────────

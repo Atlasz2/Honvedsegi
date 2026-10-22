@@ -349,6 +349,8 @@ class PersonDocumentModel(Base):
     issued_date: Mapped[str] = mapped_column(String, default="")
     expiry_date: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Szolgálati igazolványon szereplő rendfokozat; ha eltér a mostanitól, új kártya kell.
+    rank_on_card: Mapped[str] = mapped_column(String, default="")
 
 
 class ActivityLogModel(Base):
